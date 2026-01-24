@@ -1,21 +1,33 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 
-type Categoria = "Acreedor" | "Deudor";
+type Categoria = "Acreedor" | "Deudor" | "Apoderado";
 type EstadoAsistencia = "Presente" | "Ausente";
 
 type Asistente = {
   id: string;
   nombre: string;
+  email: string;
   categoria: Categoria;
   estado: EstadoAsistencia;
+  tarjetaProfesional: string;
+  calidadApoderadoDe: string;
 };
 
-const CATEGORIAS: Categoria[] = ["Acreedor", "Deudor"];
+const CATEGORIAS: Categoria[] = ["Acreedor", "Deudor", "Apoderado"];
 
 function uid() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+}
+
+function limpiarEmail(valor: string) {
+  return valor.trim().toLowerCase();
+}
+
+function esEmailValido(email: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
 
 export default function AttendancePage() {
@@ -23,7 +35,7 @@ export default function AttendancePage() {
   const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0, 10));
 
   const [asistentes, setAsistentes] = useState<Asistente[]>([
-    { id: uid(), nombre: "", categoria: "Acreedor", estado: "Ausente" },
+    { id: uid(), nombre: "", email: "", categoria: "Acreedor", estado: "Ausente", tarjetaProfesional: "", calidadApoderadoDe: "" },
   ]);
 
   const [guardado, setGuardado] = useState<any>(null);
@@ -39,7 +51,7 @@ export default function AttendancePage() {
   function agregarFila() {
     setAsistentes((prev) => [
       ...prev,
-      { id: uid(), nombre: "", categoria: "Acreedor", estado: "Ausente" },
+      { id: uid(), nombre: "", email: "", categoria: "Acreedor", estado: "Ausente", tarjetaProfesional: "", calidadApoderadoDe: "" },
     ]);
   }
 
@@ -60,7 +72,7 @@ export default function AttendancePage() {
   function reiniciar() {
     setTitulo("Llamado de asistencia");
     setFecha(new Date().toISOString().slice(0, 10));
-    setAsistentes([{ id: uid(), nombre: "", categoria: "Acreedor", estado: "Ausente" }]);
+    setAsistentes([{ id: uid(), nombre: "", email: "", categoria: "Acreedor", estado: "Ausente", tarjetaProfesional: "", calidadApoderadoDe: "" }]);
     setGuardado(null);
   }
 
@@ -75,6 +87,9 @@ export default function AttendancePage() {
       asistentes: asistentes.map(({ id, ...rest }) => ({
         ...rest,
         nombre: rest.nombre.trim(),
+        email: rest.email ? limpiarEmail(rest.email) : "",
+        tarjetaProfesional: rest.tarjetaProfesional.trim(),
+        calidadApoderadoDe: rest.calidadApoderadoDe.trim(),
       })),
       guardadoEn: new Date().toISOString(),
     };
@@ -96,13 +111,35 @@ export default function AttendancePage() {
           </div>
 
           <h1 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">
-            Attendance Call
+            Llamado a Lista
           </h1>
 
           <p className="mt-2 max-w-2xl text-zinc-600 dark:text-zinc-300">
             Marca quién está presente o ausente en segundos. Diseño limpio y rápido, estilo Apple.
           </p>
         </header>
+
+        {/* Navigation */}
+        <nav className="mb-8 flex flex-wrap gap-2">
+          <Link
+            href="/"
+            className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white"
+          >
+            ← Inicio
+          </Link>
+          <Link
+            href="/calendario"
+            className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white"
+          >
+            Calendario
+          </Link>
+          <Link
+            href="/finalizacion"
+            className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white"
+          >
+            Finalización
+          </Link>
+        </nav>
 
         {/* Main Card */}
         <section className="rounded-3xl border border-zinc-200 bg-white/80 p-5 shadow-[0_12px_40px_-20px_rgba(0,0,0,0.35)] backdrop-blur dark:border-white/10 dark:bg-white/5 sm:p-6">
@@ -226,6 +263,62 @@ export default function AttendancePage() {
                           </option>
                         ))}
                       </select>
+                      <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                        Opcional
+                      </p>
+                    </div>
+
+                    {/* Correo Electrónico */}
+                    <div className="sm:col-span-1">
+                      <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                        Correo Electrónico
+                      </label>
+                      <input
+                        value={a.email}
+                        onChange={(e) => actualizarFila(a.id, { email: e.target.value })}
+                        onBlur={() => actualizarFila(a.id, { email: limpiarEmail(a.email) })}
+                        placeholder="Ej: ejemplo@correo.com"
+                        inputMode="email"
+                        className={`h-11 w-full rounded-2xl border bg-white px-4 text-sm outline-none transition ${
+                          !a.email.trim() || esEmailValido(a.email)
+                            ? "border-zinc-200 focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                            : "border-red-300 focus:border-red-400 focus:ring-4 focus:ring-red-500/10 dark:border-red-500/40 dark:bg-black/20"
+                        }`}
+                      />
+                      {a.email.trim() && !esEmailValido(a.email) && (
+                        <p className="mt-1 text-[11px] text-red-600 dark:text-red-300">
+                          Email inválido
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Tarjeta Profesional No. */}
+                    <div className="sm:col-span-1">
+                      <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                        Tarjeta Profesional No.
+                      </label>
+                      <input
+                        value={a.tarjetaProfesional}
+                        onChange={(e) => actualizarFila(a.id, { tarjetaProfesional: e.target.value })}
+                        placeholder="Ej: 123456"
+                        className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                      />
+                      <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                        Opcional
+                      </p>
+                    </div>
+
+                    {/* Calidad de apoderado de */}
+                    <div className="sm:col-span-1">
+                      <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                        Calidad de apoderado de
+                      </label>
+                      <input
+                        value={a.calidadApoderadoDe}
+                        onChange={(e) => actualizarFila(a.id, { calidadApoderadoDe: e.target.value })}
+                        placeholder="Ej: Nombre del representado"
+                        className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                      />
                       <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
                         Opcional
                       </p>

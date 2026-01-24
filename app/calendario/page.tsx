@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 
 type EventoCalendario = {
@@ -205,6 +206,28 @@ export default function CalendarioPage() {
             </div>
           </div>
         </header>
+
+        {/* Navigation */}
+        <nav className="mb-8 flex flex-wrap gap-2">
+          <Link
+            href="/"
+            className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white"
+          >
+            ← Inicio
+          </Link>
+          <Link
+            href="/lista"
+            className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white"
+          >
+            Asistencia
+          </Link>
+          <Link
+            href="/finalizacion"
+            className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white"
+          >
+            Finalización
+          </Link>
+        </nav>
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           {/* Grid calendario */}
