@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 
 import { getProcesoWithRelations } from "@/lib/api/proceso";
 import { createAsistenciasBulk } from "@/lib/api/asistencia";
@@ -93,7 +93,7 @@ function mapApoderadosFromProceso(detalle?: ProcesoConRelaciones): Asistente[] {
   return filas;
 }
 
-export default function AttendancePage() {
+function AttendanceContent() {
   const searchParams = useSearchParams();
   const procesoId = searchParams.get("procesoId");
 
@@ -587,5 +587,13 @@ function Pill({ label, value }: { label: string; value: number }) {
       <span className="text-zinc-500 dark:text-zinc-300">{label}</span>
       <span className="font-medium">{value}</span>
     </div>
+  );
+}
+
+export default function AttendancePage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-zinc-50 dark:bg-black flex items-center justify-center">Cargando...</div>}>
+      <AttendanceContent />
+    </Suspense>
   );
 }

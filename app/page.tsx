@@ -10,7 +10,7 @@ import Link from "next/link";
 
 
 
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 
 
 
@@ -195,7 +195,7 @@ const PAGINAS = [
 
 
 
-export default function Home() {
+function HomeContent() {
 
 
 
@@ -1664,9 +1664,14 @@ export default function Home() {
 
 
   );
+}
 
-
-
+export default function Home() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-zinc-50 dark:bg-black flex items-center justify-center">Cargando...</div>}>
+      <HomeContent />
+    </Suspense>
+  );
 }
 
 

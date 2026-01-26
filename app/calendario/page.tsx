@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getProcesos } from "@/lib/api/proceso";
 import { getUsuarios, type Usuario } from "@/lib/api/usuarios";
@@ -68,7 +68,7 @@ const VIEW_OPTIONS = [
   { id: "day", label: "Día" },
 ] as const;
 
-export default function CalendarioPage() {
+function CalendarioContent() {
   const hoy = useMemo(() => new Date(), []);
   const [viewDate, setViewDate] = useState(() => startOfMonth(new Date()));
   const [diaSeleccionadoISO, setDiaSeleccionadoISO] = useState(() => toISODate(new Date()));
@@ -758,5 +758,13 @@ export default function CalendarioPage() {
         );
       })()}
     </div>
+  );
+}
+
+export default function CalendarioPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-zinc-50 dark:bg-black flex items-center justify-center">Cargando...</div>}>
+      <CalendarioContent />
+    </Suspense>
   );
 }
