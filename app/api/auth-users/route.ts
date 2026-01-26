@@ -26,11 +26,11 @@ export async function GET() {
     auth: { persistSession: false, detectSessionInUrl: false },
   });
 
-  const { data: users, error } = await supabase.auth.listUsers({ limit: 100 });
+  const { data, error } = await supabase.auth.admin.listUsers({ perPage: 100 });
   if (error) {
     console.error("Auth users API error:", error);
     return NextResponse.json({ message: error.message }, { status: 500 });
   }
 
-  return NextResponse.json((users ?? []).map(sanitizeUser));
+  return NextResponse.json((data?.users ?? []).map(sanitizeUser));
 }
