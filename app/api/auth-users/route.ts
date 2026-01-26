@@ -3,11 +3,11 @@ import { createClient } from "@supabase/supabase-js";
 
 const sanitizeUser = (user: {
   id: string;
-  email: string | null;
-  user_metadata: Record<string, unknown> | null;
+  email?: string;
+  user_metadata?: Record<string, unknown>;
 }) => ({
   id: user.id,
-  email: user.email,
+  email: user.email ?? null,
   user_metadata: user.user_metadata ?? {},
 });
 
