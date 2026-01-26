@@ -111,13 +111,13 @@ export default function CalendarioPage() {
           getProcesos(),
           getEventos(),
           getProgresos(),
-        ]);
-        setUsuarios(usuariosData || []);
-        setProcesos(procesosData || []);
-        setProgresos(progresosData || []);
+        ] as const);
+        setUsuarios((usuariosData || []) as Usuario[]);
+        setProcesos((procesosData || []) as Proceso[]);
+        setProgresos((progresosData || []) as Progreso[]);
 
         // Convert database eventos to EventoCalendario format
-        const eventosConvertidos: EventoCalendario[] = (eventosData || []).map((ev: Evento) => ({
+        const eventosConvertidos: EventoCalendario[] = ((eventosData || []) as Evento[]).map((ev) => ({
           id: ev.id,
           titulo: ev.titulo,
           fechaISO: ev.fecha,
