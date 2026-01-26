@@ -53,6 +53,45 @@ export interface Database {
           }
         ]
       }
+      usuarios: {
+        Row: {
+          id: string
+          auth_id: string | null
+          nombre: string
+          email: string
+          telefono: string | null
+          rol: string
+          avatar_url: string | null
+          activo: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          auth_id?: string | null
+          nombre: string
+          email: string
+          telefono?: string | null
+          rol?: string
+          avatar_url?: string | null
+          activo?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          auth_id?: string | null
+          nombre?: string
+          email?: string
+          telefono?: string | null
+          rol?: string
+          avatar_url?: string | null
+          activo?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       proceso: {
         Row: {
           id: string
