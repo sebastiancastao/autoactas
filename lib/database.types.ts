@@ -12,6 +12,7 @@ export interface Database {
       apoderados: {
         Row: {
           id: string
+          proceso_id: string | null
           nombre: string
           identificacion: string
           email: string | null
@@ -22,6 +23,7 @@ export interface Database {
         }
         Insert: {
           id?: string
+          proceso_id?: string | null
           nombre: string
           identificacion: string
           email?: string | null
@@ -32,6 +34,7 @@ export interface Database {
         }
         Update: {
           id?: string
+          proceso_id?: string | null
           nombre?: string
           identificacion?: string
           email?: string | null
@@ -40,7 +43,15 @@ export interface Database {
           created_at?: string
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "apoderados_proceso_id_fkey"
+            columns: ["proceso_id"]
+            isOneToOne: false
+            referencedRelation: "proceso"
+            referencedColumns: ["id"]
+          }
+        ]
       }
       proceso: {
         Row: {
@@ -82,6 +93,7 @@ export interface Database {
         Row: {
           id: string
           proceso_id: string
+          apoderado_id: string | null
           nombre: string
           identificacion: string
           tipo_identificacion: string | null
@@ -94,6 +106,7 @@ export interface Database {
         Insert: {
           id?: string
           proceso_id: string
+          apoderado_id?: string | null
           nombre: string
           identificacion: string
           tipo_identificacion?: string | null
@@ -106,6 +119,7 @@ export interface Database {
         Update: {
           id?: string
           proceso_id?: string
+          apoderado_id?: string | null
           nombre?: string
           identificacion?: string
           tipo_identificacion?: string | null
@@ -121,6 +135,13 @@ export interface Database {
             columns: ["proceso_id"]
             isOneToOne: false
             referencedRelation: "proceso"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "deudores_apoderado_id_fkey"
+            columns: ["apoderado_id"]
+            isOneToOne: false
+            referencedRelation: "apoderados"
             referencedColumns: ["id"]
           }
         ]
@@ -255,6 +276,195 @@ export interface Database {
           }
         ]
       }
+      eventos: {
+        Row: {
+          id: string
+          titulo: string
+          descripcion: string | null
+          fecha: string
+          hora: string | null
+          fecha_fin: string | null
+          hora_fin: string | null
+          usuario_id: string | null
+          proceso_id: string | null
+          tipo: string | null
+          color: string | null
+          recordatorio: boolean
+          completado: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          titulo: string
+          descripcion?: string | null
+          fecha: string
+          hora?: string | null
+          fecha_fin?: string | null
+          hora_fin?: string | null
+          usuario_id?: string | null
+          proceso_id?: string | null
+          tipo?: string | null
+          color?: string | null
+          recordatorio?: boolean
+          completado?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          titulo?: string
+          descripcion?: string | null
+          fecha?: string
+          hora?: string | null
+          fecha_fin?: string | null
+          hora_fin?: string | null
+          usuario_id?: string | null
+          proceso_id?: string | null
+          tipo?: string | null
+          color?: string | null
+          recordatorio?: boolean
+          completado?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "eventos_usuario_id_fkey"
+            columns: ["usuario_id"]
+            isOneToOne: false
+            referencedRelation: "usuarios"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "eventos_proceso_id_fkey"
+            columns: ["proceso_id"]
+            isOneToOne: false
+            referencedRelation: "proceso"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
+      progreso: {
+        Row: {
+          id: string
+          proceso_id: string
+          estado: 'no_iniciado' | 'iniciado' | 'finalizado'
+          numero_audiencias: number
+          fecha_inicio_real: string | null
+          fecha_finalizacion: string | null
+          observaciones: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          proceso_id: string
+          estado?: 'no_iniciado' | 'iniciado' | 'finalizado'
+          numero_audiencias?: number
+          fecha_inicio_real?: string | null
+          fecha_finalizacion?: string | null
+          observaciones?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          proceso_id?: string
+          estado?: 'no_iniciado' | 'iniciado' | 'finalizado'
+          numero_audiencias?: number
+          fecha_inicio_real?: string | null
+          fecha_finalizacion?: string | null
+          observaciones?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "progreso_proceso_id_fkey"
+            columns: ["proceso_id"]
+            isOneToOne: true
+            referencedRelation: "proceso"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
+      asistencia: {
+        Row: {
+          id: string
+          evento_id: string | null
+          proceso_id: string | null
+          apoderado_id: string | null
+          nombre: string
+          email: string | null
+          categoria: 'Acreedor' | 'Deudor' | 'Apoderado'
+          estado: 'Presente' | 'Ausente'
+          tarjeta_profesional: string | null
+          calidad_apoderado_de: string | null
+          fecha: string
+          titulo: string | null
+          observaciones: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          evento_id?: string | null
+          proceso_id?: string | null
+          apoderado_id?: string | null
+          nombre: string
+          email?: string | null
+          categoria?: 'Acreedor' | 'Deudor' | 'Apoderado'
+          estado?: 'Presente' | 'Ausente'
+          tarjeta_profesional?: string | null
+          calidad_apoderado_de?: string | null
+          fecha?: string
+          titulo?: string | null
+          observaciones?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          evento_id?: string | null
+          proceso_id?: string | null
+          apoderado_id?: string | null
+          nombre?: string
+          email?: string | null
+          categoria?: 'Acreedor' | 'Deudor' | 'Apoderado'
+          estado?: 'Presente' | 'Ausente'
+          tarjeta_profesional?: string | null
+          calidad_apoderado_de?: string | null
+          fecha?: string
+          titulo?: string | null
+          observaciones?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "asistencia_evento_id_fkey"
+            columns: ["evento_id"]
+            isOneToOne: false
+            referencedRelation: "eventos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "asistencia_proceso_id_fkey"
+            columns: ["proceso_id"]
+            isOneToOne: false
+            referencedRelation: "proceso"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "asistencia_apoderado_id_fkey"
+            columns: ["apoderado_id"]
+            isOneToOne: false
+            referencedRelation: "apoderados"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -360,3 +570,15 @@ export type AcreedorUpdate = Database['public']['Tables']['acreedores']['Update'
 export type Inventario = Database['public']['Tables']['inventario']['Row']
 export type InventarioInsert = Database['public']['Tables']['inventario']['Insert']
 export type InventarioUpdate = Database['public']['Tables']['inventario']['Update']
+
+export type Evento = Database['public']['Tables']['eventos']['Row']
+export type EventoInsert = Database['public']['Tables']['eventos']['Insert']
+export type EventoUpdate = Database['public']['Tables']['eventos']['Update']
+
+export type Progreso = Database['public']['Tables']['progreso']['Row']
+export type ProgresoInsert = Database['public']['Tables']['progreso']['Insert']
+export type ProgresoUpdate = Database['public']['Tables']['progreso']['Update']
+
+export type Asistencia = Database['public']['Tables']['asistencia']['Row']
+export type AsistenciaInsert = Database['public']['Tables']['asistencia']['Insert']
+export type AsistenciaUpdate = Database['public']['Tables']['asistencia']['Update']

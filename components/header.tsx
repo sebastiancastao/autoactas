@@ -33,7 +33,7 @@ export function Header() {
             onClick={handleSignOut}
             className="h-9 rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-medium shadow-sm transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
           >
-            Cerrar sesion
+            Salir
           </button>
         </div>
       </div>

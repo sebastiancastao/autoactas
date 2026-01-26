@@ -4,6 +4,7 @@ export * from './proceso'
 export * from './deudores'
 export * from './acreedores'
 export * from './inventario'
+export * from './auth-users'
 
 // Re-export supabase client and types
 export { supabase } from '../supabase'

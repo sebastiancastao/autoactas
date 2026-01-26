@@ -1,13 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+
+import { getProcesoWithRelations } from "@/lib/api/proceso";
+import { createAsistenciasBulk } from "@/lib/api/asistencia";
+import type { Apoderado, AsistenciaInsert } from "@/lib/database.types";
 
 type Categoria = "Acreedor" | "Deudor" | "Apoderado";
 type EstadoAsistencia = "Presente" | "Ausente";
 
 type Asistente = {
   id: string;
+  apoderadoId?: string;
   nombre: string;
   email: string;
   categoria: Categoria;
@@ -30,7 +36,67 @@ function esEmailValido(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
 
+type AcreedorConApoderadoId = {
+  id?: string;
+  nombre?: string | null;
+  apoderado_id?: string | null;
+};
+
+type DeudorConApoderadoId = {
+  id?: string;
+  nombre?: string | null;
+  apoderado_id?: string | null;
+};
+
+type ProcesoConRelaciones = {
+  numero_proceso?: string | null;
+  acreedores?: AcreedorConApoderadoId[] | null;
+  deudores?: DeudorConApoderadoId[] | null;
+  apoderados?: Apoderado[] | null;
+};
+
+function mapApoderadosFromProceso(detalle?: ProcesoConRelaciones): Asistente[] {
+  if (!detalle) return [];
+
+  const filas: Asistente[] = [];
+
+  // Get apoderados directly from proceso
+  detalle.apoderados?.forEach((apoderado) => {
+    // Find if this apoderado represents an acreedor
+    const acreedor = detalle.acreedores?.find(
+      (a) => a.apoderado_id === apoderado.id
+    );
+    // Find if this apoderado represents a deudor
+    const deudor = detalle.deudores?.find(
+      (d) => d.apoderado_id === apoderado.id
+    );
+
+    let calidadDe = "";
+    if (acreedor) {
+      calidadDe = `Acreedor: ${acreedor.nombre ?? "Sin nombre"}`;
+    } else if (deudor) {
+      calidadDe = `Deudor: ${deudor.nombre ?? "Sin nombre"}`;
+    }
+
+    filas.push({
+      id: uid(),
+      apoderadoId: apoderado.id,
+      nombre: apoderado.nombre,
+      email: apoderado.email ?? "",
+      categoria: "Apoderado",
+      estado: "Ausente",
+      tarjetaProfesional: "",
+      calidadApoderadoDe: calidadDe,
+    });
+  });
+
+  return filas;
+}
+
 export default function AttendancePage() {
+  const searchParams = useSearchParams();
+  const procesoId = searchParams.get("procesoId");
+
   const [titulo, setTitulo] = useState("Llamado de asistencia");
   const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0, 10));
 
@@ -39,10 +105,68 @@ export default function AttendancePage() {
   ]);
 
   const [guardado, setGuardado] = useState<any>(null);
+  const [guardando, setGuardando] = useState(false);
+  const [guardadoError, setGuardadoError] = useState<string | null>(null);
+  const [procesoApoderadosMensaje, setProcesoApoderadosMensaje] = useState<string | null>(null);
+  const [procesoApoderadosCargando, setProcesoApoderadosCargando] = useState(false);
+  const [procesoApoderadosError, setProcesoApoderadosError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!procesoId) {
+      setProcesoApoderadosMensaje(null);
+      setProcesoApoderadosError(null);
+      return;
+    }
+
+    let activo = true;
+
+    const cargarApoderadosDelProceso = async () => {
+      setProcesoApoderadosMensaje(null);
+      setProcesoApoderadosError(null);
+      setProcesoApoderadosCargando(true);
+
+      try {
+        const procesoConRelaciones = await getProcesoWithRelations(procesoId);
+        const filas = mapApoderadosFromProceso(procesoConRelaciones);
+
+        if (!activo) return;
+
+        if (filas.length > 0) {
+          setAsistentes(filas);
+          setProcesoApoderadosMensaje(`Apoderados cargados (${filas.length})`);
+        } else {
+          setProcesoApoderadosMensaje(
+            "No se encontraron apoderados vinculados a este proceso."
+          );
+        }
+      } catch (error) {
+        console.error("Error cargando apoderados del proceso:", error);
+        if (activo) {
+          setProcesoApoderadosError(
+            "No se pudieron cargar los apoderados del proceso."
+          );
+        }
+      } finally {
+        if (activo) {
+          setProcesoApoderadosCargando(false);
+        }
+      }
+    };
+
+    cargarApoderadosDelProceso();
+
+    return () => {
+      activo = false;
+    };
+  }, [procesoId]);
 
   const total = asistentes.length;
   const presentes = asistentes.filter((a) => a.estado === "Presente").length;
   const ausentes = total - presentes;
+
+  const mensajeApoderado = procesoApoderadosCargando
+    ? "Cargando apoderados del proceso..."
+    : procesoApoderadosError ?? procesoApoderadosMensaje;
 
   const puedeGuardar = useMemo(() => {
     return asistentes.length > 0 && asistentes.every((a) => a.nombre.trim());
@@ -76,25 +200,54 @@ export default function AttendancePage() {
     setGuardado(null);
   }
 
-  function guardarAsistencia(e: React.FormEvent) {
+  async function guardarAsistencia(e: React.FormEvent) {
     e.preventDefault();
-    if (!puedeGuardar) return;
+    if (!puedeGuardar || guardando) return;
 
-    const payload = {
-      titulo: titulo.trim(),
-      fecha,
-      resumen: { total, presentes, ausentes },
-      asistentes: asistentes.map(({ id, ...rest }) => ({
-        ...rest,
-        nombre: rest.nombre.trim(),
-        email: rest.email ? limpiarEmail(rest.email) : "",
-        tarjetaProfesional: rest.tarjetaProfesional.trim(),
-        calidadApoderadoDe: rest.calidadApoderadoDe.trim(),
-      })),
-      guardadoEn: new Date().toISOString(),
-    };
+    setGuardando(true);
+    setGuardadoError(null);
 
-    setGuardado(payload);
+    try {
+      // Prepare records for database
+      const registros: AsistenciaInsert[] = asistentes.map((a) => ({
+        proceso_id: procesoId || undefined,
+        apoderado_id: a.apoderadoId || undefined,
+        nombre: a.nombre.trim(),
+        email: a.email ? limpiarEmail(a.email) : null,
+        categoria: a.categoria,
+        estado: a.estado,
+        tarjeta_profesional: a.tarjetaProfesional.trim() || null,
+        calidad_apoderado_de: a.calidadApoderadoDe.trim() || null,
+        fecha,
+        titulo: titulo.trim() || null,
+      }));
+
+      // Save to database
+      await createAsistenciasBulk(registros);
+
+      // Also set local state for preview
+      const payload = {
+        titulo: titulo.trim(),
+        fecha,
+        resumen: { total, presentes, ausentes },
+        asistentes: asistentes.map((a) => ({
+          nombre: a.nombre.trim(),
+          email: a.email ? limpiarEmail(a.email) : "",
+          categoria: a.categoria,
+          estado: a.estado,
+          tarjetaProfesional: a.tarjetaProfesional.trim(),
+          calidadApoderadoDe: a.calidadApoderadoDe.trim(),
+        })),
+        guardadoEn: new Date().toISOString(),
+      };
+
+      setGuardado(payload);
+    } catch (error) {
+      console.error("Error guardando asistencia:", error);
+      setGuardadoError("No se pudo guardar la asistencia. Intenta de nuevo.");
+    } finally {
+      setGuardando(false);
+    }
   }
 
   return (
@@ -140,6 +293,12 @@ export default function AttendancePage() {
             Finalización
           </Link>
         </nav>
+
+        {procesoId && mensajeApoderado && (
+          <p className="mb-8 text-sm text-zinc-500 dark:text-zinc-400">
+            {mensajeApoderado}
+          </p>
+        )}
 
         {/* Main Card */}
         <section className="rounded-3xl border border-zinc-200 bg-white/80 p-5 shadow-[0_12px_40px_-20px_rgba(0,0,0,0.35)] backdrop-blur dark:border-white/10 dark:bg-white/5 sm:p-6">
@@ -389,29 +548,25 @@ export default function AttendancePage() {
 
                 <button
                   type="submit"
-                  disabled={!puedeGuardar}
+                  disabled={!puedeGuardar || guardando}
                   className="h-12 rounded-2xl bg-zinc-950 px-6 text-sm font-medium text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-white dark:text-black"
                 >
-                  Guardar asistencia
+                  {guardando ? "Guardando..." : "Guardar asistencia"}
                 </button>
               </div>
             </div>
 
-            {/* Preview JSON */}
-            {guardado && (
-              <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4 text-sm dark:border-white/10 dark:bg-white/5">
-                <div className="mb-2 flex items-center justify-between">
-                  <p className="font-medium text-zinc-900 dark:text-zinc-50">
-                    Resultado guardado
-                  </p>
-                  <span className="rounded-full border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-600 dark:border-white/10 dark:bg-white/10 dark:text-zinc-300">
-                    {presentes}/{total} presentes
-                  </span>
-                </div>
+            {/* Error message */}
+            {guardadoError && (
+              <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+                {guardadoError}
+              </div>
+            )}
 
-                <pre className="max-h-72 overflow-auto rounded-xl bg-white p-3 text-xs text-zinc-800 shadow-inner dark:bg-black/30 dark:text-zinc-100">
-{JSON.stringify(guardado, null, 2)}
-                </pre>
+            {/* Success message */}
+            {guardado && (
+              <div className="rounded-2xl border border-green-200 bg-green-50 p-4 text-sm text-green-700 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-300">
+                Asistencia guardada correctamente ({presentes}/{total} presentes)
               </div>
             )}
           </form>

@@ -28,18 +28,28 @@ export async function getProcesoWithRelations(id: string) {
     .select(`
       *,
       deudores (*),
-      acreedores (
-        *,
-        apoderados (*)
-      ),
-      inventario (
-        *,
-        apoderados (*),
-        acreedores (*)
-      )
+      acreedores (*),
+      apoderados (*),
+      progreso (*)
     `)
     .eq('id', id)
     .single()
+
+  if (error) throw error
+  return data
+}
+
+export async function getProcesosWithRelations() {
+  const { data, error } = await supabase
+    .from('proceso')
+    .select(`
+      *,
+      deudores (*),
+      acreedores (*),
+      apoderados (*),
+      progreso (*)
+    `)
+    .order('created_at', { ascending: false })
 
   if (error) throw error
   return data

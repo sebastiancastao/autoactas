@@ -1,0 +1,579 @@
+"use client";
+
+import { Dispatch, FormEvent, SetStateAction, useCallback, useEffect, useState } from "react";
+import { createAcreedor, deleteAcreedor, updateAcreedor } from "@/lib/api/acreedores";
+import { createDeudor, deleteDeudor, updateDeudor } from "@/lib/api/deudores";
+import { createApoderado, getApoderados } from "@/lib/api/apoderados";
+import {
+  createProceso,
+  getProcesoWithRelations,
+  updateProceso,
+} from "@/lib/api/proceso";
+import { updateProgresoByProcesoId } from "@/lib/api/progreso";
+import type {
+  Acreedor,
+  Apoderado,
+  Deudor,
+  Proceso,
+  ProcesoInsert,
+} from "@/lib/database.types";
+
+type DeudorFormRow = {
+  id: string;
+  dbId?: string;
+  nombre: string;
+  identificacion: string;
+  tipoIdentificacion: string;
+  direccion: string;
+  telefono: string;
+  email: string;
+  apoderadoId: string;
+  apoderadoNombre: string;
+};
+
+type AcreedorFormRow = DeudorFormRow & {
+  monto: string;
+  tipoAcreencia: string;
+};
+
+type ApoderadoModalTarget = {
+  tipo: "deudor" | "acreedor";
+  id: string;
+};
+
+type ApoderadoForm = {
+  nombre: string;
+  identificacion: string;
+  email: string;
+  telefono: string;
+  direccion: string;
+};
+
+type AcreedorWithApoderado = Acreedor & {
+  apoderados?: Apoderado[];
+};
+
+type ProcesoWithRelations = Proceso & {
+  deudores?: Deudor[];
+  acreedores?: AcreedorWithApoderado[];
+};
+
+function uid() {
+  return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+}
+
+function createDeudorRow(): DeudorFormRow {
+  return {
+    id: uid(),
+    nombre: "",
+    identificacion: "",
+    tipoIdentificacion: "",
+    direccion: "",
+    telefono: "",
+    email: "",
+    apoderadoId: "",
+    apoderadoNombre: "",
+  };
+}
+
+function createAcreedorRow(): AcreedorFormRow {
+  return {
+    id: uid(),
+    nombre: "",
+    identificacion: "",
+    tipoIdentificacion: "",
+    direccion: "",
+    telefono: "",
+    email: "",
+    apoderadoId: "",
+    apoderadoNombre: "",
+    monto: "",
+    tipoAcreencia: "",
+  };
+}
+
+function createApoderadoForm(): ApoderadoForm {
+  return {
+    nombre: "",
+    identificacion: "",
+    email: "",
+    telefono: "",
+    direccion: "",
+  };
+}
+
+function mapDeudoresToFormRows(deudores?: Deudor[]): DeudorFormRow[] {
+  if (!deudores || deudores.length === 0) {
+    return [createDeudorRow()];
+  }
+
+  return deudores.map((deudor) => ({
+    id: uid(),
+    dbId: deudor.id,
+    nombre: deudor.nombre,
+    identificacion: deudor.identificacion,
+    tipoIdentificacion: deudor.tipo_identificacion ?? "",
+    direccion: deudor.direccion ?? "",
+    telefono: deudor.telefono ?? "",
+    email: deudor.email ?? "",
+    apoderadoId: "",
+    apoderadoNombre: "",
+  }));
+}
+
+function mapAcreedoresToFormRows(acreedores?: AcreedorWithApoderado[]): AcreedorFormRow[] {
+  if (!acreedores || acreedores.length === 0) {
+    return [createAcreedorRow()];
+  }
+
+  return acreedores.map((acreedor) => ({
+    id: uid(),
+    dbId: acreedor.id,
+    nombre: acreedor.nombre,
+    identificacion: acreedor.identificacion,
+    tipoIdentificacion: acreedor.tipo_identificacion ?? "",
+    direccion: acreedor.direccion ?? "",
+    telefono: acreedor.telefono ?? "",
+    email: acreedor.email ?? "",
+    apoderadoId: acreedor.apoderado_id ?? "",
+    apoderadoNombre: acreedor.apoderados?.[0]?.nombre ?? "",
+    monto: acreedor.monto_acreencia != null ? acreedor.monto_acreencia.toString() : "",
+    tipoAcreencia: acreedor.tipo_acreencia ?? "",
+  }));
+}
+
+export type UseProcesoFormOptions = {
+  initialProcesoId?: string;
+  onSaveSuccess?: (proceso: Proceso) => void;
+};
+
+export type ProcesoFormContext = {
+  numeroProceso: string;
+  setNumeroProceso: Dispatch<SetStateAction<string>>;
+  fechaInicio: string;
+  setFechaInicio: Dispatch<SetStateAction<string>>;
+  estado: string;
+  setEstado: Dispatch<SetStateAction<string>>;
+  descripcion: string;
+  setDescripcion: Dispatch<SetStateAction<string>>;
+  tipoProceso: string;
+  setTipoProceso: Dispatch<SetStateAction<string>>;
+  juzgado: string;
+  setJuzgado: Dispatch<SetStateAction<string>>;
+  deudoresForm: DeudorFormRow[];
+  agregarDeudorRow: () => void;
+  actualizarDeudorRow: (id: string, patch: Partial<DeudorFormRow>) => void;
+  eliminarDeudorRow: (id: string) => void;
+  selectedDeudorId: string;
+  setSelectedDeudorId: Dispatch<SetStateAction<string>>;
+  acreedoresForm: AcreedorFormRow[];
+  agregarAcreedorRow: () => void;
+  actualizarAcreedorRow: (id: string, patch: Partial<AcreedorFormRow>) => void;
+  eliminarAcreedorRow: (id: string) => void;
+  selectedAcreedorId: string;
+  setSelectedAcreedorId: Dispatch<SetStateAction<string>>;
+  apoderados: Apoderado[];
+  apoderadoModalOpen: boolean;
+  apoderadoModalTarget: ApoderadoModalTarget | null;
+  apoderadoForm: ApoderadoForm;
+  setApoderadoForm: Dispatch<SetStateAction<ApoderadoForm>>;
+  apoderadoGuardando: boolean;
+  guardarApoderado: () => Promise<void>;
+  abrirModalApoderado: (target: ApoderadoModalTarget) => void;
+  cerrarModalApoderado: () => void;
+  handleRowApoderadoInput: (
+    tipo: ApoderadoModalTarget["tipo"],
+    rowId: string,
+    value: string
+  ) => void;
+  cargandoDetalle: boolean;
+  guardando: boolean;
+  error: string | null;
+  exito: string | null;
+  editingProcesoId: string | null;
+  cargandoApoderados: boolean;
+  handleSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  resetFormFields: () => void;
+  cargarProcesoDetalle: (procesoId: string) => Promise<void>;
+};
+
+export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormContext {
+  const { initialProcesoId, onSaveSuccess } = options ?? {};
+
+  const [numeroProceso, setNumeroProceso] = useState("");
+  const [fechaInicio, setFechaInicio] = useState(() => new Date().toISOString().split("T")[0]);
+  const [estado, setEstado] = useState("Activo");
+  const [descripcion, setDescripcion] = useState("");
+  const [tipoProceso, setTipoProceso] = useState("");
+  const [juzgado, setJuzgado] = useState("");
+  const [apoderados, setApoderados] = useState<Apoderado[]>([]);
+  const [cargandoApoderados, setCargandoApoderados] = useState(false);
+  const [apoderadoModalOpen, setApoderadoModalOpen] = useState(false);
+  const [apoderadoModalTarget, setApoderadoModalTarget] = useState<ApoderadoModalTarget | null>(null);
+  const [apoderadoForm, setApoderadoForm] = useState<ApoderadoForm>(() => createApoderadoForm());
+  const [apoderadoGuardando, setApoderadoGuardando] = useState(false);
+  const [editingProcesoId, setEditingProcesoId] = useState<string | null>(null);
+  const [cargandoDetalle, setCargandoDetalle] = useState(false);
+  const [originalDeudoresIds, setOriginalDeudoresIds] = useState<string[]>([]);
+  const [originalAcreedoresIds, setOriginalAcreedoresIds] = useState<string[]>([]);
+  const [deudoresForm, setDeudoresForm] = useState<DeudorFormRow[]>(() => [createDeudorRow()]);
+  const [selectedDeudorId, setSelectedDeudorId] = useState<string>(() => deudoresForm[0]?.id ?? "");
+  const [acreedoresForm, setAcreedoresForm] = useState<AcreedorFormRow[]>(() => [createAcreedorRow()]);
+  const [selectedAcreedorId, setSelectedAcreedorId] = useState<string>(() => acreedoresForm[0]?.id ?? "");
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [exito, setExito] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (deudoresForm.length === 0) {
+      setSelectedDeudorId("");
+      return;
+    }
+    if (!deudoresForm.some((fila) => fila.id === selectedDeudorId)) {
+      setSelectedDeudorId(deudoresForm[0].id);
+    }
+  }, [deudoresForm, selectedDeudorId]);
+
+  useEffect(() => {
+    if (acreedoresForm.length === 0) {
+      setSelectedAcreedorId("");
+      return;
+    }
+    if (!acreedoresForm.some((fila) => fila.id === selectedAcreedorId)) {
+      setSelectedAcreedorId(acreedoresForm[0].id);
+    }
+  }, [acreedoresForm, selectedAcreedorId]);
+
+  const agregarDeudorRow = () => {
+    const nuevaFila = createDeudorRow();
+    setDeudoresForm((prev) => [...prev, nuevaFila]);
+    setSelectedDeudorId(nuevaFila.id);
+  };
+
+  const actualizarDeudorRow = (id: string, patch: Partial<DeudorFormRow>) => {
+    setDeudoresForm((prev) => prev.map((fila) => (fila.id === id ? { ...fila, ...patch } : fila)));
+  };
+
+  const eliminarDeudorRow = (id: string) => {
+    setDeudoresForm((prev) => prev.filter((fila) => fila.id !== id));
+  };
+
+  const agregarAcreedorRow = () => {
+    const nuevaFila = createAcreedorRow();
+    setAcreedoresForm((prev) => [...prev, nuevaFila]);
+    setSelectedAcreedorId(nuevaFila.id);
+  };
+
+  const actualizarAcreedorRow = (id: string, patch: Partial<AcreedorFormRow>) => {
+    setAcreedoresForm((prev) => prev.map((fila) => (fila.id === id ? { ...fila, ...patch } : fila)));
+  };
+
+  const eliminarAcreedorRow = (id: string) => {
+    setAcreedoresForm((prev) => prev.filter((fila) => fila.id !== id));
+  };
+
+  const handleRowApoderadoInput = (
+    tipo: ApoderadoModalTarget["tipo"],
+    rowId: string,
+    value: string
+  ) => {
+    const match = apoderados.find((a) => a.nombre === value);
+    const patch = {
+      apoderadoNombre: value,
+      apoderadoId: match ? match.id : "",
+    };
+    if (tipo === "deudor") {
+      actualizarDeudorRow(rowId, patch);
+    } else {
+      actualizarAcreedorRow(rowId, patch);
+    }
+  };
+
+  const abrirModalApoderado = (target: ApoderadoModalTarget) => {
+    setApoderadoModalTarget(target);
+    setApoderadoForm(createApoderadoForm());
+    setApoderadoModalOpen(true);
+  };
+
+  const cerrarModalApoderado = () => {
+    setApoderadoModalOpen(false);
+    setApoderadoModalTarget(null);
+  };
+
+  const resetFormFields = () => {
+    const nuevaFilaDeudor = createDeudorRow();
+    const nuevaFilaAcreedor = createAcreedorRow();
+    setNumeroProceso("");
+    setFechaInicio(new Date().toISOString().split("T")[0]);
+    setEstado("Activo");
+    setDescripcion("");
+    setTipoProceso("");
+    setJuzgado("");
+    setDeudoresForm([nuevaFilaDeudor]);
+    setSelectedDeudorId(nuevaFilaDeudor.id);
+    setAcreedoresForm([nuevaFilaAcreedor]);
+    setSelectedAcreedorId(nuevaFilaAcreedor.id);
+    setEditingProcesoId(null);
+    setOriginalDeudoresIds([]);
+    setOriginalAcreedoresIds([]);
+    setError(null);
+    setExito(null);
+  };
+
+  const cargarProcesoDetalle = useCallback(
+    async (procesoId: string) => {
+      setCargandoDetalle(true);
+      setError(null);
+      setExito(null);
+      try {
+        const detalle = await getProcesoWithRelations(procesoId);
+        if (!detalle) {
+          setError("No se encontró el proceso");
+          return;
+        }
+        setEditingProcesoId(detalle.id);
+        setNumeroProceso(detalle.numero_proceso);
+        setFechaInicio(detalle.fecha_inicio ?? new Date().toISOString().split("T")[0]);
+        setEstado(detalle.estado ?? "Activo");
+        setDescripcion(detalle.descripcion ?? "");
+        setTipoProceso(detalle.tipo_proceso ?? "");
+        setJuzgado(detalle.juzgado ?? "");
+
+        const deudorRows = mapDeudoresToFormRows(detalle.deudores);
+        setOriginalDeudoresIds(detalle.deudores?.map((deudor) => deudor.id) ?? []);
+        setDeudoresForm(deudorRows);
+        setSelectedDeudorId(deudorRows[0]?.id ?? "");
+
+        const acreedorRows = mapAcreedoresToFormRows(detalle.acreedores);
+        setOriginalAcreedoresIds(detalle.acreedores?.map((acreedor) => acreedor.id) ?? []);
+        setAcreedoresForm(acreedorRows);
+        setSelectedAcreedorId(acreedorRows[0]?.id ?? "");
+      } catch (err) {
+        console.error("Error loading proceso:", err);
+        setError("Error al cargar el proceso seleccionado");
+      } finally {
+        setCargandoDetalle(false);
+      }
+    },
+    []
+  );
+
+  const fetchApoderadosList = async () => {
+    setCargandoApoderados(true);
+    try {
+      const data = await getApoderados();
+      setApoderados(data || []);
+    } catch (err) {
+      console.error("Error fetching apoderados:", err);
+    } finally {
+      setCargandoApoderados(false);
+    }
+  };
+
+  const syncDeudores = async (procesoId: string, isEditing: boolean) => {
+    const filasConNombre = deudoresForm.filter((fila) => fila.nombre.trim());
+    const paraCrear = filasConNombre.filter((fila) => !fila.dbId);
+    const paraActualizar = filasConNombre.filter((fila) => fila.dbId);
+    const idsActivos = new Set(paraActualizar.map((fila) => fila.dbId));
+    const idsParaEliminar = isEditing
+      ? originalDeudoresIds.filter((id) => !idsActivos.has(id))
+      : [];
+
+    const construirPayload = (fila: DeudorFormRow) => ({
+      proceso_id: procesoId,
+      nombre: fila.nombre.trim(),
+      identificacion: fila.identificacion.trim(),
+      tipo_identificacion: fila.tipoIdentificacion.trim() || null,
+      direccion: fila.direccion.trim() || null,
+      telefono: fila.telefono.trim() || null,
+      email: fila.email.trim() || null,
+    });
+
+    await Promise.all(paraCrear.map((fila) => createDeudor(construirPayload(fila))));
+    await Promise.all(
+      paraActualizar.map((fila) => updateDeudor(fila.dbId!, construirPayload(fila)))
+    );
+    if (idsParaEliminar.length > 0) {
+      await Promise.all(idsParaEliminar.map((id) => deleteDeudor(id)));
+    }
+  };
+
+  const syncAcreedores = async (procesoId: string, isEditing: boolean) => {
+    const filasConNombre = acreedoresForm.filter((fila) => fila.nombre.trim());
+    const paraCrear = filasConNombre.filter((fila) => !fila.dbId);
+    const paraActualizar = filasConNombre.filter((fila) => fila.dbId);
+    const idsActivos = new Set(paraActualizar.map((fila) => fila.dbId));
+    const idsParaEliminar = isEditing
+      ? originalAcreedoresIds.filter((id) => !idsActivos.has(id))
+      : [];
+
+    const construirPayload = (fila: AcreedorFormRow) => {
+      const montoParsed = fila.monto.trim() ? Number(fila.monto) : null;
+      const montoFinal =
+        typeof montoParsed === "number" && !Number.isNaN(montoParsed) ? montoParsed : null;
+      return {
+        proceso_id: procesoId,
+        nombre: fila.nombre.trim(),
+        identificacion: fila.identificacion.trim(),
+        tipo_identificacion: fila.tipoIdentificacion.trim() || null,
+        direccion: fila.direccion.trim() || null,
+        telefono: fila.telefono.trim() || null,
+        email: fila.email.trim() || null,
+        apoderado_id: fila.apoderadoId || null,
+        monto_acreencia: montoFinal,
+        tipo_acreencia: fila.tipoAcreencia.trim() || null,
+      };
+    };
+
+    await Promise.all(paraCrear.map((fila) => createAcreedor(construirPayload(fila))));
+    await Promise.all(
+      paraActualizar.map((fila) => updateAcreedor(fila.dbId!, construirPayload(fila)))
+    );
+    if (idsParaEliminar.length > 0) {
+      await Promise.all(idsParaEliminar.map((id) => deleteAcreedor(id)));
+    }
+  };
+
+  const guardarApoderado = async () => {
+    if (!apoderadoForm.nombre.trim() || apoderadoGuardando) return;
+    if (!apoderadoModalTarget) return;
+
+    try {
+      setApoderadoGuardando(true);
+      const created = await createApoderado({
+        nombre: apoderadoForm.nombre.trim(),
+        identificacion: apoderadoForm.identificacion.trim(),
+        email: apoderadoForm.email.trim() || null,
+        telefono: apoderadoForm.telefono.trim() || null,
+        direccion: apoderadoForm.direccion.trim() || null,
+      });
+      setApoderados((prev) => [created, ...prev]);
+      if (apoderadoModalTarget.tipo === "deudor") {
+        actualizarDeudorRow(apoderadoModalTarget.id, {
+          apoderadoId: created.id,
+          apoderadoNombre: created.nombre,
+        });
+      } else {
+        actualizarAcreedorRow(apoderadoModalTarget.id, {
+          apoderadoId: created.id,
+          apoderadoNombre: created.nombre,
+        });
+      }
+    } catch (err) {
+      console.error("Error creando apoderado:", err);
+    } finally {
+      setApoderadoGuardando(false);
+      cerrarModalApoderado();
+    }
+  };
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setError(null);
+    setExito(null);
+
+    if (!numeroProceso.trim()) {
+      setError("El número de proceso es requerido");
+      return;
+    }
+
+    try {
+      setGuardando(true);
+      const procesoPayload: ProcesoInsert = {
+        numero_proceso: numeroProceso.trim(),
+        fecha_inicio: fechaInicio,
+        estado: estado || null,
+        descripcion: descripcion.trim() || null,
+        tipo_proceso: tipoProceso.trim() || null,
+        juzgado: juzgado.trim() || null,
+      };
+
+      const isEditing = Boolean(editingProcesoId);
+      const savedProceso = isEditing
+        ? await updateProceso(editingProcesoId!, procesoPayload)
+        : await createProceso(procesoPayload);
+
+      await syncDeudores(savedProceso.id, isEditing);
+      await syncAcreedores(savedProceso.id, isEditing);
+
+      if (isEditing) {
+        try {
+          await updateProgresoByProcesoId(savedProceso.id, { estado: "iniciado" });
+        } catch (err) {
+          console.error("Error updating progreso:", err);
+        }
+      }
+
+      onSaveSuccess?.(savedProceso);
+
+      if (isEditing) {
+        setExito("Proceso actualizado exitosamente");
+        await cargarProcesoDetalle(savedProceso.id);
+      } else {
+        setExito("Proceso creado exitosamente");
+        resetFormFields();
+      }
+    } catch (err) {
+      console.error("Error saving proceso:", err);
+      setError(editingProcesoId ? "Error al actualizar el proceso" : "Error al crear el proceso");
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchApoderadosList();
+  }, []);
+
+  useEffect(() => {
+    if (initialProcesoId) {
+      cargarProcesoDetalle(initialProcesoId);
+    }
+  }, [initialProcesoId, cargarProcesoDetalle]);
+
+  return {
+    numeroProceso,
+    setNumeroProceso,
+    fechaInicio,
+    setFechaInicio,
+    estado,
+    setEstado,
+    descripcion,
+    setDescripcion,
+    tipoProceso,
+    setTipoProceso,
+    juzgado,
+    setJuzgado,
+    deudoresForm,
+    agregarDeudorRow,
+    actualizarDeudorRow,
+    eliminarDeudorRow,
+    selectedDeudorId,
+    setSelectedDeudorId,
+    acreedoresForm,
+    agregarAcreedorRow,
+    actualizarAcreedorRow,
+    eliminarAcreedorRow,
+    selectedAcreedorId,
+    setSelectedAcreedorId,
+    apoderados,
+    apoderadoModalOpen,
+    apoderadoModalTarget,
+    apoderadoForm,
+    setApoderadoForm,
+    apoderadoGuardando,
+    guardarApoderado,
+    abrirModalApoderado,
+    cerrarModalApoderado,
+    handleRowApoderadoInput,
+    cargandoDetalle,
+    guardando,
+    error,
+    exito,
+    editingProcesoId,
+    cargandoApoderados,
+    handleSubmit,
+    resetFormFields,
+    cargarProcesoDetalle,
+  };
+}
