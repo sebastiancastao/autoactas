@@ -68,7 +68,7 @@ const VIEW_OPTIONS = [
   { id: "day", label: "Día" },
 ] as const;
 
-const MAX_MOBILE_WEEK_DAYS = 5;
+const MAX_MOBILE_WEEK_DAYS = 3;
 
 const USER_COLOR_PALETTE = [
   "#ef4444", // red
@@ -293,26 +293,23 @@ function CalendarioContent() {
   const hoyISO = toISODate(hoy);
 
   function cambiarPeriodo(direccion: number) {
-    const actual = viewDate;
-    let siguiente: Date;
     if (viewType === "week") {
-      siguiente = addDays(actual, direccion * 7);
-    } else if (viewType === "day") {
-      siguiente = addDays(actual, direccion);
-    } else {
-      siguiente = addMonths(actual, direccion);
+      const stepDays = isMobileScreen ? MAX_MOBILE_WEEK_DAYS : 7;
+      const nuevaSeleccion = addDays(new Date(diaSeleccionadoISO), direccion * stepDays);
+      setDiaSeleccionadoISO(toISODate(nuevaSeleccion));
+      setViewDate(startOfWeek(nuevaSeleccion));
+      return;
     }
-    setViewDate(siguiente);
+
     if (viewType === "day") {
+      const siguiente = addDays(viewDate, direccion);
+      setViewDate(siguiente);
       setDiaSeleccionadoISO(toISODate(siguiente));
       return;
     }
-    if (viewType === "week") {
-      const offset = (new Date(diaSeleccionadoISO).getDay() + 6) % 7;
-      const nuevoSeleccion = addDays(siguiente, offset);
-      setDiaSeleccionadoISO(toISODate(nuevoSeleccion));
-      return;
-    }
+
+    const siguiente = addMonths(viewDate, direccion);
+    setViewDate(siguiente);
     const diaPrevio = new Date(diaSeleccionadoISO);
     const diasMes = endOfMonth(siguiente).getDate();
     const diaDeseado = Math.min(diaPrevio.getDate(), diasMes);
