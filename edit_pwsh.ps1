@@ -1,0 +1,1 @@
+ = Get-Content app/procesos/registro/page.tsx; [209] = '        success: ${validRows.length} deudor registrados.,\r'; [269] = '        success: ${validRows.length} acreedor registrados.,\r'; Set-Content -NoNewline app/procesos/registro/page.tsx 

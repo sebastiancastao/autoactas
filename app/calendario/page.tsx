@@ -68,6 +68,8 @@ const VIEW_OPTIONS = [
   { id: "day", label: "Día" },
 ] as const;
 
+const MAX_MOBILE_WEEK_DAYS = 5;
+
 const USER_COLOR_PALETTE = [
   "#ef4444", // red
   "#f97316", // orange
@@ -93,6 +95,7 @@ function CalendarioContent() {
   const [diaSeleccionadoISO, setDiaSeleccionadoISO] = useState(() => toISODate(new Date()));
   const [viewType, setViewType] = useState<"month" | "week" | "day">("month");
   const diaSeleccionadoDate = useMemo(() => new Date(diaSeleccionadoISO), [diaSeleccionadoISO]);
+  const [isMobileScreen, setIsMobileScreen] = useState(false);
 
   const [eventos, setEventos] = useState<EventoCalendario[]>([]);
   const [modalAbierto, setModalAbierto] = useState(false);
@@ -152,6 +155,23 @@ function CalendarioContent() {
     }
     setViewDate((prev) => (prev.getTime() === nuevoViewDate.getTime() ? prev : nuevoViewDate));
   }, [viewType, diaSeleccionadoDate]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+    const mediaQuery = window.matchMedia("(max-width: 640px)");
+    const handleChange = (event: MediaQueryListEvent) => {
+      setIsMobileScreen(event.matches);
+    };
+    setIsMobileScreen(mediaQuery.matches);
+    mediaQuery.addEventListener?.("change", handleChange);
+    mediaQuery.addListener?.(handleChange);
+    return () => {
+      mediaQuery.removeEventListener?.("change", handleChange);
+      mediaQuery.removeListener?.(handleChange);
+    };
+  }, []);
 
   useEffect(() => {
     async function fetchData() {
@@ -233,6 +253,20 @@ function CalendarioContent() {
       };
     });
   }, [viewDate]);
+
+  const displayWeekDays = useMemo(() => {
+    if (!isMobileScreen) return semanaDias;
+    const maxVisible = Math.min(semanaDias.length, MAX_MOBILE_WEEK_DAYS);
+    const selectedIndex = semanaDias.findIndex((day) => day.iso === diaSeleccionadoISO);
+    const normalizedIndex = selectedIndex === -1 ? 0 : selectedIndex;
+    const windowStart = Math.max(0, Math.min(normalizedIndex - 2, semanaDias.length - maxVisible));
+    return semanaDias.slice(windowStart, windowStart + maxVisible);
+  }, [isMobileScreen, semanaDias, diaSeleccionadoISO]);
+
+  const weekGridStyle = useMemo(() => {
+    const columns = Math.max(displayWeekDays.length, 1);
+    return { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` };
+  }, [displayWeekDays.length]);
 
   const eventosFiltrados = useMemo(() => {
     if (usuarioFiltro === "global") return eventos;
@@ -550,16 +584,21 @@ function CalendarioContent() {
             )}
             {viewType === "week" && (
               <>
-                <div className="grid grid-cols-7 gap-2 pb-3 text-xs font-medium text-zinc-500 dark:text-zinc-400">
-                  {semanaDias.map((day) => (
+                <div
+                  className="grid gap-2 pb-3 text-xs font-medium text-zinc-500 dark:text-zinc-400"
+                  style={weekGridStyle}
+                >
+                  {displayWeekDays.map((day) => (
                     <div key={day.iso} className="text-center">
-                      <p className="uppercase tracking-wide">{day.date.toLocaleDateString("es-ES", { weekday: "short" })}</p>
+                      <p className="uppercase tracking-wide">
+                        {day.date.toLocaleDateString("es-ES", { weekday: "short" })}
+                      </p>
                       <p className="text-sm font-semibold">{day.date.getDate()}</p>
                     </div>
                   ))}
                 </div>
-                <div className="grid grid-cols-7 gap-3">
-                  {semanaDias.map((day) => {
+                <div className="grid gap-3" style={weekGridStyle}>
+                  {displayWeekDays.map((day) => {
                     const selected = day.iso === diaSeleccionadoISO;
                     const dayEvents = eventosPorDia[day.iso] || [];
                     return (

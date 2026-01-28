@@ -20,17 +20,8 @@ import {
   deleteProceso,
   createProceso,
 } from "@/lib/api/proceso";
-import type {
-  Proceso,
-  ProcesoInsert,
-  AcreedorInsert,
-  DeudorInsert,
-  ApoderadoInsert,
-  Apoderado,
-} from "@/lib/database.types";
-import { createAcreedor } from "@/lib/api/acreedores";
-import { createDeudor } from "@/lib/api/deudores";
-import { createApoderado, getApoderados } from "@/lib/api/apoderados";
+import type { Proceso, ProcesoInsert, Apoderado } from "@/lib/database.types";
+import { getApoderados } from "@/lib/api/apoderados";
 import ProcesoForm from "@/components/proceso-form";
 import { useProcesoForm } from "@/lib/hooks/useProcesoForm";
 import { useRouter } from "next/navigation";
@@ -54,18 +45,6 @@ function parseEmailList(value: string) {
     )
   );
 }
-
-type PersonaRow = {
-  nombre: string;
-  email: string;
-  relacion?: string;
-};
-
-const createPersonaRow = (): PersonaRow => ({
-  nombre: "",
-  email: "",
-  relacion: "",
-});
 
 
 
@@ -95,15 +74,6 @@ export default function ProcesosPage() {
     juzgado: "",
     descripcion: "",
   });
-  const [nuevosAcreedores, setNuevosAcreedores] = useState<PersonaRow[]>([
-    createPersonaRow(),
-  ]);
-  const [nuevosDeudores, setNuevosDeudores] = useState<PersonaRow[]>([
-    createPersonaRow(),
-  ]);
-  const [nuevosApoderados, setNuevosApoderados] = useState<PersonaRow[]>([
-    createPersonaRow(),
-  ]);
   const [creandoProceso, setCreandoProceso] = useState(false);
   const [mensajeProceso, setMensajeProceso] = useState<string | null>(null);
 
@@ -235,30 +205,6 @@ export default function ProcesosPage() {
     };
   }, []);
 
-  const updatePersonaRow = (
-    setRows: Dispatch<SetStateAction<PersonaRow[]>>,
-    index: number,
-    field: keyof PersonaRow,
-    value: string,
-  ) => {
-    setRows((prev) =>
-      prev.map((row, rowIndex) =>
-        rowIndex === index ? { ...row, [field]: value } : row,
-      ),
-    );
-  };
-
-  const removePersonaRow = (
-    setRows: Dispatch<SetStateAction<PersonaRow[]>>,
-    index: number,
-  ) => {
-    setRows((prev) => prev.filter((_, rowIndex) => rowIndex !== index));
-  };
-
-  const addPersonaRow = (setRows: Dispatch<SetStateAction<PersonaRow[]>>) => {
-    setRows((prev) => [...prev, createPersonaRow()]);
-  };
-
   async function crearProcesoDesdePanel() {
     if (creandoProceso) return;
     if (!nuevoProceso.numero.trim()) {
@@ -278,40 +224,6 @@ export default function ProcesosPage() {
       };
       const nuevo = await createProceso(payload);
       setProcesos((prev) => [nuevo, ...prev]);
-      const promises: Promise<void>[] = [];
-      nuevosAcreedores
-        .filter((row) => row.nombre.trim())
-        .forEach((row) => {
-          const data: AcreedorInsert = {
-            nombre: row.nombre.trim(),
-            email: row.email.trim() || null,
-            proceso_id: nuevo.id,
-          };
-          promises.push(createAcreedor(data).then(() => undefined));
-        });
-      nuevosDeudores
-        .filter((row) => row.nombre.trim())
-        .forEach((row) => {
-          const data: DeudorInsert = {
-            nombre: row.nombre.trim(),
-            email: row.email.trim() || null,
-            proceso_id: nuevo.id,
-          };
-          promises.push(createDeudor(data).then(() => undefined));
-        });
-      nuevosApoderados
-        .filter((row) => row.nombre.trim())
-        .forEach((row) => {
-          const data: ApoderadoInsert = {
-            nombre: row.nombre.trim(),
-            email: row.email.trim() || null,
-            proceso_id: nuevo.id,
-          };
-          promises.push(createApoderado(data).then(() => undefined));
-        });
-      await Promise.all(promises);
-      const refreshedApoderados = await getApoderados();
-      setApoderadoOptions(refreshedApoderados ?? []);
       setNuevoProceso({
         numero: "",
         fecha: new Date().toISOString().slice(0, 10),
@@ -320,9 +232,6 @@ export default function ProcesosPage() {
         juzgado: "",
         descripcion: "",
       });
-      setNuevosAcreedores([createPersonaRow()]);
-      setNuevosDeudores([createPersonaRow()]);
-      setNuevosApoderados([createPersonaRow()]);
       setMensajeProceso(`Proceso ${nuevo.numero_proceso} creado correctamente.`);
     } catch (error) {
       console.error("Error creando proceso desde panel:", error);
@@ -631,139 +540,6 @@ export default function ProcesosPage() {
                     className="w-full rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-xs outline-none"
                   />
                 </div>
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between text-xs font-semibold uppercase text-zinc-500">
-                    <span>Acreedores</span>
-                    <button
-                      type="button"
-                      onClick={() => addPersonaRow(setNuevosAcreedores)}
-                      className="rounded-full border border-dashed border-zinc-300 px-2 py-0.5 text-[10px]"
-                    >
-                      + agregar
-                    </button>
-                  </div>
-                  {nuevosAcreedores.map((row, index) => (
-                    <div key={`acreedor-${index}`} className="flex gap-2">
-                      <input
-                        value={row.nombre}
-                        onChange={(e) =>
-                          updatePersonaRow(setNuevosAcreedores, index, "nombre", e.target.value)
-                        }
-                        placeholder="Nombre"
-                        className="flex-1 rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none"
-                      />
-                      <input
-                        value={row.email}
-                        onChange={(e) =>
-                          updatePersonaRow(setNuevosAcreedores, index, "email", e.target.value)
-                        }
-                        placeholder="Correo"
-                        className="flex-1 rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none"
-                      />
-                      {nuevosAcreedores.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => removePersonaRow(setNuevosAcreedores, index)}
-                          className="rounded-full bg-red-50 px-2 text-xs text-red-600"
-                        >
-                          ✕
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between text-xs font-semibold uppercase text-zinc-500">
-                    <span>Deudores</span>
-                    <button
-                      type="button"
-                      onClick={() => addPersonaRow(setNuevosDeudores)}
-                      className="rounded-full border border-dashed border-zinc-300 px-2 py-0.5 text-[10px]"
-                    >
-                      + agregar
-                    </button>
-                  </div>
-                  {nuevosDeudores.map((row, index) => (
-                    <div key={`deudor-${index}`} className="flex gap-2">
-                      <input
-                        value={row.nombre}
-                        onChange={(e) =>
-                          updatePersonaRow(setNuevosDeudores, index, "nombre", e.target.value)
-                        }
-                        placeholder="Nombre"
-                        className="flex-1 rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none"
-                      />
-                      <input
-                        value={row.email}
-                        onChange={(e) =>
-                          updatePersonaRow(setNuevosDeudores, index, "email", e.target.value)
-                        }
-                        placeholder="Correo"
-                        className="flex-1 rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none"
-                      />
-                      {nuevosDeudores.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => removePersonaRow(setNuevosDeudores, index)}
-                          className="rounded-full bg-red-50 px-2 text-xs text-red-600"
-                        >
-                          ✕
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between text-xs font-semibold uppercase text-zinc-500">
-                    <span>Apoderados</span>
-                    <button
-                      type="button"
-                      onClick={() => addPersonaRow(setNuevosApoderados)}
-                      className="rounded-full border border-dashed border-zinc-300 px-2 py-0.5 text-[10px]"
-                    >
-                      + agregar
-                    </button>
-                  </div>
-                  {nuevosApoderados.map((row, index) => (
-                    <div key={`apoderado-${index}`} className="flex gap-2">
-                      <input
-                        value={row.nombre}
-                        onChange={(e) =>
-                          updatePersonaRow(setNuevosApoderados, index, "nombre", e.target.value)
-                        }
-                        placeholder="Nombre"
-                        className="flex-1 rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none"
-                      />
-                      <input
-                        list="apoderado-suggestions"
-                        value={row.email}
-                        onChange={(e) =>
-                          updatePersonaRow(setNuevosApoderados, index, "email", e.target.value)
-                        }
-                        placeholder="Correo"
-                        className="flex-1 rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none"
-                      />
-                      {nuevosApoderados.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => removePersonaRow(setNuevosApoderados, index)}
-                          className="rounded-full bg-red-50 px-2 text-xs text-red-600"
-                        >
-                          ✕
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                  <datalist id="apoderado-suggestions">
-                    {apoderadoOptions
-                      .filter((option) => option.email)
-                      .map((option) => (
-                        <option key={option.id} value={option.email ?? ""}>
-                          {option.nombre}
-                        </option>
-                      ))}
-                  </datalist>
-                </div>
                 <div className="flex flex-col gap-2">
                   <button
                     type="button"
@@ -771,7 +547,7 @@ export default function ProcesosPage() {
                     disabled={creandoProceso}
                     className="h-12 rounded-2xl bg-emerald-600 px-6 text-sm font-medium text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-emerald-400 dark:text-black"
                   >
-                    {creandoProceso ? "Creando proceso..." : "Guardar proceso y apoderados"}
+                    {creandoProceso ? "Creando proceso..." : "Guardar proceso"}
                   </button>
                   {mensajeProceso && (
                     <p className="text-xs text-zinc-500 dark:text-zinc-400">{mensajeProceso}</p>
