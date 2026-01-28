@@ -68,6 +68,25 @@ const VIEW_OPTIONS = [
   { id: "day", label: "Día" },
 ] as const;
 
+const USER_COLOR_PALETTE = [
+  "#ef4444", // red
+  "#f97316", // orange
+  "#facc15", // yellow
+  "#4ade80", // green
+  "#22d3ee", // cyan
+  "#60a5fa", // blue
+  "#a855f7", // purple
+  "#ec4899", // pink
+] as const;
+const DEFAULT_EVENT_COLOR = "#94a3b8";
+
+function withAlpha(hex: string, alpha: string) {
+  if (/^#[0-9a-f]{6}$/i.test(hex)) {
+    return `${hex}${alpha}`;
+  }
+  return hex;
+}
+
 function CalendarioContent() {
   const hoy = useMemo(() => new Date(), []);
   const [viewDate, setViewDate] = useState(() => startOfMonth(new Date()));
@@ -90,6 +109,37 @@ function CalendarioContent() {
   const [procesos, setProcesos] = useState<Proceso[]>([]);
   const [progresos, setProgresos] = useState<Progreso[]>([]);
   const [guardando, setGuardando] = useState(false);
+
+  const userColorMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    usuarios.forEach((usuario, index) => {
+      map[usuario.id] = USER_COLOR_PALETTE[index % USER_COLOR_PALETTE.length];
+    });
+    return map;
+  }, [usuarios]);
+
+  const getEventoStyle = (usuarioId?: string) => {
+    const color = userColorMap[usuarioId ?? ""] ?? DEFAULT_EVENT_COLOR;
+    return {
+      borderColor: color,
+      backgroundColor: withAlpha(color, "20"),
+    };
+  };
+
+  const usuarioColorChips = useMemo(() => {
+    return [
+      {
+        id: "global",
+        label: "Global (Todos)",
+        color: DEFAULT_EVENT_COLOR,
+      },
+      ...usuarios.map((usuario) => ({
+        id: usuario.id,
+        label: usuario.nombre,
+        color: userColorMap[usuario.id] ?? DEFAULT_EVENT_COLOR,
+      })),
+    ];
+  }, [usuarios, userColorMap]);
 
   useEffect(() => {
     let nuevoViewDate: Date;
@@ -400,17 +450,37 @@ function CalendarioContent() {
                   </button>
                 ))}
               </div>
-              <select
-                value={usuarioFiltro}
-                onChange={(e) => setUsuarioFiltro(e.target.value)}
-                disabled={cargandoUsuarios}
-                className="h-11 min-w-[180px] rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-medium shadow-sm transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10 dark:text-zinc-200 outline-none cursor-pointer"
-              >
-                <option value="global">Global (Todos)</option>
-                {usuarios.map((u) => (
-                  <option key={u.id} value={u.id}>{u.nombre}</option>
-                ))}
-              </select>
+              <div className="flex flex-col gap-2">
+                <select
+                  value={usuarioFiltro}
+                  onChange={(e) => setUsuarioFiltro(e.target.value)}
+                  disabled={cargandoUsuarios}
+                  className="h-11 min-w-[180px] rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-medium shadow-sm transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10 dark:text-zinc-200 outline-none cursor-pointer"
+                >
+                  <option value="global">Global (Todos)</option>
+                  {usuarios.map((u) => (
+                    <option key={u.id} value={u.id}>{u.nombre}</option>
+                  ))}
+                </select>
+                <div className="flex flex-wrap gap-2 text-[11px] font-semibold text-zinc-500 dark:text-zinc-300">
+                  {usuarioColorChips.map((chip) => (
+                    <span
+                      key={chip.id}
+                      className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5"
+                      style={{
+                        borderColor: chip.color,
+                        backgroundColor: withAlpha(chip.color, "10"),
+                      }}
+                    >
+                      <span
+                        className="h-2 w-2 rounded-full"
+                        style={{ backgroundColor: chip.color }}
+                      />
+                      {chip.label}
+                    </span>
+                  ))}
+                </div>
+              </div>
               <div className="flex items-center gap-2">
                 <button onClick={irPeriodoAnterior} className="h-11 rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-medium shadow-sm transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10">←</button>
                 <div className="min-w-[220px] rounded-2xl border border-zinc-200 bg-white/70 px-4 py-2 text-center text-sm font-medium shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/5">{etiquetaPeriodo}</div>
@@ -454,16 +524,20 @@ function CalendarioContent() {
                           <span onClick={(e) => { e.stopPropagation(); abrirModalAgregar(day.iso); }} className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-100 text-base font-medium text-zinc-600 opacity-0 transition group-hover:opacity-100 hover:bg-zinc-950 hover:text-white dark:bg-white/10 dark:text-zinc-300 dark:hover:bg-white dark:hover:text-black cursor-pointer">+</span>
                         </div>
                         <div className="mt-2 flex flex-1 flex-col gap-1 overflow-hidden">
-                          {dayEvents.slice(0, 2).map((ev) => (
-                            <div
-                              key={ev.id}
-                              onClick={(e) => { e.stopPropagation(); abrirDetalleEvento(ev); }}
-                              className="truncate rounded-xl border border-zinc-200 bg-white px-2 py-1 text-[11px] text-zinc-700 shadow-sm cursor-pointer transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/10 dark:text-zinc-200 dark:hover:bg-white/20"
-                              title={ev.titulo}
-                            >
-                              {ev.hora ? `${ev.hora} · ` : ""}{ev.titulo}
-                            </div>
-                          ))}
+                          {dayEvents.slice(0, 2).map((ev) => {
+                            const eventStyle = getEventoStyle(ev.usuarioId);
+                            return (
+                              <div
+                                key={ev.id}
+                                onClick={(e) => { e.stopPropagation(); abrirDetalleEvento(ev); }}
+                                className="truncate rounded-xl border border-zinc-200 bg-white px-2 py-1 text-[11px] text-zinc-700 shadow-sm cursor-pointer transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/10 dark:text-zinc-200 dark:hover:bg-white/20"
+                                style={eventStyle}
+                                title={ev.titulo}
+                              >
+                                {ev.hora ? `${ev.hora} · ` : ""}{ev.titulo}
+                              </div>
+                            );
+                          })}
                           {dayEvents.length > 2 && <div className="text-[11px] text-zinc-500 dark:text-zinc-400">+{dayEvents.length - 2} más</div>}
                         </div>
                         {dayEvents.length > 0 && <span className="absolute bottom-2 right-2 h-2 w-2 rounded-full bg-zinc-950/70 dark:bg-white/70" />}
@@ -505,19 +579,23 @@ function CalendarioContent() {
                           <span onClick={(e) => { e.stopPropagation(); abrirModalAgregar(day.iso); }} className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-100 text-base font-medium text-zinc-600 opacity-0 transition group-hover:opacity-100 hover:bg-zinc-950 hover:text-white dark:bg-white/10 dark:text-zinc-300 dark:hover:bg-white dark:hover:text-black cursor-pointer">+</span>
                         </div>
                         <div className="mt-3 flex flex-1 flex-col gap-2 overflow-hidden">
-                          {dayEvents.length === 0 ? (
+                        {dayEvents.length === 0 ? (
                             <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Sin eventos</p>
                           ) : (
-                            dayEvents.slice(0, 3).map((ev) => (
-                              <div
-                                key={ev.id}
-                                onClick={(e) => { e.stopPropagation(); abrirDetalleEvento(ev); }}
-                                className="truncate rounded-xl border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-700 shadow-sm cursor-pointer transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/10 dark:text-zinc-200 dark:hover:bg-white/20"
-                                title={ev.titulo}
-                              >
-                                {ev.hora ? `${ev.hora} · ` : ""}{ev.titulo}
-                              </div>
-                            ))
+                            dayEvents.slice(0, 3).map((ev) => {
+                              const eventStyle = getEventoStyle(ev.usuarioId);
+                              return (
+                                <div
+                                  key={ev.id}
+                                  onClick={(e) => { e.stopPropagation(); abrirDetalleEvento(ev); }}
+                                  className="truncate rounded-xl border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-700 shadow-sm cursor-pointer transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/10 dark:text-zinc-200 dark:hover:bg-white/20"
+                                  style={eventStyle}
+                                  title={ev.titulo}
+                                >
+                                  {ev.hora ? `${ev.hora} · ` : ""}{ev.titulo}
+                                </div>
+                              );
+                            })
                           )}
                           {dayEvents.length > 3 && <div className="text-[11px] text-zinc-500 dark:text-zinc-400">+{dayEvents.length - 3} más</div>}
                         </div>
@@ -544,8 +622,9 @@ function CalendarioContent() {
                   ) : (
                     eventosDelDia.map((ev) => {
                       const action = getProgresoActionUrl(ev.procesoId);
+                      const eventStyle = getEventoStyle(ev.usuarioId);
                       return (
-                        <div key={ev.id} className="rounded-2xl border border-zinc-200 bg-white/60 p-3 shadow-sm dark:border-white/10 dark:bg-white/5">
+                        <div key={ev.id} style={eventStyle} className="rounded-2xl border border-zinc-200 bg-white/60 p-3 shadow-sm dark:border-white/10 dark:bg-white/5">
                           <div className="grid items-start gap-3 sm:grid-cols-[90px_1fr]">
                             <div className="text-xs text-zinc-500">{ev.hora ?? "Sin hora"}</div>
                             <div className="space-y-2">
@@ -590,11 +669,13 @@ function CalendarioContent() {
               ) : (
                 eventosDelDia.map((ev) => {
                   const action = getProgresoActionUrl(ev.procesoId);
+                  const eventStyle = getEventoStyle(ev.usuarioId);
                   return (
                     <div
                       key={ev.id}
                       onClick={() => abrirDetalleEvento(ev)}
                       className="rounded-2xl border border-zinc-200 bg-white/60 p-3 shadow-sm cursor-pointer transition hover:bg-white dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
+                      style={eventStyle}
                     >
                       <div className="flex items-center justify-between gap-3">
                         <div className="min-w-0">

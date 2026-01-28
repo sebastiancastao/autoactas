@@ -37,22 +37,24 @@ function normalizePathname(pathname: string | null | undefined) {
   return base;
 }
 
-function resolveStageIndex(pathname: string): number {
-  const normalized = normalizePathname(pathname);
-
-  if (normalized === "/" || normalized === "" || normalized.startsWith("/procesos")) {
+function resolveStageIndex(normalizedPathname: string): number {
+  if (
+    !normalizedPathname ||
+    normalizedPathname === "/" ||
+    normalizedPathname.startsWith("/procesos")
+  ) {
     return 0;
   }
-  if (normalized.startsWith("/calendario")) {
+  if (normalizedPathname.startsWith("/calendario")) {
     return 1;
   }
-  if (normalized.startsWith("/inicializacion")) {
+  if (normalizedPathname.startsWith("/inicializacion")) {
     return 2;
   }
-  if (normalized.startsWith("/lista")) {
+  if (normalizedPathname.startsWith("/lista")) {
     return 3;
   }
-  if (normalized.startsWith("/finalizacion")) {
+  if (normalizedPathname.startsWith("/finalizacion")) {
     return 4;
   }
   return 0;
@@ -60,7 +62,15 @@ function resolveStageIndex(pathname: string): number {
 
 export function ProcessProgress() {
   const pathname = usePathname();
-  const activeIndex = useMemo(() => resolveStageIndex(pathname ?? "/"), [pathname]);
+  const normalizedPathname = useMemo(() => normalizePathname(pathname), [pathname]);
+  const activeIndex = useMemo(
+    () => resolveStageIndex(normalizedPathname),
+    [normalizedPathname],
+  );
+
+  if (normalizedPathname === "/login") {
+    return null;
+  }
 
   return (
     <div className="border-b border-zinc-800 bg-gradient-to-b from-zinc-900 via-zinc-950 to-black shadow-sm">
@@ -87,7 +97,6 @@ export function ProcessProgress() {
           <ol className="flex flex-col gap-6 text-[11px] uppercase sm:flex-row sm:items-center sm:gap-4">
             {STEPS.map((step, index) => {
               const isActive = index === activeIndex;
-              const isDone = index < activeIndex;
               return (
                 <li
                   key={step.key}
