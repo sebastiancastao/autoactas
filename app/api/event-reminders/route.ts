@@ -82,6 +82,31 @@ export async function POST(request: NextRequest) {
     .map((evt) => ({ ...evt, eventDate: getEventDateTime(evt as Evento) }))
     .filter((evt) => evt.eventDate && evt.eventDate >= windowStart && evt.eventDate <= windowEnd);
 
+  const webhookPayload = relevantEvents.map((evt) => ({
+    id: evt.id,
+    titulo: evt.titulo,
+    fecha: evt.fecha,
+    hora: evt.hora,
+    procesoId: evt.proceso_id,
+    eventDate: evt.eventDate?.toISOString() ?? null,
+  }));
+  const webhookUrl = process.env.EVENT_REMINDER_WEBHOOK_URL?.trim();
+  if (webhookUrl && webhookPayload.length > 0) {
+    try {
+      await fetch(webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          timestamp: new Date().toISOString(),
+          window: { start: windowStart.toISOString(), end: windowEnd.toISOString() },
+          events: webhookPayload,
+        }),
+      });
+    } catch (webhookError) {
+      console.error("Event reminder webhook failed:", webhookError);
+    }
+  }
+
   let remindersSent = 0;
   let skippedNoRecipients = 0;
   for (const evt of relevantEvents) {

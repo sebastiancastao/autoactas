@@ -61,6 +61,30 @@ El endpoint requiere:
 
 Recomendamos configurar una tarea programada (por ejemplo, Vercel Cron Jobs) que haga `POST https://<tu-app>/api/event-reminders` cada minuto y que incluya el encabezado con el secreto. Cada llamada evalúa los eventos (hora en horario de Bogotá, UTC−05:00) con inicio en ~30 minutos y envía el recordatorio a todos los apoderados asociados al proceso.
 
+Si necesitas exponer los datos de los eventos a otro sistema, configura `EVENT_REMINDER_WEBHOOK_URL` con la URL del receptor. Una vez que se detectan eventos en la ventana de 30 minutos, el endpoint hace un `POST` con el payload:
+
+```json
+{
+  "timestamp": "2026-01-28T12:00:00.000Z",
+  "window": {
+    "start": "2026-01-28T12:27:00.000Z",
+    "end": "2026-01-28T12:33:00.000Z"
+  },
+  "events": [
+    {
+      "id": "event-id",
+      "titulo": "Audiencia",
+      "fecha": "2026-01-28",
+      "hora": "14:00",
+      "procesoId": "proceso-id",
+      "eventDate": "2026-01-28T19:00:00.000Z"
+    }
+  ]
+}
+```
+
+El webhook se invoca incluso si se decide no enviar correos (por ejemplo, cuando no hay apoderados con email). Puedes filtrar los datos de entrada para tomar decisiones externas antes de cualquier envío.
+
 ## Deploy on Vercel
 
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
