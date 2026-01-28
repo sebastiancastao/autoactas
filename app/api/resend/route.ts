@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
     const ccRecipients = sanitizeRecipients(cc);
     const bccRecipients = sanitizeRecipients(bcc);
 
-    const result = await client.emails.send({
+    await client.emails.send({
       to: recipients,
       subject: subject.trim(),
       html: html.trim(),
@@ -71,7 +71,7 @@ export async function POST(request: NextRequest) {
       ...(replyTo ? { reply_to: replyTo.trim() } : {}),
     });
 
-    return NextResponse.json({ id: result.id, message: "Email queued" }, { status: 202 });
+    return NextResponse.json({ message: "Email queued" }, { status: 202 });
   } catch (error) {
     console.error("Resend API error:", error);
     const message =
