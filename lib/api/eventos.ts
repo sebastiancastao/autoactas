@@ -54,11 +54,11 @@ export async function getEventosByFecha(fecha: string) {
   return data
 }
 
-export async function getEventosByRangoFechas(fechaInicio: string, fechaFin: string) {
+export async function getEventosByRangoFechas(fechaprocesos: string, fechaFin: string) {
   const { data, error } = await supabase
     .from('eventos')
     .select('*')
-    .gte('fecha', fechaInicio)
+    .gte('fecha', fechaprocesos)
     .lte('fecha', fechaFin)
     .order('fecha', { ascending: true })
     .order('hora', { ascending: true })

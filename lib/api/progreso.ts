@@ -63,6 +63,15 @@ export async function updateProgreso(id: string, progreso: ProgresoUpdate) {
 }
 
 export async function updateProgresoByProcesoId(procesoId: string, progreso: ProgresoUpdate) {
+  // First ensure a progreso record exists
+  const existing = await getProgresoByProcesoId(procesoId)
+
+  if (!existing) {
+    // Create new progreso with the update values
+    return createProgreso({ proceso_id: procesoId, ...progreso })
+  }
+
+  // Update existing progreso
   const { data, error } = await supabase
     .from('progreso')
     .update(progreso)

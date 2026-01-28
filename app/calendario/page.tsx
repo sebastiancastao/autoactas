@@ -138,10 +138,10 @@ function CalendarioContent() {
   const vistaTexto = viewType === "week" ? "semanal" : viewType === "day" ? "diaria" : "mensual";
   const etiquetaPeriodo = useMemo(() => {
     if (viewType === "week") {
-      const semanaInicio = startOfWeek(viewDate);
+      const semanaprocesos = startOfWeek(viewDate);
       const semanaFin = endOfWeek(viewDate);
       const resumenSemana = new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "short" });
-      return `Semana del ${resumenSemana.format(semanaInicio)} al ${resumenSemana.format(semanaFin)}`;
+      return `Semana del ${resumenSemana.format(semanaprocesos)} al ${resumenSemana.format(semanaFin)}`;
     }
     if (viewType === "day") {
       const labelDia = new Intl.DateTimeFormat("es-ES", { weekday: "long", day: "numeric", month: "long" });
@@ -173,9 +173,9 @@ function CalendarioContent() {
   }, [viewDate]);
 
   const semanaDias = useMemo(() => {
-    const inicioSemana = startOfWeek(viewDate);
+    const procesosSemana = startOfWeek(viewDate);
     return Array.from({ length: 7 }).map((_, index) => {
-      const fecha = addDays(inicioSemana, index);
+      const fecha = addDays(procesosSemana, index);
       return {
         date: fecha,
         iso: toISODate(fecha),
@@ -327,15 +327,17 @@ function CalendarioContent() {
   }
 
   function getProgresoActionUrl(procesoId: string | undefined): { url: string; label: string } | null {
+    if (!procesoId) return null;
     const estado = getProgresoEstado(procesoId);
-    if (!estado || estado === 'finalizado' || !procesoId) return null;
 
-    if (estado === 'no_iniciado') {
-      return { url: `/?procesoId=${procesoId}`, label: 'Iniciar proceso' };
+    // If no progreso record exists or estado is 'no_iniciado', show Iniciar button
+    if (!estado || estado === 'no_iniciado') {
+      return { url: `/?procesoId=${procesoId}`, label: 'Iniciar' };
     }
     if (estado === 'iniciado') {
       return { url: `/lista?procesoId=${procesoId}`, label: 'Tomar asistencia' };
     }
+    // estado === 'finalizado' - no action needed
     return null;
   }
 
@@ -420,9 +422,7 @@ function CalendarioContent() {
         </header>
 
         <nav className="mb-8 flex flex-wrap gap-2">
-          <Link href="/" className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white">← Inicio</Link>
-          <Link href="/lista" className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white">Asistencia</Link>
-          <Link href="/finalizacion" className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white">Finalización</Link>
+          <Link href="/procesos" className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white">← procesos</Link>
         </nav>
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">

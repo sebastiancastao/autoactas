@@ -15,7 +15,7 @@ import { Suspense, useMemo, useState } from "react";
 
 
 
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 
 
 
@@ -247,7 +247,15 @@ function HomeContent() {
 
 
 
-  const form = useProcesoForm({ initialProcesoId: procesoId ?? undefined });
+  const router = useRouter();
+  const form = useProcesoForm({
+    initialProcesoId: procesoId ?? undefined,
+    onSaveSuccess: (savedProceso) => {
+      if (procesoId) {
+        router.push(`/lista?procesoId=${savedProceso.id}`);
+      }
+    },
+  });
 
 
 

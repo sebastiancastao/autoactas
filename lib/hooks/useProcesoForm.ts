@@ -102,10 +102,12 @@ function createApoderadoForm(): ApoderadoForm {
   };
 }
 
-function mapDeudoresToFormRows(deudores?: Deudor[]): DeudorFormRow[] {
+function mapDeudoresToFormRows(deudores?: Deudor[], apoderados?: Apoderado[]): DeudorFormRow[] {
   if (!deudores || deudores.length === 0) {
     return [createDeudorRow()];
   }
+
+  const apoderadoLookup = new Map(apoderados?.map((a) => [a.id, a.nombre]) ?? []);
 
   return deudores.map((deudor) => ({
     id: uid(),
@@ -116,15 +118,22 @@ function mapDeudoresToFormRows(deudores?: Deudor[]): DeudorFormRow[] {
     direccion: deudor.direccion ?? "",
     telefono: deudor.telefono ?? "",
     email: deudor.email ?? "",
-    apoderadoId: "",
-    apoderadoNombre: "",
+    apoderadoId: deudor.apoderado_id ?? "",
+    apoderadoNombre: deudor.apoderado_id
+      ? apoderadoLookup.get(deudor.apoderado_id) ?? ""
+      : "",
   }));
 }
 
-function mapAcreedoresToFormRows(acreedores?: AcreedorWithApoderado[]): AcreedorFormRow[] {
+function mapAcreedoresToFormRows(
+  acreedores?: AcreedorWithApoderado[],
+  apoderados?: Apoderado[]
+): AcreedorFormRow[] {
   if (!acreedores || acreedores.length === 0) {
     return [createAcreedorRow()];
   }
+
+  const apoderadoLookup = new Map(apoderados?.map((a) => [a.id, a.nombre]) ?? []);
 
   return acreedores.map((acreedor) => ({
     id: uid(),
@@ -136,7 +145,9 @@ function mapAcreedoresToFormRows(acreedores?: AcreedorWithApoderado[]): Acreedor
     telefono: acreedor.telefono ?? "",
     email: acreedor.email ?? "",
     apoderadoId: acreedor.apoderado_id ?? "",
-    apoderadoNombre: acreedor.apoderados?.[0]?.nombre ?? "",
+    apoderadoNombre: acreedor.apoderado_id
+      ? apoderadoLookup.get(acreedor.apoderado_id) ?? ""
+      : "",
     monto: acreedor.monto_acreencia != null ? acreedor.monto_acreencia.toString() : "",
     tipoAcreencia: acreedor.tipo_acreencia ?? "",
   }));
@@ -144,14 +155,14 @@ function mapAcreedoresToFormRows(acreedores?: AcreedorWithApoderado[]): Acreedor
 
 export type UseProcesoFormOptions = {
   initialProcesoId?: string;
-  onSaveSuccess?: (proceso: Proceso) => void;
+  onSaveSuccess?: (proceso: Proceso, context?: { isEditing: boolean }) => void;
 };
 
 export type ProcesoFormContext = {
   numeroProceso: string;
   setNumeroProceso: Dispatch<SetStateAction<string>>;
-  fechaInicio: string;
-  setFechaInicio: Dispatch<SetStateAction<string>>;
+  fechaprocesos: string;
+  setFechaprocesos: Dispatch<SetStateAction<string>>;
   estado: string;
   setEstado: Dispatch<SetStateAction<string>>;
   descripcion: string;
@@ -201,7 +212,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
   const { initialProcesoId, onSaveSuccess } = options ?? {};
 
   const [numeroProceso, setNumeroProceso] = useState("");
-  const [fechaInicio, setFechaInicio] = useState(() => new Date().toISOString().split("T")[0]);
+  const [fechaprocesos, setFechaprocesos] = useState(() => new Date().toISOString().split("T")[0]);
   const [estado, setEstado] = useState("Activo");
   const [descripcion, setDescripcion] = useState("");
   const [tipoProceso, setTipoProceso] = useState("");
@@ -304,7 +315,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
     const nuevaFilaDeudor = createDeudorRow();
     const nuevaFilaAcreedor = createAcreedorRow();
     setNumeroProceso("");
-    setFechaInicio(new Date().toISOString().split("T")[0]);
+    setFechaprocesos(new Date().toISOString().split("T")[0]);
     setEstado("Activo");
     setDescripcion("");
     setTipoProceso("");
@@ -331,20 +342,21 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
           setError("No se encontró el proceso");
           return;
         }
+        const procesoApoderados = detalle.apoderados ?? [];
         setEditingProcesoId(detalle.id);
         setNumeroProceso(detalle.numero_proceso);
-        setFechaInicio(detalle.fecha_inicio ?? new Date().toISOString().split("T")[0]);
+        setFechaprocesos(detalle.fecha_procesos ?? new Date().toISOString().split("T")[0]);
         setEstado(detalle.estado ?? "Activo");
         setDescripcion(detalle.descripcion ?? "");
         setTipoProceso(detalle.tipo_proceso ?? "");
         setJuzgado(detalle.juzgado ?? "");
 
-        const deudorRows = mapDeudoresToFormRows(detalle.deudores);
+        const deudorRows = mapDeudoresToFormRows(detalle.deudores, procesoApoderados);
         setOriginalDeudoresIds(detalle.deudores?.map((deudor) => deudor.id) ?? []);
         setDeudoresForm(deudorRows);
         setSelectedDeudorId(deudorRows[0]?.id ?? "");
 
-        const acreedorRows = mapAcreedoresToFormRows(detalle.acreedores);
+        const acreedorRows = mapAcreedoresToFormRows(detalle.acreedores, procesoApoderados);
         setOriginalAcreedoresIds(detalle.acreedores?.map((acreedor) => acreedor.id) ?? []);
         setAcreedoresForm(acreedorRows);
         setSelectedAcreedorId(acreedorRows[0]?.id ?? "");
@@ -441,6 +453,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
     try {
       setApoderadoGuardando(true);
       const created = await createApoderado({
+        proceso_id: editingProcesoId ?? null,
         nombre: apoderadoForm.nombre.trim(),
         identificacion: apoderadoForm.identificacion.trim(),
         email: apoderadoForm.email.trim() || null,
@@ -460,7 +473,13 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
         });
       }
     } catch (err) {
-      console.error("Error creando apoderado:", err);
+      const errorDetails =
+        err instanceof Error
+          ? err.message
+          : err && typeof err === "object"
+          ? JSON.stringify(err, Object.getOwnPropertyNames(err))
+          : String(err);
+      console.error("Error creando apoderado:", errorDetails, err);
     } finally {
       setApoderadoGuardando(false);
       cerrarModalApoderado();
@@ -481,7 +500,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
       setGuardando(true);
       const procesoPayload: ProcesoInsert = {
         numero_proceso: numeroProceso.trim(),
-        fecha_inicio: fechaInicio,
+        fecha_procesos: fechaprocesos,
         estado: estado || null,
         descripcion: descripcion.trim() || null,
         tipo_proceso: tipoProceso.trim() || null,
@@ -504,7 +523,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
         }
       }
 
-      onSaveSuccess?.(savedProceso);
+      onSaveSuccess?.(savedProceso, { isEditing });
 
       if (isEditing) {
         setExito("Proceso actualizado exitosamente");
@@ -514,8 +533,9 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
         resetFormFields();
       }
     } catch (err) {
-      console.error("Error saving proceso:", err);
-      setError(editingProcesoId ? "Error al actualizar el proceso" : "Error al crear el proceso");
+      const errorMessage = err instanceof Error ? err.message : (err as { message?: string })?.message || String(err);
+      console.error("Error saving proceso:", errorMessage, err);
+      setError(editingProcesoId ? `Error al actualizar el proceso: ${errorMessage}` : `Error al crear el proceso: ${errorMessage}`);
     } finally {
       setGuardando(false);
     }
@@ -534,8 +554,8 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
   return {
     numeroProceso,
     setNumeroProceso,
-    fechaInicio,
-    setFechaInicio,
+    fechaprocesos,
+    setFechaprocesos,
     estado,
     setEstado,
     descripcion,

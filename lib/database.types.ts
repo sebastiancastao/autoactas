@@ -96,7 +96,7 @@ export interface Database {
         Row: {
           id: string
           numero_proceso: string
-          fecha_inicio: string
+          fecha_procesos: string
           estado: string | null
           descripcion: string | null
           tipo_proceso: string | null
@@ -107,7 +107,7 @@ export interface Database {
         Insert: {
           id?: string
           numero_proceso: string
-          fecha_inicio?: string
+          fecha_procesos?: string
           estado?: string | null
           descripcion?: string | null
           tipo_proceso?: string | null
@@ -118,7 +118,7 @@ export interface Database {
         Update: {
           id?: string
           numero_proceso?: string
-          fecha_inicio?: string
+          fecha_procesos?: string
           estado?: string | null
           descripcion?: string | null
           tipo_proceso?: string | null
@@ -390,7 +390,7 @@ export interface Database {
           proceso_id: string
           estado: 'no_iniciado' | 'iniciado' | 'finalizado'
           numero_audiencias: number
-          fecha_inicio_real: string | null
+          fecha_procesos_real: string | null
           fecha_finalizacion: string | null
           observaciones: string | null
           created_at: string
@@ -401,7 +401,7 @@ export interface Database {
           proceso_id: string
           estado?: 'no_iniciado' | 'iniciado' | 'finalizado'
           numero_audiencias?: number
-          fecha_inicio_real?: string | null
+          fecha_procesos_real?: string | null
           fecha_finalizacion?: string | null
           observaciones?: string | null
           created_at?: string
@@ -412,7 +412,7 @@ export interface Database {
           proceso_id?: string
           estado?: 'no_iniciado' | 'iniciado' | 'finalizado'
           numero_audiencias?: number
-          fecha_inicio_real?: string | null
+          fecha_procesos_real?: string | null
           fecha_finalizacion?: string | null
           observaciones?: string | null
           created_at?: string

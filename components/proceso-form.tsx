@@ -1,7 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Fragment } from "react";
 import type { ProcesoFormContext } from "@/lib/hooks/useProcesoForm";
 
 type ProcesoFormProps = {
@@ -15,8 +14,8 @@ export default function ProcesoForm({ form }: ProcesoFormProps) {
     guardando,
     numeroProceso,
     setNumeroProceso,
-    fechaInicio,
-    setFechaInicio,
+    fechaprocesos,
+    setFechaprocesos,
     estado,
     setEstado,
     tipoProceso,
@@ -52,26 +51,9 @@ export default function ProcesoForm({ form }: ProcesoFormProps) {
     resetFormFields,
   } = form;
 
-  const router = useRouter();
-  const [redirected, setRedirected] = useState(false);
-
-  useEffect(() => {
-    if (!editingProcesoId) {
-      setRedirected(false);
-      return;
-    }
-    if (exito && editingProcesoId && !redirected) {
-      setRedirected(true);
-      const params = new URLSearchParams({
-        procesoId: editingProcesoId,
-        eventoId: editingProcesoId,
-      });
-      router.push(`/listado?${params.toString()}`);
-    }
-  }, [exito, editingProcesoId, redirected, router]);
-
   return (
-    <>
+    <>
+
       <section className="rounded-3xl border border-zinc-200 bg-white/80 p-5 shadow-[0_12px_40px_-20px_rgba(0,0,0,0.35)] backdrop-blur dark:border-white/10 dark:bg-white/5 sm:p-6">
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
@@ -107,7 +89,8 @@ export default function ProcesoForm({ form }: ProcesoFormProps) {
           <div className="mb-4 rounded-2xl border border-green-200 bg-green-50 p-3 text-sm text-green-700 dark:border-green-900 dark:bg-green-950/50 dark:text-green-400">
             {exito}
           </div>
-        )}
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
@@ -130,8 +113,8 @@ export default function ProcesoForm({ form }: ProcesoFormProps) {
               </label>
               <input
                 type="date"
-                value={fechaInicio}
-                onChange={(e) => setFechaInicio(e.target.value)}
+                value={fechaprocesos}
+                onChange={(e) => setFechaprocesos(e.target.value)}
                 className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
               />
             </div>
@@ -191,7 +174,8 @@ export default function ProcesoForm({ form }: ProcesoFormProps) {
               rows={3}
               className="w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10 resize-none"
             />
-          </div>
+          </div>
+
           <div className="space-y-6">
             <div className="rounded-2xl border border-zinc-200 bg-white/80 p-4 shadow-sm dark:border-white/10 dark:bg-white/5">
               <div className="flex items-center justify-between">
@@ -252,36 +236,6 @@ export default function ProcesoForm({ form }: ProcesoFormProps) {
 
                       <div>
                         <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
-                          Identificación
-                        </label>
-                        <input
-                          value={deudor.identificacion}
-                          onChange={(e) =>
-                            actualizarDeudorRow(deudor.id, { identificacion: e.target.value })
-                          }
-                          placeholder="Ej: 1.234.567.890"
-                          className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
-                          Tipo de identificación
-                        </label>
-                        <input
-                          value={deudor.tipoIdentificacion}
-                          onChange={(e) =>
-                            actualizarDeudorRow(deudor.id, {
-                              tipoIdentificacion: e.target.value,
-                            })
-                          }
-                          placeholder="Ej: Cédula de ciudadanía"
-                          className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
                           Teléfono
                         </label>
                         <input
@@ -291,6 +245,40 @@ export default function ProcesoForm({ form }: ProcesoFormProps) {
                           }
                           placeholder="Ej: +57 300 000 0000"
                           inputMode="tel"
+                          className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+                          Tipo de identificación
+                        </label>
+                        <select
+                          value={deudor.tipoIdentificacion}
+                          onChange={(e) =>
+                            actualizarDeudorRow(deudor.id, {
+                              tipoIdentificacion: e.target.value,
+                            })
+                          }
+                          className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10 cursor-pointer"
+                        >
+                          <option value="">Seleccionar...</option>
+                          <option value="Cedula de Ciudadania">Cedula de Ciudadania</option>
+                          <option value="Cedula de Extranjeria">Cedula de Extranjeria</option>
+                          <option value="Pasaporte">Pasaporte</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+                          Identificación
+                        </label>
+                        <input
+                          value={deudor.identificacion}
+                          onChange={(e) =>
+                            actualizarDeudorRow(deudor.id, { identificacion: e.target.value })
+                          }
+                          placeholder="Ej: 1.234.567.890"
                           className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
                         />
                       </div>
@@ -376,7 +364,8 @@ export default function ProcesoForm({ form }: ProcesoFormProps) {
                   </p>
                 </div>
               )}
-            </div>
+            </div>
+
             <div className="rounded-2xl border border-zinc-200 bg-white/80 p-4 shadow-sm dark:border-white/10 dark:bg-white/5">
               <div className="flex items-center justify-between">
                 <div>
@@ -436,36 +425,6 @@ export default function ProcesoForm({ form }: ProcesoFormProps) {
 
                       <div>
                         <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
-                          Identificación
-                        </label>
-                        <input
-                          value={acreedor.identificacion}
-                          onChange={(e) =>
-                            actualizarAcreedorRow(acreedor.id, { identificacion: e.target.value })
-                          }
-                          placeholder="Ej: 9.876.543.210"
-                          className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
-                          Tipo de identificación
-                        </label>
-                        <input
-                          value={acreedor.tipoIdentificacion}
-                          onChange={(e) =>
-                            actualizarAcreedorRow(acreedor.id, {
-                              tipoIdentificacion: e.target.value,
-                            })
-                          }
-                          placeholder="Ej: NIT"
-                          className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
                           Teléfono
                         </label>
                         <input
@@ -475,6 +434,41 @@ export default function ProcesoForm({ form }: ProcesoFormProps) {
                           }
                           placeholder="Ej: +57 300 000 0000"
                           inputMode="tel"
+                          className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+                          Tipo de identificación
+                        </label>
+                        <select
+                          value={acreedor.tipoIdentificacion}
+                          onChange={(e) =>
+                            actualizarAcreedorRow(acreedor.id, {
+                              tipoIdentificacion: e.target.value,
+                            })
+                          }
+                          className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10 cursor-pointer"
+                        >
+                          <option value="">Seleccionar...</option>
+                          <option value="Cedula de Ciudadania">Cedula de Ciudadania</option>
+                          <option value="Cedula de Extranjeria">Cedula de Extranjeria</option>
+                          <option value="Pasaporte">Pasaporte</option>
+                          <option value="NIT">NIT</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+                          Identificación
+                        </label>
+                        <input
+                          value={acreedor.identificacion}
+                          onChange={(e) =>
+                            actualizarAcreedorRow(acreedor.id, { identificacion: e.target.value })
+                          }
+                          placeholder="Ej: 9.876.543.210"
                           className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
                         />
                       </div>
@@ -577,7 +571,8 @@ export default function ProcesoForm({ form }: ProcesoFormProps) {
                 </div>
               )}
             </div>
-          </div>
+          </div>
+
           <datalist id="apoderados-list">
             {apoderados.map((apoderado) => (
               <option
@@ -600,7 +595,8 @@ export default function ProcesoForm({ form }: ProcesoFormProps) {
             {guardando ? "Guardando..." : editingProcesoId ? "Guardar y continuar" : "Crear Proceso"}
           </button>
         </form>
-      </section>
+      </section>
+
       {apoderadoModalOpen && (
         <div className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center">
           <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={cerrarModalApoderado} />
@@ -713,4 +709,5 @@ export default function ProcesoForm({ form }: ProcesoFormProps) {
       )}
     </>
   );
-}
+}
+

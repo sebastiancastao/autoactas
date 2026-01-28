@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
 
 import { getProcesoWithRelations } from "@/lib/api/proceso";
+import { getApoderadosByIds } from "@/lib/api/apoderados";
 import { createAsistenciasBulk } from "@/lib/api/asistencia";
 import type { Apoderado, AsistenciaInsert } from "@/lib/database.types";
 
@@ -55,13 +56,17 @@ type ProcesoConRelaciones = {
   apoderados?: Apoderado[] | null;
 };
 
-function mapApoderadosFromProceso(detalle?: ProcesoConRelaciones): Asistente[] {
+function mapApoderadosFromProceso(
+  detalle?: ProcesoConRelaciones,
+  apoderados?: Apoderado[]
+): Asistente[] {
   if (!detalle) return [];
 
+  const listaApoderados = apoderados ?? detalle.apoderados ?? [];
   const filas: Asistente[] = [];
 
-  // Get apoderados directly from proceso
-  detalle.apoderados?.forEach((apoderado) => {
+  // Get apoderados directly from proceso or participants
+  listaApoderados.forEach((apoderado) => {
     // Find if this apoderado represents an acreedor
     const acreedor = detalle.acreedores?.find(
       (a) => a.apoderado_id === apoderado.id
@@ -91,6 +96,13 @@ function mapApoderadosFromProceso(detalle?: ProcesoConRelaciones): Asistente[] {
   });
 
   return filas;
+}
+
+function mergeApoderadosById(primary: Apoderado[], fallback: Apoderado[]): Apoderado[] {
+  const merged = new Map<string, Apoderado>();
+  primary.forEach((apoderado) => merged.set(apoderado.id, apoderado));
+  fallback.forEach((apoderado) => merged.set(apoderado.id, apoderado));
+  return Array.from(merged.values());
 }
 
 function AttendanceContent() {
@@ -127,7 +139,34 @@ function AttendanceContent() {
 
       try {
         const procesoConRelaciones = await getProcesoWithRelations(procesoId);
-        const filas = mapApoderadosFromProceso(procesoConRelaciones);
+        const apoderadoIds = new Set<string>();
+
+        procesoConRelaciones.deudores?.forEach((deudor) => {
+          if (deudor.apoderado_id) {
+            apoderadoIds.add(deudor.apoderado_id);
+          }
+        });
+
+        procesoConRelaciones.acreedores?.forEach((acreedor) => {
+          if (acreedor.apoderado_id) {
+            apoderadoIds.add(acreedor.apoderado_id);
+          }
+        });
+
+        const adicionales =
+          apoderadoIds.size > 0
+            ? await getApoderadosByIds(Array.from(apoderadoIds))
+            : [];
+
+        const apoderadosParaMostrar = mergeApoderadosById(
+          procesoConRelaciones.apoderados ?? [],
+          adicionales
+        );
+
+        const filas = mapApoderadosFromProceso(
+          procesoConRelaciones,
+          apoderadosParaMostrar
+        );
 
         if (!activo) return;
 
@@ -275,10 +314,10 @@ function AttendanceContent() {
         {/* Navigation */}
         <nav className="mb-8 flex flex-wrap gap-2">
           <Link
-            href="/"
+            href="/procesos"
             className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white"
           >
-            ← Inicio
+            ← procesos
           </Link>
           <Link
             href="/calendario"

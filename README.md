@@ -29,6 +29,38 @@ To learn more about Next.js, take a look at the following resources:
 
 You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
+## Email proxy via Resend
+
+To keep email sending logic off the client, the app now exposes a `POST /api/resend` route that forwards payloads to the Resend API. Use the helper in `lib/api/resend.ts` from client components to queue messages:
+
+```ts
+import { sendResendEmail } from "@/lib/api/resend";
+
+await sendResendEmail({
+  to: "recipient@example.com",
+  subject: "Welcome",
+  html: "<p>Hi!</p>",
+});
+```
+
+The route validates `to`, `subject` and `html`, and requires these environment variables:
+
+- `RESEND_API_KEY` (required) – the Resend server API key used by the server route.
+- `RESEND_DEFAULT_FROM` (required unless every request passes a `from` value) – the sender address that shows up in outgoing emails.
+
+If the Resend API responds with an error, the helper surfaces the HTTP status and message.
+
+### Recordatorio de eventos
+
+Para notificar a los apoderados 30 minutos antes de cada evento, la app expone `POST /api/event-reminders`. El endpoint usa la misma cuenta de Resend y marca cada evento como recordado (`eventos.recordatorio = true`) para evitar duplicados.
+
+El endpoint requiere:
+
+- `RESEND_API_KEY` y `RESEND_DEFAULT_FROM` (ya descritos arriba).
+- `EVENT_REMINDER_SECRET` – un valor secreto que debes enviar dentro del encabezado `X-Event-Reminder-Secret` para autorizar la invocación.
+
+Recomendamos configurar una tarea programada (por ejemplo, Vercel Cron Jobs) que haga `POST https://<tu-app>/api/event-reminders` cada minuto y que incluya el encabezado con el secreto. Cada llamada evalúa los eventos (hora en horario de Bogotá, UTC−05:00) con inicio en ~30 minutos y envía el recordatorio a todos los apoderados asociados al proceso.
+
 ## Deploy on Vercel
 
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.

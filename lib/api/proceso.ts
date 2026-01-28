@@ -1,5 +1,6 @@
 import { supabase } from '../supabase'
-import type { ProcesoInsert, ProcesoUpdate } from '../database.types'
+import { getApoderadosByProceso } from './apoderados'
+import type { Apoderado, ProcesoInsert, ProcesoUpdate } from '../database.types'
 
 export async function getProcesos() {
   const { data, error } = await supabase
@@ -29,14 +30,30 @@ export async function getProcesoWithRelations(id: string) {
       *,
       deudores (*),
       acreedores (*),
-      apoderados (*),
       progreso (*)
     `)
     .eq('id', id)
     .single()
 
   if (error) throw error
-  return data
+
+  let apoderados: Apoderado[] | undefined
+  try {
+    apoderados = await getApoderadosByProceso(id)
+  } catch (apError) {
+    const errorDetails =
+      apError instanceof Error
+        ? apError.message
+        : apError && typeof apError === 'object'
+        ? JSON.stringify(apError, Object.getOwnPropertyNames(apError))
+        : String(apError)
+    console.warn('Could not load apoderados for proceso:', errorDetails, apError)
+  }
+
+  return {
+    ...data,
+    apoderados,
+  }
 }
 
 export async function getProcesosWithRelations() {
@@ -46,7 +63,6 @@ export async function getProcesosWithRelations() {
       *,
       deudores (*),
       acreedores (*),
-      apoderados (*),
       progreso (*)
     `)
     .order('created_at', { ascending: false })

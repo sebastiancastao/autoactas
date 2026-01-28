@@ -184,10 +184,10 @@ export default function FinalizacionPage() {
         {/* Navigation */}
         <nav className="mb-8 flex flex-wrap gap-2">
           <Link
-            href="/"
+            href="/procesos"
             className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white"
           >
-            ← Inicio
+            ← procesos
           </Link>
           <Link
             href="/lista"

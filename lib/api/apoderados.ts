@@ -22,6 +22,30 @@ export async function getApoderadoById(id: string) {
   return data
 }
 
+export async function getApoderadosByIds(ids: string[]) {
+  if (ids.length === 0) return []
+
+  const { data, error } = await supabase
+    .from('apoderados')
+    .select('*')
+    .in('id', ids)
+    .order('created_at', { ascending: false })
+
+  if (error) throw error
+  return data
+}
+
+export async function getApoderadosByProceso(procesoId: string) {
+  const { data, error } = await supabase
+    .from('apoderados')
+    .select('*')
+    .eq('proceso_id', procesoId)
+    .order('created_at', { ascending: false })
+
+  if (error) throw error
+  return data ?? []
+}
+
 export async function createApoderado(apoderado: ApoderadoInsert) {
   const { data, error } = await supabase
     .from('apoderados')
