@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
 
   const { data: events, error: eventsError } = await supabase
     .from("eventos")
-    .select("id, titulo, fecha, hora, proceso_id")
+    .select("id, titulo, fecha, hora, proceso_id, usuario_id")
     .eq("recordatorio", false)
     .gte("fecha", earliestDate)
     .lte("fecha", latestDate)
@@ -124,13 +124,31 @@ export async function POST(request: NextRequest) {
       continue;
     }
 
-    const recipients = Array.from(
-      new Set(
-        (apoderados ?? [])
-          .map((a) => a.email?.trim())
-          .filter((email): email is string => Boolean(email))
-      )
+    const recipientSet = new Set(
+      (apoderados ?? [])
+        .map((a) => a.email?.trim())
+        .filter((email): email is string => Boolean(email))
     );
+
+    let assignedUserEmail: string | null = null;
+    if (evt.usuario_id) {
+      const { data: usuario, error: usuarioError } = await supabase
+        .from("usuarios")
+        .select("email")
+        .eq("id", evt.usuario_id)
+        .maybeSingle();
+      if (usuarioError) {
+        console.error("Unable to load assigned user for event:", usuarioError);
+      } else {
+        assignedUserEmail = usuario?.email?.trim() ?? null;
+      }
+    }
+
+    if (assignedUserEmail) {
+      recipientSet.add(assignedUserEmail);
+    }
+
+    const recipients = Array.from(recipientSet);
 
     if (recipients.length === 0) {
       skippedNoRecipients++;

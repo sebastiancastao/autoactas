@@ -9,13 +9,11 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { getProcesos, deleteProceso } from "@/lib/api/proceso";
-
 import type { Proceso } from "@/lib/database.types";
-
 import ProcesoForm from "@/components/proceso-form";
-
 import { useProcesoForm } from "@/lib/hooks/useProcesoForm";
 import { useRouter } from "next/navigation";
+import { sendResendEmail } from "@/lib/api/resend";
 
 
 
@@ -28,6 +26,8 @@ export default function ProcesosPage() {
   const [listError, setListError] = useState<string | null>(null);
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const [formVisible, setFormVisible] = useState(false);
 
 
 
@@ -90,9 +90,22 @@ export default function ProcesosPage() {
 
   const form = useProcesoForm({ onSaveSuccess: handleSaveSuccess });
 
-  const { editingProcesoId, cargandoDetalle, cargarProcesoDetalle } = form;
+  const {
+    editingProcesoId,
+    cargandoDetalle,
+    cargarProcesoDetalle,
+    resetFormFields,
+  } = form;
+
+  const shouldShowForm = formVisible || Boolean(editingProcesoId);
 
 
+
+  useEffect(() => {
+    if (editingProcesoId) {
+      setFormVisible(true);
+    }
+  }, [editingProcesoId]);
 
   useEffect(() => {
 
@@ -165,8 +178,7 @@ export default function ProcesosPage() {
 
 
         <nav className="mb-8 flex flex-wrap gap-2">
-
-         
+          
 
           <Link
 
@@ -180,15 +192,27 @@ export default function ProcesosPage() {
 
           </Link>
 
-        
+          {!shouldShowForm && (
+            <button
+              type="button"
+              onClick={() => {
+                resetFormFields();
+                setFormVisible(true);
+              }}
+              className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-zinc-950 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-zinc-900 dark:border-white/10 dark:bg-white dark:text-black dark:hover:bg-white/80"
+            >
+              Crear proceso
+            </button>
+          )}
+
 
         </nav>
 
 
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className={`grid grid-cols-1 gap-6 ${shouldShowForm ? "lg:grid-cols-2" : "lg:grid-cols-1"}`}>
 
-          <ProcesoForm form={form} />
+          {shouldShowForm && <ProcesoForm form={form} />}
 
 
 
