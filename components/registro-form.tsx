@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import ProcesoForm from "@/components/proceso-form";
 import { useProcesoForm } from "@/lib/hooks/useProcesoForm";
@@ -20,6 +20,7 @@ export default function RegistroForm({ initialProcesoId, focusSection }: Registr
   const queryTipo = searchParams.get("tipo")?.toLowerCase();
   const apoderadoIdParam = searchParams.get("apoderadoId")?.trim();
   const apoderadoNameParam = searchParams.get("apoderadoName")?.trim();
+  const router = useRouter();
 
   const resolvedFocusSection = useMemo<FocusSection | undefined>(() => {
     if (queryTipo === "acreedor" || queryTipo === "acreedores") {
@@ -50,6 +51,43 @@ export default function RegistroForm({ initialProcesoId, focusSection }: Registr
     setApoderadoForm,
     abrirModalApoderado,
   } = form;
+  const focusRows =
+    normalizedFocusSection === "acreedores"
+      ? acreedoresForm
+      : normalizedFocusSection === "deudores"
+      ? deudoresForm
+      : [];
+  const firstRow = focusRows[0];
+  const { targetApoderado, needsApoderadoCreation } = useMemo(() => {
+    const normalizedName = apoderadoNameParam?.trim().toLowerCase();
+    const matchById = apoderadoIdParam
+      ? apoderados.find((ap) => ap.id === apoderadoIdParam)
+      : undefined;
+    const matchByName = normalizedName
+      ? apoderados.find(
+          (ap) => ap.nombre?.trim().toLowerCase() === normalizedName,
+        )
+      : undefined;
+    const target = matchById ?? matchByName;
+    const hasRowApoderado = Boolean(firstRow?.apoderadoId?.trim());
+    return {
+      targetApoderado: target,
+      // Don't require apoderado creation if apoderadoId param is provided
+      // Only require creation if we have a name but no matching apoderado
+      needsApoderadoCreation:
+        Boolean(normalizedFocusSection) &&
+        !apoderadoIdParam && // Skip creation if ID is already provided
+        Boolean(normalizedName) &&
+        !target &&
+        !hasRowApoderado,
+    };
+  }, [
+    apoderadoIdParam,
+    apoderadoNameParam,
+    apoderados,
+    normalizedFocusSection,
+    firstRow?.apoderadoId,
+  ]);
 
   const title =
     normalizedFocusSection === "acreedores"
@@ -83,39 +121,8 @@ export default function RegistroForm({ initialProcesoId, focusSection }: Registr
       : undefined;
 
   const requiresApoderadoCreation = useMemo(() => {
-    if (!normalizedFocusSection) {
-      return false;
-    }
-    if (!apoderadoIdParam && !apoderadoNameParam) {
-      return false;
-    }
-
-    const filas =
-      normalizedFocusSection === "acreedores" ? acreedoresForm : deudoresForm;
-    const primerFila = filas[0];
-    if (!primerFila) {
-      return false;
-    }
-
-    const matchById = apoderadoIdParam
-      ? apoderados.find((ap) => ap.id === apoderadoIdParam)
-      : undefined;
-    const matchByName = apoderadoNameParam
-      ? apoderados.find(
-          (ap) => ap.nombre?.trim().toLowerCase() === apoderadoNameParam.toLowerCase(),
-        )
-      : undefined;
-
-    const targetApoderado = matchById ?? matchByName;
-    return Boolean(!targetApoderado && (apoderadoIdParam || apoderadoNameParam));
-  }, [
-    normalizedFocusSection,
-    apoderadoIdParam,
-    apoderadoNameParam,
-    apoderados,
-    acreedoresForm,
-    deudoresForm,
-  ]);
+    return needsApoderadoCreation;
+  }, [needsApoderadoCreation]);
 
   const submitDisabledReason =
     requiresApoderadoCreation && normalizedFocusSection
@@ -140,20 +147,11 @@ export default function RegistroForm({ initialProcesoId, focusSection }: Registr
       return;
     }
 
-    const matchById = apoderadoIdParam
-      ? apoderados.find((ap) => ap.id === apoderadoIdParam)
-      : undefined;
-    const matchByName = apoderadoNameParam
-      ? apoderados.find(
-          (ap) => ap.nombre?.trim().toLowerCase() === apoderadoNameParam.toLowerCase(),
-        )
-      : undefined;
+    const needsCreation = needsApoderadoCreation;
 
-    const targetApoderado = matchById ?? matchByName;
-    const needsCreation = Boolean(!targetApoderado && (apoderadoIdParam || apoderadoNameParam));
-
+    // When apoderadoIdParam is provided, use it directly even if not found in list
     const patch = {
-      apoderadoId: targetApoderado?.id ?? apoderadoIdParam ?? primerFila.apoderadoId,
+      apoderadoId: apoderadoIdParam ?? targetApoderado?.id ?? primerFila.apoderadoId,
       apoderadoNombre:
         targetApoderado?.nombre ??
         (apoderadoNameParam ?? primerFila.apoderadoNombre),
@@ -178,6 +176,7 @@ export default function RegistroForm({ initialProcesoId, focusSection }: Registr
       }
     }
 
+    // Only open modal if creation is needed (apoderadoIdParam not provided)
     if (
       needsCreation &&
       !apoderadoModalOpen &&
@@ -213,6 +212,51 @@ export default function RegistroForm({ initialProcesoId, focusSection }: Registr
     apoderadoModalOpen,
     setApoderadoForm,
     abrirModalApoderado,
+    targetApoderado,
+    needsApoderadoCreation,
+  ]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !normalizedFocusSection) {
+      return;
+    }
+
+    const filas =
+      normalizedFocusSection === "acreedores" ? acreedoresForm : deudoresForm;
+    const primerFila = filas[0];
+    if (!primerFila) {
+      return;
+    }
+
+    const desiredApoderadoId = primerFila.apoderadoId.trim();
+    if (!desiredApoderadoId) {
+      return;
+    }
+
+    const currentApoderadoId = searchParams.get("apoderadoId")?.trim();
+    if (currentApoderadoId === desiredApoderadoId) {
+      return;
+    }
+
+    const nextParams = new URLSearchParams(searchParams.toString());
+    nextParams.set("apoderadoId", desiredApoderadoId);
+    nextParams.delete("apoderadoName");
+
+    const nextSearch = nextParams.toString();
+    if (nextSearch === searchParams.toString()) {
+      return;
+    }
+
+    const pathname = window.location.pathname;
+    router.replace(`${pathname}${nextSearch ? `?${nextSearch}` : ""}`, {
+      scroll: false,
+    });
+  }, [
+    normalizedFocusSection,
+    deudoresForm,
+    acreedoresForm,
+    router,
+    searchParams,
   ]);
 
   return (

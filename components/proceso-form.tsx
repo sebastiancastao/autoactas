@@ -620,7 +620,7 @@ export default function ProcesoForm({
 
           <button
             type="submit"
-            disabled={guardando || !numeroProceso.trim() || disableSubmit}
+            disabled={guardando || (showGeneralInfo && !numeroProceso.trim()) || disableSubmit}
             className="h-11 w-full rounded-2xl bg-zinc-950 px-6 text-sm font-medium text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-white dark:text-black"
           >
             {guardando

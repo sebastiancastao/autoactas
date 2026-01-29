@@ -52,6 +52,68 @@ const createPanelApoderadoRow = (): PanelApoderadoRow => ({
   email: "",
 });
 
+type RegistroEmailHtmlProps = {
+  recipientName: string;
+  link: string;
+  tipoLabel: string;
+  totalProcesos: number;
+};
+
+const buildRegistroEmailHtml = ({
+  recipientName,
+  link,
+  tipoLabel,
+  totalProcesos,
+}: RegistroEmailHtmlProps) => `
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Registro de proceso</title>
+  </head>
+  <body style="margin:0;background-color:#f8fafc;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="min-height:100vh;background-color:#f8fafc;">
+      <tr>
+        <td align="center" style="padding:24px;">
+          <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;border-radius:28px;background:linear-gradient(180deg,#ffffff,#f4f4f5);border:1px solid rgba(15,23,42,0.08);box-shadow:0 20px 45px rgba(15,23,42,0.18);">
+            <tr>
+              <td style="padding:32px;">
+                <p style="margin:0 0 8px;font-size:16px;color:#0f172a;font-weight:600;">Hola ${recipientName},</p>
+                <p style="margin:0 0 16px;font-size:15px;color:#475467;line-height:1.6;">
+                  en orden para registrar el registro al proceso de insolvencia, accede a este enlace:
+                </p>
+                <p style="margin:0 0 24px;">
+                  <a href="${link}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;justify-content:center;padding:12px 18px;border-radius:999px;background:#047857;color:#f8fafc;font-weight:600;text-decoration:none;font-size:14px;">
+                    Abrir registro
+                  </a>
+                </p>
+                <p style="margin:0 0 8px;font-size:13px;color:#475467;line-height:1.4;">
+                  <strong>Sección</strong>: ${tipoLabel}
+                </p>
+                <p style="margin:0 0 8px;font-size:13px;color:#475467;line-height:1.4;">
+                  <strong>Procesos registrados</strong>: ${totalProcesos}
+                </p>
+                <p style="margin:24px 0 0;font-size:12px;color:#94a3b8;">
+                  Si el botón no funciona, copia y pega este enlace en tu navegador:<br />
+                  <span style="word-break:break-all;">${link}</span>
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
+`;
+
+const buildRegistroEmailText = ({
+  recipientName,
+  link,
+}: Pick<RegistroEmailHtmlProps, "recipientName" | "link">) =>
+  `Hola ${recipientName}, en orden para registrar el registro al proceso de insolvencia, accede a este enlace: ${link}`;
+
 type EnviarRegistroOptions = {
   procesoLabel?: string;
   totalProcesos?: number;
@@ -375,9 +437,8 @@ export default function ProcesosPage() {
       const origin =
         typeof window !== "undefined" && window.location?.origin
           ? window.location.origin
-          : "http://localhost:3000";
+          : "https://autoactas.vercel.app";
       const subject = `Registro de procesos › ${procesoLabel}`;
-      const todayLabel = new Date().toLocaleDateString("es-CO");
       for (const recipient of recipients) {
         const tipoParam = recipient.categoria === "acreedor" ? "acreedor" : "deudor";
         const linkUrl = new URL("/registro", origin);
@@ -390,20 +451,25 @@ export default function ProcesosPage() {
         } else if (recipient.nombre?.trim()) {
           linkUrl.searchParams.set("apoderadoName", recipient.nombre.trim());
         }
-        const html = `
-          <p>Hola${recipient.nombre ? ` ${recipient.nombre.split(" ")[0]}` : ""},</p>
-          <p>Te compartimos el registro de procesos <strong>${procesoLabel}</strong> creado el día <strong>${todayLabel}</strong>.</p>
-          <p>
-            Accede directamente a la sección de ${tipoParam === "acreedor" ? "acreedores" : "deudores"} usando el siguiente enlace:
-          </p>
-          <p><a href="${linkUrl.toString()}">${linkUrl.toString()}</a></p>
-          <p>Hay ${totalProcesos} procesos registrados actualmente.</p>
-          <p>Quedamos atentos a cualquier comentario.</p>
-        `;
+        const recipientFullName = recipient.nombre?.trim() || "apoderado";
+        const recipientGreetingName = recipientFullName.split(" ")[0] || recipientFullName;
+        const tipoLabel = tipoParam === "acreedor" ? "acreedores" : "deudores";
+        const linkString = linkUrl.toString();
+        const html = buildRegistroEmailHtml({
+          recipientName: recipientGreetingName,
+          link: linkString,
+          tipoLabel,
+          totalProcesos,
+        });
+        const text = buildRegistroEmailText({
+          recipientName: recipientGreetingName,
+          link: linkString,
+        });
         await sendResendEmail({
           to: recipient.email,
           subject,
           html,
+          text,
         });
       }
 
