@@ -1,5 +1,4 @@
 from pathlib import Path
-text = Path('components/proceso-form.tsx').read_text(encoding='utf-8')
-start = text.index('const renderAcreedorRow')
-end = start + 1000
-print(text[start:start+800])
+lines = Path('components/registro-form.tsx').read_text().splitlines()
+for i in range(110, 160):
+    print(f"{i+1:04}: {lines[i]}")

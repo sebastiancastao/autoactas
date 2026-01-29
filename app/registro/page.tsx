@@ -7,7 +7,10 @@ type RegistroPageProps = {
   searchParams?: {
     procesoId?: string;
     tipo?: "deudores" | "acreedores" | "deudor" | "acreedor";
-  };
+  } | Promise<{
+    procesoId?: string;
+    tipo?: "deudores" | "acreedores" | "deudor" | "acreedor";
+  }>;
 };
 
 export const metadata: Metadata = {
@@ -15,9 +18,10 @@ export const metadata: Metadata = {
   description: "Registra o edita procesos judiciales desde un formulario dedicado.",
 };
 
-export default function RegistroPage({ searchParams }: RegistroPageProps) {
-  const procesoId = searchParams?.procesoId;
-  const tipo = searchParams?.tipo?.toLowerCase();
+export default async function RegistroPage({ searchParams }: RegistroPageProps) {
+  const resolvedSearchParams = searchParams ? await searchParams : undefined;
+  const procesoId = resolvedSearchParams?.procesoId;
+  const tipo = resolvedSearchParams?.tipo?.toLowerCase();
   const focusSection =
     tipo === "acreedores" || tipo === "acreedor"
       ? "acreedores"

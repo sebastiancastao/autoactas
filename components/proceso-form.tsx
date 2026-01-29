@@ -23,6 +23,28 @@ const formatMontoLabel = (value: number) =>
       })
     : "0";
 
+const obligationAmountFields = ["capital", "interesCte", "interesMora", "otros"] as const;
+
+const parseObligationValue = (value: string) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const computeObligacionTotal = (obligacion: {
+  capital: string;
+  interesCte: string;
+  interesMora: string;
+  otros: string;
+}) => obligationAmountFields.reduce((acc, field) => acc + parseObligationValue(obligacion[field]), 0);
+
+const hasObligacionAmounts = (obligacion: {
+  capital: string;
+  interesCte: string;
+  interesMora: string;
+  otros: string;
+}) =>
+  obligationAmountFields.some((field) => obligacion[field].trim() !== "");
+
 export default function ProcesoForm({
   form,
   showGeneralInfo = true,
@@ -48,13 +70,11 @@ export default function ProcesoForm({
     descripcion,
     setDescripcion,
     deudoresForm,
-    agregarDeudorRow,
     actualizarDeudorRow,
     eliminarDeudorRow,
     selectedDeudorId,
     setSelectedDeudorId,
     acreedoresForm,
-    agregarAcreedorRow,
     actualizarAcreedorRow,
     eliminarAcreedorRow,
     agregarObligacionRow,
@@ -93,13 +113,11 @@ export default function ProcesoForm({
     acreedor: (typeof acreedoresForm)[number],
     index: number,
   ) => {
-    const totalObligaciones = acreedor.obligaciones.reduce((acc, obligacion) => {
-      const parsed = Number(obligacion.monto);
-      return acc + (Number.isNaN(parsed) ? 0 : parsed);
-    }, 0);
-    const tieneMontoCalculado = acreedor.obligaciones.some(
-      (obligacion) => obligacion.monto.trim() !== "",
+    const totalObligaciones = acreedor.obligaciones.reduce(
+      (acc, obligacion) => acc + computeObligacionTotal(obligacion),
+      0,
     );
+    const tieneMontoCalculado = acreedor.obligaciones.some(hasObligacionAmounts);
     const montoInputValue =
       tieneMontoCalculado && Number.isFinite(totalObligaciones)
         ? formatMontoInputValue(totalObligaciones)
@@ -240,55 +258,163 @@ export default function ProcesoForm({
             </button>
           </div>
           <div className="mt-3 space-y-3">
-            {acreedor.obligaciones.map((obligacion) => (
-              <div
-                key={obligacion.id}
-                className="grid grid-cols-1 gap-2 sm:grid-cols-6 sm:items-end"
-              >
-                <div className="sm:col-span-3">
-                  <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
-                    Descripción
-                  </label>
-                  <input
-                    value={obligacion.descripcion}
-                    onChange={(e) =>
-                      actualizarObligacionRow(acreedor.id, obligacion.id, {
-                        descripcion: e.target.value,
-                      })
-                    }
-                    placeholder="Ej: Cuota febrero"
-                    className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                  />
+            {acreedor.obligaciones.map((obligacion) => {
+              const obligationTotal = computeObligacionTotal(obligacion);
+              const formattedTotal = formatMontoInputValue(obligationTotal);
+              const totalLabel = formatMontoLabel(obligationTotal);
+              return (
+                <div
+                  key={obligacion.id}
+                  className="space-y-3 rounded-2xl border border-zinc-200 bg-white/70 p-3 shadow-[0_0_0_1px_rgba(0,0,0,0.05)] dark:border-white/5 dark:bg-black/10"
+                >
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">Obligación</p>
+                    <button
+                      type="button"
+                      onClick={() => eliminarObligacionRow(acreedor.id, obligacion.id)}
+                      className="text-xs font-semibold text-red-600 transition hover:text-red-700 dark:text-red-300 dark:hover:text-red-200"
+                    >
+                      Eliminar
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+                      Descripción
+                    </label>
+                    <input
+                      value={obligacion.descripcion}
+                      onChange={(e) =>
+                        actualizarObligacionRow(acreedor.id, obligacion.id, {
+                          descripcion: e.target.value,
+                        })
+                      }
+                      placeholder="Ej: Cuota febrero"
+                      className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                    />
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+                        Naturaleza
+                      </label>
+                      <input
+                        value={obligacion.naturaleza}
+                        onChange={(e) =>
+                          actualizarObligacionRow(acreedor.id, obligacion.id, {
+                            naturaleza: e.target.value,
+                          })
+                        }
+                        className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+                        Prelación
+                      </label>
+                      <input
+                        value={obligacion.prelacion}
+                        onChange={(e) =>
+                          actualizarObligacionRow(acreedor.id, obligacion.id, {
+                            prelacion: e.target.value,
+                          })
+                        }
+                        className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+                        Capital
+                      </label>
+                      <input
+                        type="number"
+                        value={obligacion.capital}
+                        onChange={(e) =>
+                          actualizarObligacionRow(acreedor.id, obligacion.id, {
+                            capital: e.target.value,
+                          })
+                        }
+                        placeholder="Ej: 250000"
+                        min="0"
+                        step="0.01"
+                        className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+                        INT. CTE
+                      </label>
+                      <input
+                        type="number"
+                        value={obligacion.interesCte}
+                        onChange={(e) =>
+                          actualizarObligacionRow(acreedor.id, obligacion.id, {
+                            interesCte: e.target.value,
+                          })
+                        }
+                        placeholder="Ej: 5000"
+                        min="0"
+                        step="0.01"
+                        className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+                        INT MORA
+                      </label>
+                      <input
+                        type="number"
+                        value={obligacion.interesMora}
+                        onChange={(e) =>
+                          actualizarObligacionRow(acreedor.id, obligacion.id, {
+                            interesMora: e.target.value,
+                          })
+                        }
+                        placeholder="Ej: 2000"
+                        min="0"
+                        step="0.01"
+                        className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+                        Otros cobros/seguros
+                      </label>
+                      <input
+                        type="number"
+                        value={obligacion.otros}
+                        onChange={(e) =>
+                          actualizarObligacionRow(acreedor.id, obligacion.id, {
+                            otros: e.target.value,
+                          })
+                        }
+                        placeholder="Ej: 1000"
+                        min="0"
+                        step="0.01"
+                        className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+                        Total
+                      </label>
+                      <input
+                        type="number"
+                        value={formattedTotal}
+                        readOnly
+                        className="h-10 w-full rounded-2xl border border-zinc-200 bg-zinc-100 px-3 text-xs font-semibold outline-none text-zinc-900 transition dark:border-white/10 dark:bg-zinc-950/20 dark:text-white"
+                      />
+                      <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                        {totalLabel}
+                      </p>
+                    </div>
+                  </div>
                 </div>
-                <div className="sm:col-span-2">
-                  <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
-                    Monto
-                  </label>
-                  <input
-                    type="number"
-                    value={obligacion.monto}
-                    onChange={(e) =>
-                      actualizarObligacionRow(acreedor.id, obligacion.id, {
-                        monto: e.target.value,
-                      })
-                    }
-                    placeholder="Ej: 250000"
-                    min="0"
-                    step="0.01"
-                    className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                  />
-                </div>
-                <div className="sm:col-span-1">
-                  <button
-                    type="button"
-                    onClick={() => eliminarObligacionRow(acreedor.id, obligacion.id)}
-                    className="text-xs font-semibold text-red-600 transition hover:text-red-700 dark:text-red-300 dark:hover:text-red-200"
-                  >
-                    Eliminar
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
             {acreedor.obligaciones.length === 0 && (
               <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
                 Agrega todas las obligaciones necesarias para que la suma se refleje en el monto
@@ -487,13 +613,6 @@ export default function ProcesoForm({
                     Agrega los deudores que participan en este proceso.
                   </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={agregarDeudorRow}
-                    className="h-10 rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-700 shadow-sm transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:bg-white/10"
-                  >
-                    + Agregar deudor
-                  </button>
                 </div>
 
               <div className="space-y-4 mt-4">
@@ -677,13 +796,6 @@ export default function ProcesoForm({
                     Añade los acreedores relacionados con el proceso.
                   </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={agregarAcreedorRow}
-                    className="h-10 rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-700 shadow-sm transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:bg-white/10"
-                  >
-                    + Agregar acreedor
-                  </button>
                 </div>
 
               <div className="space-y-4 mt-4">

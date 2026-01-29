@@ -34,7 +34,12 @@ type DeudorFormRow = {
 type ObligacionFormRow = {
   id: string;
   descripcion: string;
-  monto: string;
+  naturaleza: string;
+  prelacion: string;
+  capital: string;
+  interesCte: string;
+  interesMora: string;
+  otros: string;
 };
 
 type AcreedorFormRow = DeudorFormRow & {
@@ -95,7 +100,12 @@ function createObligacionRow(): ObligacionFormRow {
   return {
     id: uid(),
     descripcion: "",
-    monto: "",
+    naturaleza: "",
+    prelacion: "",
+    capital: "",
+    interesCte: "",
+    interesMora: "",
+    otros: "",
   };
 }
 
@@ -114,6 +124,29 @@ function createAcreedorRow(): AcreedorFormRow {
     tipoAcreencia: "",
     obligaciones: [],
   };
+}
+
+const obligationAmountFields: Array<keyof ObligacionFormRow> = [
+  "capital",
+  "interesCte",
+  "interesMora",
+  "otros",
+];
+
+function parseObligacionValue(value: string) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function computeObligacionTotal(obligacion: ObligacionFormRow) {
+  return obligationAmountFields.reduce(
+    (acc, key) => acc + parseObligacionValue(obligacion[key]),
+    0,
+  );
+}
+
+function hasObligacionAmounts(obligacion: ObligacionFormRow) {
+  return obligationAmountFields.some((key) => obligacion[key].trim() !== "");
 }
 
 function createApoderadoForm(): ApoderadoForm {
@@ -178,7 +211,12 @@ function mapAcreedoresToFormRows(
       acreedor.obligaciones?.map((obligacion) => ({
         id: uid(),
         descripcion: obligacion.descripcion ?? "",
-        monto: obligacion.monto != null ? obligacion.monto.toString() : "",
+        naturaleza: "",
+        prelacion: "",
+        capital: obligacion.monto != null ? obligacion.monto.toString() : "",
+        interesCte: "",
+        interesMora: "",
+        otros: "",
       })) ?? [],
   }));
 }
@@ -186,6 +224,7 @@ function mapAcreedoresToFormRows(
 export type UseProcesoFormOptions = {
   initialProcesoId?: string;
   onSaveSuccess?: (proceso: Proceso, context?: { isEditing: boolean }) => void;
+  focusedMode?: "acreedores" | "deudores" | undefined;
 };
 
 export type ProcesoFormContext = {
@@ -246,7 +285,7 @@ export type ProcesoFormContext = {
 };
 
 export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormContext {
-  const { initialProcesoId, onSaveSuccess } = options ?? {};
+  const { initialProcesoId, onSaveSuccess, focusedMode } = options ?? {};
 
   const [numeroProceso, setNumeroProceso] = useState("");
   const [fechaprocesos, setFechaprocesos] = useState(() => new Date().toISOString().split("T")[0]);
@@ -499,12 +538,12 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
       : [];
 
     const construirPayload = (fila: AcreedorFormRow) => {
-      const totalObligaciones = fila.obligaciones.reduce((acc, obligacion) => {
-        const parsed = Number(obligacion.monto);
-        return acc + (Number.isNaN(parsed) ? 0 : parsed);
-      }, 0);
-      const hasMontoObligaciones = fila.obligaciones.some(
-        (obligacion) => obligacion.monto.trim() !== "",
+      const totalObligaciones = fila.obligaciones.reduce(
+        (acc, obligacion) => acc + computeObligacionTotal(obligacion),
+        0,
+      );
+      const hasMontoObligaciones = fila.obligaciones.some((obligacion) =>
+        hasObligacionAmounts(obligacion),
       );
       const montoDesdeObligaciones = hasMontoObligaciones ? totalObligaciones : null;
       const montoManualParsed = fila.monto.trim() ? Number(fila.monto) : null;
@@ -579,7 +618,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
     setError(null);
     setExito(null);
 
-    if (!numeroProceso.trim()) {
+    if (!numeroProceso.trim() && !editingProcesoId) {
       setError("El número de proceso es requerido");
       return;
     }
@@ -600,8 +639,14 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
         ? await updateProceso(editingProcesoId!, procesoPayload)
         : await createProceso(procesoPayload);
 
-      await syncDeudores(savedProceso.id, isEditing);
-      await syncAcreedores(savedProceso.id, isEditing);
+      if (focusedMode === "acreedores") {
+        await syncAcreedores(savedProceso.id, isEditing);
+      } else if (focusedMode === "deudores") {
+        await syncDeudores(savedProceso.id, isEditing);
+      } else {
+        await syncDeudores(savedProceso.id, isEditing);
+        await syncAcreedores(savedProceso.id, isEditing);
+      }
 
       if (isEditing) {
         try {

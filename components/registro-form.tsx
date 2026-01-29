@@ -39,7 +39,7 @@ export default function RegistroForm({ initialProcesoId, focusSection }: Registr
       ? "deudores"
       : undefined;
 
-  const form = useProcesoForm({ initialProcesoId: normalizedProcesoId });
+  const form = useProcesoForm({ initialProcesoId: normalizedProcesoId, focusedMode: normalizedFocusSection });
   const modalCreationRef = useRef<FocusSection | null>(null);
   const {
     acreedoresForm,
