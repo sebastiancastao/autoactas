@@ -204,6 +204,7 @@ export default function ProcesosPage() {
   });
   const [creandoProceso, setCreandoProceso] = useState(false);
   const [mensajeProceso, setMensajeProceso] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
 
 
@@ -391,6 +392,26 @@ export default function ProcesosPage() {
       setEnvioMensaje(null);
     }
   }, [mostrarPanelEnvio]);
+
+  const trimmedSearchQuery = searchQuery.trim();
+  const normalizedSearchQuery = trimmedSearchQuery.toLowerCase();
+  const searchLabel = trimmedSearchQuery ? `"${trimmedSearchQuery}"` : "esta búsqueda";
+  const filteredProcesos = useMemo(() => {
+    if (!normalizedSearchQuery) return procesos;
+    return procesos.filter((proceso) => {
+      const haystack = [
+        proceso.numero_proceso,
+        proceso.tipo_proceso,
+        proceso.juzgado,
+        proceso.descripcion,
+        proceso.estado,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(normalizedSearchQuery);
+    });
+  }, [procesos, normalizedSearchQuery]);
 
   const selectedProceso = useMemo(
     () => procesos.find((proceso) => proceso.id === editingProcesoId),
@@ -805,7 +826,41 @@ export default function ProcesosPage() {
 
           <section className="rounded-3xl border border-zinc-200 bg-white/80 p-5 shadow-[0_12px_40px_-20px_rgba(0,0,0,0.35)] backdrop-blur dark:border-white/10 dark:bg-white/5 sm:p-6">
 
-            <h2 className="text-lg font-semibold mb-4">Procesos Existentes</h2>
+            <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+              <h2 className="text-lg font-semibold">Procesos Existentes</h2>
+              <div className="w-full max-w-sm flex-1 sm:flex-none">
+                <label htmlFor="procesos-search" className="sr-only">
+                  Buscar procesos
+                </label>
+                <div className="relative">
+                  <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-xs text-zinc-400 dark:text-zinc-500">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={1.6}
+                      className="h-3.5 w-3.5"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M12.5 13.5 17 18m-4.5-4.5a5 5 0 1 1-1.06-1.06L17 18"
+                      />
+                      <circle cx="8" cy="8" r="4.5" />
+                    </svg>
+                  </span>
+                  <input
+                    id="procesos-search"
+                    type="search"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Buscar número, estado o juzgado"
+                    className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-10 text-xs text-zinc-950 outline-none transition focus:border-zinc-950/30 focus:ring-2 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:text-zinc-50 dark:focus:border-white/30 dark:focus:ring-white/20"
+                  />
+                </div>
+              </div>
+            </div>
 
             {listError && (
 
@@ -831,11 +886,19 @@ export default function ProcesosPage() {
 
               </div>
 
+            ) : filteredProcesos.length === 0 ? (
+
+              <div className="rounded-2xl border border-zinc-200 bg-white/60 p-4 text-sm text-zinc-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
+
+                No se encontraron procesos que coincidan con {searchLabel}.
+
+              </div>
+
             ) : (
 
               <div className="space-y-3 max-h-[600px] overflow-y-auto">
 
-                {procesos.map((proceso) => {
+                {filteredProcesos.map((proceso) => {
 
                   const isSelected = editingProcesoId === proceso.id;
 
