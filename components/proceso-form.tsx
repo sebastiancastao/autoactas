@@ -12,6 +12,17 @@ type ProcesoFormProps = {
   submitDisabledReason?: string;
 };
 
+const formatMontoInputValue = (value: number) =>
+  Number.isFinite(value) ? (Number.isInteger(value) ? value.toString() : value.toFixed(2)) : "";
+
+const formatMontoLabel = (value: number) =>
+  Number.isFinite(value)
+    ? value.toLocaleString("es-CO", {
+        minimumFractionDigits: value % 1 === 0 ? 0 : 2,
+        maximumFractionDigits: 2,
+      })
+    : "0";
+
 export default function ProcesoForm({
   form,
   showGeneralInfo = true,
@@ -46,6 +57,9 @@ export default function ProcesoForm({
     agregarAcreedorRow,
     actualizarAcreedorRow,
     eliminarAcreedorRow,
+    agregarObligacionRow,
+    actualizarObligacionRow,
+    eliminarObligacionRow,
     selectedAcreedorId,
     setSelectedAcreedorId,
     apoderados,
@@ -74,6 +88,265 @@ export default function ProcesoForm({
     focusSectionNormalized ? focusSectionNormalized === "deudores" : true;
   const shouldShowAcreedoresSection =
     focusSectionNormalized ? focusSectionNormalized === "acreedores" : true;
+
+  const renderAcreedorRow = (
+    acreedor: (typeof acreedoresForm)[number],
+    index: number,
+  ) => {
+    const totalObligaciones = acreedor.obligaciones.reduce((acc, obligacion) => {
+      const parsed = Number(obligacion.monto);
+      return acc + (Number.isNaN(parsed) ? 0 : parsed);
+    }, 0);
+    const tieneMontoCalculado = acreedor.obligaciones.some(
+      (obligacion) => obligacion.monto.trim() !== "",
+    );
+    const montoInputValue =
+      tieneMontoCalculado && Number.isFinite(totalObligaciones)
+        ? formatMontoInputValue(totalObligaciones)
+        : acreedor.monto;
+    const totalObligacionesLabel = formatMontoLabel(totalObligaciones);
+
+    return (
+      <div
+        key={acreedor.id}
+        className="rounded-2xl border border-zinc-200 bg-white/70 p-4 shadow-sm transition hover:shadow-md dark:border-white/10 dark:bg-white/5"
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
+            Acreedor {index + 1}
+          </p>
+          <button
+            type="button"
+            onClick={() => eliminarAcreedorRow(acreedor.id)}
+            disabled={acreedoresForm.length === 1}
+            className="rounded-full px-3 py-1 text-sm text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-white/10 dark:hover:text-white"
+            title={
+              acreedoresForm.length === 1 ? "Debe quedar al menos un acreedor" : "Eliminar"
+            }
+          >
+            Eliminar
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+              Nombre
+            </label>
+            <input
+              value={acreedor.nombre}
+              onChange={(e) => actualizarAcreedorRow(acreedor.id, { nombre: e.target.value })}
+              placeholder="Ej: Banco ABC"
+              className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+              Teléfono
+            </label>
+            <input
+              value={acreedor.telefono}
+              onChange={(e) => actualizarAcreedorRow(acreedor.id, { telefono: e.target.value })}
+              placeholder="Ej: +57 300 000 0000"
+              inputMode="tel"
+              className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+              Tipo de identificación
+            </label>
+            <select
+              value={acreedor.tipoIdentificacion}
+              onChange={(e) =>
+                actualizarAcreedorRow(acreedor.id, { tipoIdentificacion: e.target.value })
+              }
+              className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10 cursor-pointer"
+            >
+              <option value="">Seleccionar...</option>
+              <option value="Cedula de Ciudadania">Cedula de Ciudadania</option>
+              <option value="Cedula de Extranjeria">Cedula de Extranjeria</option>
+              <option value="Pasaporte">Pasaporte</option>
+              <option value="NIT">NIT</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+              Identificación
+            </label>
+            <input
+              value={acreedor.identificacion}
+              onChange={(e) =>
+                actualizarAcreedorRow(acreedor.id, { identificacion: e.target.value })
+              }
+              placeholder="Ej: 9.876.543.210"
+              className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+              Correo electrónico
+            </label>
+            <input
+              value={acreedor.email}
+              onChange={(e) => actualizarAcreedorRow(acreedor.id, { email: e.target.value })}
+              placeholder="Ej: acreedor@empresa.com"
+              inputMode="email"
+              className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+            />
+          </div>
+
+          <div className="sm:col-span-2">
+            <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+              Apoderado
+            </label>
+            <div className="flex gap-2">
+              <input
+                value={acreedor.apoderadoNombre}
+                onChange={(e) => handleRowApoderadoInput("acreedor", acreedor.id, e.target.value)}
+                list="apoderados-list"
+                placeholder="Busca un apoderado existente"
+                className="flex-1 min-w-0 h-11 rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+              />
+              <button
+                type="button"
+                onClick={() => abrirModalApoderado({ tipo: "acreedor", id: acreedor.id })}
+                className="h-11 rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-700 shadow-sm transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:bg-white/10"
+              >
+                + Apoderado
+              </button>
+            </div>
+            <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+              Opcional. Autocompleta con los apoderados disponibles o crea uno nuevo.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-2xl border border-dashed border-zinc-200 bg-zinc-50/70 p-3 dark:border-white/10 dark:bg-white/10">
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-zinc-500 dark:text-zinc-400">
+              Obligaciones
+            </p>
+            <button
+              type="button"
+              onClick={() => agregarObligacionRow(acreedor.id)}
+              className="rounded-full border border-dashed border-zinc-300 px-2 py-0.5 text-[10px]"
+            >
+              + agregar
+            </button>
+          </div>
+          <div className="mt-3 space-y-3">
+            {acreedor.obligaciones.map((obligacion) => (
+              <div
+                key={obligacion.id}
+                className="grid grid-cols-1 gap-2 sm:grid-cols-6 sm:items-end"
+              >
+                <div className="sm:col-span-3">
+                  <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+                    Descripción
+                  </label>
+                  <input
+                    value={obligacion.descripcion}
+                    onChange={(e) =>
+                      actualizarObligacionRow(acreedor.id, obligacion.id, {
+                        descripcion: e.target.value,
+                      })
+                    }
+                    placeholder="Ej: Cuota febrero"
+                    className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+                    Monto
+                  </label>
+                  <input
+                    type="number"
+                    value={obligacion.monto}
+                    onChange={(e) =>
+                      actualizarObligacionRow(acreedor.id, obligacion.id, {
+                        monto: e.target.value,
+                      })
+                    }
+                    placeholder="Ej: 250000"
+                    min="0"
+                    step="0.01"
+                    className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                  />
+                </div>
+                <div className="sm:col-span-1">
+                  <button
+                    type="button"
+                    onClick={() => eliminarObligacionRow(acreedor.id, obligacion.id)}
+                    className="text-xs font-semibold text-red-600 transition hover:text-red-700 dark:text-red-300 dark:hover:text-red-200"
+                  >
+                    Eliminar
+                  </button>
+                </div>
+              </div>
+            ))}
+            {acreedor.obligaciones.length === 0 && (
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                Agrega todas las obligaciones necesarias para que la suma se refleje en el monto
+                de acreencia.
+              </p>
+            )}
+          </div>
+          <p className="mt-3 text-[11px] text-zinc-500 dark:text-zinc-400">
+            Total obligaciones:{" "}
+            <span className="font-semibold text-zinc-900 dark:text-zinc-50">
+              {totalObligacionesLabel}
+            </span>
+          </p>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+              Monto de acreencia
+            </label>
+            <input
+              type="number"
+              value={montoInputValue}
+              onChange={(e) => {
+                if (tieneMontoCalculado) return;
+                actualizarAcreedorRow(acreedor.id, { monto: e.target.value });
+              }}
+              placeholder="Ej: 300000"
+              min="0"
+              step="0.01"
+              readOnly={tieneMontoCalculado}
+              className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+            />
+            {tieneMontoCalculado && (
+              <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                Suma calculada a partir de obligaciones: {totalObligacionesLabel}
+              </p>
+            )}
+          </div>
+          <div className="sm:col-span-2">
+            <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+              Tipo de acreencia
+            </label>
+            <input
+              value={acreedor.tipoAcreencia}
+              onChange={(e) =>
+                actualizarAcreedorRow(acreedor.id, {
+                  tipoAcreencia: e.target.value,
+                })
+              }
+              placeholder="Ej: Ordinaria, Subordinada"
+              className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+            />
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <>
@@ -414,172 +687,7 @@ export default function ProcesoForm({
                 </div>
 
               <div className="space-y-4 mt-4">
-                {acreedoresForm.map((acreedor, index) => (
-                  <div
-                    key={acreedor.id}
-                    className="rounded-2xl border border-zinc-200 bg-white/70 p-4 shadow-sm transition hover:shadow-md dark:border-white/10 dark:bg-white/5"
-                  >
-                    <div className="mb-3 flex items-center justify-between">
-                      <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
-                        Acreedor {index + 1}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => eliminarAcreedorRow(acreedor.id)}
-                        disabled={acreedoresForm.length === 1}
-                        className="rounded-full px-3 py-1 text-sm text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-white/10 dark:hover:text-white"
-                        title={
-                          acreedoresForm.length === 1
-                            ? "Debe quedar al menos un acreedor"
-                            : "Eliminar"
-                        }
-                      >
-                        Eliminar
-                      </button>
-                    </div>
-
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <div>
-                        <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
-                          Nombre
-                        </label>
-                        <input
-                          value={acreedor.nombre}
-                          onChange={(e) =>
-                            actualizarAcreedorRow(acreedor.id, { nombre: e.target.value })
-                          }
-                          placeholder="Ej: Banco ABC"
-                          className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
-                          Teléfono
-                        </label>
-                        <input
-                          value={acreedor.telefono}
-                          onChange={(e) =>
-                            actualizarAcreedorRow(acreedor.id, { telefono: e.target.value })
-                          }
-                          placeholder="Ej: +57 300 000 0000"
-                          inputMode="tel"
-                          className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
-                          Tipo de identificación
-                        </label>
-                        <select
-                          value={acreedor.tipoIdentificacion}
-                          onChange={(e) =>
-                            actualizarAcreedorRow(acreedor.id, {
-                              tipoIdentificacion: e.target.value,
-                            })
-                          }
-                          className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10 cursor-pointer"
-                        >
-                          <option value="">Seleccionar...</option>
-                          <option value="Cedula de Ciudadania">Cedula de Ciudadania</option>
-                          <option value="Cedula de Extranjeria">Cedula de Extranjeria</option>
-                          <option value="Pasaporte">Pasaporte</option>
-                          <option value="NIT">NIT</option>
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
-                          Identificación
-                        </label>
-                        <input
-                          value={acreedor.identificacion}
-                          onChange={(e) =>
-                            actualizarAcreedorRow(acreedor.id, { identificacion: e.target.value })
-                          }
-                          placeholder="Ej: 9.876.543.210"
-                          className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
-                          Correo electrónico
-                        </label>
-                        <input
-                          value={acreedor.email}
-                          onChange={(e) =>
-                            actualizarAcreedorRow(acreedor.id, { email: e.target.value })
-                          }
-                          placeholder="Ej: acreedor@empresa.com"
-                          inputMode="email"
-                          className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                        />
-                      </div>
-
-                      <div className="sm:col-span-2">
-                        <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
-                          Apoderado
-                        </label>
-                        <div className="flex gap-2">
-                          <input
-                            value={acreedor.apoderadoNombre}
-                            onChange={(e) =>
-                              handleRowApoderadoInput("acreedor", acreedor.id, e.target.value)
-                            }
-                            list="apoderados-list"
-                            placeholder="Busca un apoderado existente"
-                            className="flex-1 min-w-0 h-11 rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => abrirModalApoderado({ tipo: "acreedor", id: acreedor.id })}
-                            className="h-11 rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-700 shadow-sm transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:bg-white/10"
-                          >
-                            + Apoderado
-                          </button>
-                        </div>
-                        <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-                          Opcional. Autocompleta con los apoderados disponibles o crea uno nuevo.
-                        </p>
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
-                          Monto de acreencia
-                        </label>
-                        <input
-                          type="number"
-                          value={acreedor.monto}
-                          onChange={(e) =>
-                            actualizarAcreedorRow(acreedor.id, { monto: e.target.value })
-                          }
-                          placeholder="Ej: 300000"
-                          min="0"
-                          step="0.01"
-                          className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                        />
-                      </div>
-
-                      <div className="sm:col-span-2">
-                        <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
-                          Tipo de acreencia
-                        </label>
-                        <input
-                          value={acreedor.tipoAcreencia}
-                          onChange={(e) =>
-                            actualizarAcreedorRow(acreedor.id, {
-                              tipoAcreencia: e.target.value,
-                            })
-                          }
-                          placeholder="Ej: Ordinaria, Subordinada"
-                          className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                {acreedoresForm.map(renderAcreedorRow)}
               </div>
 
               {acreedoresForm.length > 0 && (

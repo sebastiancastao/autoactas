@@ -31,9 +31,16 @@ type DeudorFormRow = {
   apoderadoNombre: string;
 };
 
+type ObligacionFormRow = {
+  id: string;
+  descripcion: string;
+  monto: string;
+};
+
 type AcreedorFormRow = DeudorFormRow & {
   monto: string;
   tipoAcreencia: string;
+  obligaciones: ObligacionFormRow[];
 };
 
 type ApoderadoModalTarget = {
@@ -51,6 +58,14 @@ type ApoderadoForm = {
 
 type AcreedorWithApoderado = Acreedor & {
   apoderados?: Apoderado[];
+};
+
+type AcreedorWithObligaciones = AcreedorWithApoderado & {
+  obligaciones?: {
+    id?: string;
+    descripcion?: string | null;
+    monto?: number | null;
+  }[];
 };
 
 type ProcesoWithRelations = Proceso & {
@@ -76,6 +91,14 @@ function createDeudorRow(): DeudorFormRow {
   };
 }
 
+function createObligacionRow(): ObligacionFormRow {
+  return {
+    id: uid(),
+    descripcion: "",
+    monto: "",
+  };
+}
+
 function createAcreedorRow(): AcreedorFormRow {
   return {
     id: uid(),
@@ -89,6 +112,7 @@ function createAcreedorRow(): AcreedorFormRow {
     apoderadoNombre: "",
     monto: "",
     tipoAcreencia: "",
+    obligaciones: [],
   };
 }
 
@@ -126,7 +150,7 @@ function mapDeudoresToFormRows(deudores?: Deudor[], apoderados?: Apoderado[]): D
 }
 
 function mapAcreedoresToFormRows(
-  acreedores?: AcreedorWithApoderado[],
+  acreedores?: AcreedorWithObligaciones[],
   apoderados?: Apoderado[]
 ): AcreedorFormRow[] {
   if (!acreedores || acreedores.length === 0) {
@@ -150,6 +174,12 @@ function mapAcreedoresToFormRows(
       : "",
     monto: acreedor.monto_acreencia != null ? acreedor.monto_acreencia.toString() : "",
     tipoAcreencia: acreedor.tipo_acreencia ?? "",
+    obligaciones:
+      acreedor.obligaciones?.map((obligacion) => ({
+        id: uid(),
+        descripcion: obligacion.descripcion ?? "",
+        monto: obligacion.monto != null ? obligacion.monto.toString() : "",
+      })) ?? [],
   }));
 }
 
@@ -181,6 +211,13 @@ export type ProcesoFormContext = {
   agregarAcreedorRow: () => void;
   actualizarAcreedorRow: (id: string, patch: Partial<AcreedorFormRow>) => void;
   eliminarAcreedorRow: (id: string) => void;
+  agregarObligacionRow: (acreedorId: string) => void;
+  actualizarObligacionRow: (
+    acreedorId: string,
+    obligacionId: string,
+    patch: Partial<ObligacionFormRow>,
+  ) => void;
+  eliminarObligacionRow: (acrecedorId: string, obligacionId: string) => void;
   selectedAcreedorId: string;
   setSelectedAcreedorId: Dispatch<SetStateAction<string>>;
   apoderados: Apoderado[];
@@ -281,6 +318,48 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
 
   const eliminarAcreedorRow = (id: string) => {
     setAcreedoresForm((prev) => prev.filter((fila) => fila.id !== id));
+  };
+
+  const agregarObligacionRow = (acreedorId: string) => {
+    setAcreedoresForm((prev) =>
+      prev.map((fila) =>
+        fila.id === acreedorId
+          ? { ...fila, obligaciones: [...fila.obligaciones, createObligacionRow()] }
+          : fila,
+      ),
+    );
+  };
+
+  const actualizarObligacionRow = (
+    acreedorId: string,
+    obligacionId: string,
+    patch: Partial<ObligacionFormRow>,
+  ) => {
+    setAcreedoresForm((prev) =>
+      prev.map((fila) =>
+        fila.id === acreedorId
+          ? {
+              ...fila,
+              obligaciones: fila.obligaciones.map((obligacion) =>
+                obligacion.id === obligacionId ? { ...obligacion, ...patch } : obligacion,
+              ),
+            }
+          : fila,
+      ),
+    );
+  };
+
+  const eliminarObligacionRow = (acreedorId: string, obligacionId: string) => {
+    setAcreedoresForm((prev) =>
+      prev.map((fila) =>
+        fila.id === acreedorId
+          ? {
+              ...fila,
+              obligaciones: fila.obligaciones.filter((obligacion) => obligacion.id !== obligacionId),
+            }
+          : fila,
+      ),
+    );
   };
 
   const handleRowApoderadoInput = (
@@ -420,9 +499,18 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
       : [];
 
     const construirPayload = (fila: AcreedorFormRow) => {
-      const montoParsed = fila.monto.trim() ? Number(fila.monto) : null;
-      const montoFinal =
-        typeof montoParsed === "number" && !Number.isNaN(montoParsed) ? montoParsed : null;
+      const totalObligaciones = fila.obligaciones.reduce((acc, obligacion) => {
+        const parsed = Number(obligacion.monto);
+        return acc + (Number.isNaN(parsed) ? 0 : parsed);
+      }, 0);
+      const hasMontoObligaciones = fila.obligaciones.some(
+        (obligacion) => obligacion.monto.trim() !== "",
+      );
+      const montoDesdeObligaciones = hasMontoObligaciones ? totalObligaciones : null;
+      const montoManualParsed = fila.monto.trim() ? Number(fila.monto) : null;
+      const montoManualValid =
+        montoManualParsed != null && !Number.isNaN(montoManualParsed) ? montoManualParsed : null;
+      const montoFinal = montoDesdeObligaciones ?? montoManualValid;
       return {
         proceso_id: procesoId,
         nombre: fila.nombre.trim(),
@@ -574,6 +662,9 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
     agregarAcreedorRow,
     actualizarAcreedorRow,
     eliminarAcreedorRow,
+    agregarObligacionRow,
+    actualizarObligacionRow,
+    eliminarObligacionRow,
     selectedAcreedorId,
     setSelectedAcreedorId,
     apoderados,

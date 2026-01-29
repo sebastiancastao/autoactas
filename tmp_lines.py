@@ -1,5 +1,4 @@
-﻿from pathlib import Path
-text = Path('components/proceso-form.tsx').read_text().splitlines()
-for idx in range(180, 260):
-    if idx < len(text):
-        print(f"{idx+1}: {text[idx]}")
+from pathlib import Path
+lines = Path('components/proceso-form.tsx').read_text(encoding='utf-8').splitlines()
+for i in range(480, 660):
+    print(f"{i+1:04}: {lines[i]}")

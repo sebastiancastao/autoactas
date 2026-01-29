@@ -101,7 +101,7 @@ function uid() {
 
 function limpiarTelefono(valor: string) {
 
-  // Mantiene solo + y dÃ­gitos
+  // Mantiene solo + y di­gitos
 
   return valor.replace(/[^\d+]/g, "");
 
@@ -125,7 +125,7 @@ function limpiarEmail(valor: string) {
 
 function esEmailValido(email: string) {
 
-  // ValidaciÃ³n simple (suficiente para UI)
+  // Validacón simple (suficiente para UI)
 
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
@@ -151,7 +151,7 @@ const PAGINAS = [
 
 
 
-    descripcion: "Marca rÃ¡pidamente quiÃ©n estÃ¡ presente o ausente.",
+    descripcion: "Marca rapidamente quien esta presente o ausente.",
 
   },
 
@@ -587,7 +587,7 @@ function HomeContent() {
 
 
 
-              categorÃ­a
+              categorí­a
 
 
 
@@ -1159,7 +1159,7 @@ function HomeContent() {
 
 
 
-                            Email invÃ¡lido
+                            Email invalido
 
 
 
@@ -1195,7 +1195,7 @@ function HomeContent() {
 
 
 
-                      {/* CategorÃ­a */}
+                      {/* Categorí­a */}
 
 
 
@@ -1655,7 +1655,7 @@ function HomeContent() {
 
 
 
-          para moverte rÃ¡pido entre campos.
+          para moverte rapido entre campos.
 
 
 
