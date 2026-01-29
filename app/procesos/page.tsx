@@ -27,25 +27,42 @@ import { useProcesoForm } from "@/lib/hooks/useProcesoForm";
 import { useRouter } from "next/navigation";
 import { sendResendEmail } from "@/lib/api/resend";
 
-function limpiarEmail(valor: string) {
-  return valor.trim().toLowerCase();
-}
-
 function esEmailValido(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
 
-function parseEmailList(value: string) {
-  return Array.from(
-    new Set(
-      value
-        .split(/[\n,;]+/)
-        .map((email) => limpiarEmail(email))
-        .filter((email) => email && esEmailValido(email))
-    )
-  );
-}
+type PanelApoderadoRow = {
+  id: string;
+  categoria: "acreedor" | "deudor";
+  apoderadoId: string;
+  nombre: string;
+  email: string;
+};
 
+const generateId = () =>
+  typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2);
+
+const createPanelApoderadoRow = (): PanelApoderadoRow => ({
+  id: generateId(),
+  categoria: "acreedor",
+  apoderadoId: "",
+  nombre: "",
+  email: "",
+});
+
+type EnviarRegistroOptions = {
+  procesoLabel?: string;
+  totalProcesos?: number;
+  procesoId?: string;
+};
+
+type EnviarRegistroResult = {
+  success: boolean;
+  recipientsCount?: number;
+  errorMessage?: string;
+};
 
 
 export default function ProcesosPage() {
@@ -60,12 +77,61 @@ export default function ProcesosPage() {
 
   const [formVisible, setFormVisible] = useState(false);
   const [mostrarPanelEnvio, setMostrarPanelEnvio] = useState(false);
-  const [apoderadoEmailsInput, setApoderadoEmailsInput] = useState("");
-  const [acreedorEmail, setAcreedorEmail] = useState("");
   const [enviandoRegistro, setEnviandoRegistro] = useState(false);
   const [envioMensaje, setEnvioMensaje] = useState<string | null>(null);
   const [envioError, setEnvioError] = useState<string | null>(null);
   const [apoderadoOptions, setApoderadoOptions] = useState<Apoderado[]>([]);
+  const [panelApoderados, setPanelApoderados] = useState<PanelApoderadoRow[]>([
+    createPanelApoderadoRow(),
+  ]);
+  const updatePanelApoderadoRow = (
+    id: string,
+    patch: Partial<PanelApoderadoRow>,
+  ) => {
+    setPanelApoderados((prev) =>
+      prev.map((row) => (row.id === id ? { ...row, ...patch } : row)),
+    );
+  };
+
+  const handlePanelApoderadoNombreChange = (id: string, value: string) => {
+    const normalized = value.trim().toLowerCase();
+    setPanelApoderados((prev) =>
+      prev.map((row) => {
+        if (row.id !== id) return row;
+        const match = apoderadoOptions.find(
+          (option) =>
+            option.nombre?.trim().toLowerCase() === normalized && normalized !== "",
+        );
+        return {
+          ...row,
+          nombre: value,
+          apoderadoId: match?.id ?? "",
+          email: match?.email ?? row.email,
+        };
+      }),
+    );
+  };
+
+  const handlePanelApoderadoEmailChange = (id: string, value: string) => {
+    updatePanelApoderadoRow(id, { email: value });
+  };
+
+  const handlePanelApoderadoCategoriaChange = (
+    id: string,
+    value: PanelApoderadoRow["categoria"],
+  ) => {
+    updatePanelApoderadoRow(id, { categoria: value });
+  };
+
+  const addPanelApoderadoRow = () => {
+    setPanelApoderados((prev) => [...prev, createPanelApoderadoRow()]);
+  };
+
+  const removePanelApoderadoRow = (id: string) => {
+    setPanelApoderados((prev) =>
+      prev.length === 1 ? prev : prev.filter((row) => row.id !== id),
+    );
+  };
   const [nuevoProceso, setNuevoProceso] = useState({
     numero: "",
     fecha: new Date().toISOString().slice(0, 10),
@@ -223,6 +289,7 @@ export default function ProcesosPage() {
         descripcion: nuevoProceso.descripcion || null,
       };
       const nuevo = await createProceso(payload);
+      const totalProcesos = procesos.length + 1;
       setProcesos((prev) => [nuevo, ...prev]);
       setNuevoProceso({
         numero: "",
@@ -232,7 +299,20 @@ export default function ProcesosPage() {
         juzgado: "",
         descripcion: "",
       });
-      setMensajeProceso(`Proceso ${nuevo.numero_proceso} creado correctamente.`);
+      const envioResultado = await enviarRegistroPorCorreo({
+        procesoLabel: nuevo.numero_proceso,
+        totalProcesos,
+        procesoId: nuevo.id,
+      });
+      let mensaje = `Proceso ${nuevo.numero_proceso} creado correctamente.`;
+      if (envioResultado.success && typeof envioResultado.recipientsCount === "number") {
+        mensaje += ` Correos enviados a ${envioResultado.recipientsCount} apoderado${
+          envioResultado.recipientsCount === 1 ? "" : "s"
+        }.`;
+      } else if (envioResultado.errorMessage) {
+        mensaje += ` No se pudo notificar a los apoderados: ${envioResultado.errorMessage}`;
+      }
+      setMensajeProceso(mensaje);
     } catch (error) {
       console.error("Error creando proceso desde panel:", error);
       setMensajeProceso(
@@ -255,48 +335,94 @@ export default function ProcesosPage() {
     [procesos, editingProcesoId],
   );
 
-  async function enviarRegistroPorCorreo() {
-    if (enviandoRegistro) return;
-    const recipients = parseEmailList(apoderadoEmailsInput);
+  async function enviarRegistroPorCorreo(
+    options?: EnviarRegistroOptions,
+  ): Promise<EnviarRegistroResult> {
+    if (enviandoRegistro) {
+      const message = "Ya se está enviando un correo. Intenta nuevamente en unos segundos.";
+      setEnvioError(message);
+      return { success: false, errorMessage: message };
+    }
+
+    const normalizedRows = panelApoderados.map((row) => ({
+      ...row,
+      email: row.email.trim(),
+    }));
+    const recipients = normalizedRows.filter((row) => row.email);
     if (recipients.length === 0) {
-      setEnvioError("Agrega al menos un correo válido de apoderado.");
+      const message = "Agrega al menos un correo válido de apoderado.";
+      setEnvioError(message);
       setEnvioMensaje(null);
-      return;
+      return { success: false, errorMessage: message };
     }
-    const cleanedAcreedorEmail = acreedorEmail.trim();
-    if (cleanedAcreedorEmail && !esEmailValido(cleanedAcreedorEmail)) {
-      setEnvioError("El correo del acreedor no es válido.");
+
+    const invalidRow = recipients.find((row) => row.email && !esEmailValido(row.email));
+    if (invalidRow) {
+      const message = `El correo de ${invalidRow.nombre || "el apoderado seleccionado"} no es válido.`;
+      setEnvioError(message);
       setEnvioMensaje(null);
-      return;
+      return { success: false, errorMessage: message };
     }
+
     setEnvioError(null);
     setEnvioMensaje(null);
     setEnviandoRegistro(true);
     try {
-      const procesoLabel = selectedProceso?.numero_proceso ?? "registro general";
-      const html = `
-        <p>Hola,</p>
-        <p>
-          Te compartimos el registro de procesos <strong>${procesoLabel}</strong> creado el día <strong>${new Date().toLocaleDateString("es-CO")}</strong>.
-        </p>
-        <p>
-          Hay ${procesos.length} procesos registrados actualmente.
-        </p>
-        <p>Quedamos atentos a cualquier comentario.</p>
-      `;
+      const procesoLabel =
+        options?.procesoLabel ?? selectedProceso?.numero_proceso ?? "registro general";
+      const totalProcesos = options?.totalProcesos ?? procesos.length;
+      const procesoId = options?.procesoId ?? selectedProceso?.id;
+      const origin =
+        typeof window !== "undefined" && window.location?.origin
+          ? window.location.origin
+          : "http://localhost:3000";
+      const subject = `Registro de procesos › ${procesoLabel}`;
+      const todayLabel = new Date().toLocaleDateString("es-CO");
+      for (const recipient of recipients) {
+        const tipoParam = recipient.categoria === "acreedor" ? "acreedor" : "deudor";
+        const linkUrl = new URL("/registro", origin);
+        if (procesoId) {
+          linkUrl.searchParams.set("procesoId", procesoId);
+        }
+        linkUrl.searchParams.set("tipo", tipoParam);
+        if (recipient.apoderadoId) {
+          linkUrl.searchParams.set("apoderadoId", recipient.apoderadoId);
+        } else if (recipient.nombre?.trim()) {
+          linkUrl.searchParams.set("apoderadoName", recipient.nombre.trim());
+        }
+        const html = `
+          <p>Hola${recipient.nombre ? ` ${recipient.nombre.split(" ")[0]}` : ""},</p>
+          <p>Te compartimos el registro de procesos <strong>${procesoLabel}</strong> creado el día <strong>${todayLabel}</strong>.</p>
+          <p>
+            Accede directamente a la sección de ${tipoParam === "acreedor" ? "acreedores" : "deudores"} usando el siguiente enlace:
+          </p>
+          <p><a href="${linkUrl.toString()}">${linkUrl.toString()}</a></p>
+          <p>Hay ${totalProcesos} procesos registrados actualmente.</p>
+          <p>Quedamos atentos a cualquier comentario.</p>
+        `;
+        await sendResendEmail({
+          to: recipient.email,
+          subject,
+          html,
+        });
+      }
 
-      await sendResendEmail({
-        to: recipients,
-        subject: `Registro de procesos › ${procesoLabel}`,
-        html,
-        ...(cleanedAcreedorEmail ? { cc: cleanedAcreedorEmail } : {}),
-      });
-
-      setEnvioMensaje(`Correos enviados a ${recipients.length} apoderado${recipients.length === 1 ? "" : "s"}.`);
+      const message = `Correos enviados a ${recipients.length} apoderado${
+        recipients.length === 1 ? "" : "s"
+      }.`;
+      setEnvioMensaje(message);
+      return {
+        success: true,
+        recipientsCount: recipients.length,
+      };
     } catch (error) {
       console.error("Error enviando registro:", error);
       const message = error instanceof Error ? error.message : "No se pudo enviar el correo.";
       setEnvioError(message);
+      return {
+        success: false,
+        errorMessage: message,
+      };
     } finally {
       setEnviandoRegistro(false);
     }
@@ -398,51 +524,96 @@ export default function ProcesosPage() {
             </div>
             <div className="mt-4 grid gap-6 lg:grid-cols-2">
               <div className="space-y-4">
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                    Correo del acreedor
-                  </label>
-                  <input
-                    list="acreedor-suggestions"
-                    value={acreedorEmail}
-                    onChange={(e) => setAcreedorEmail(e.target.value)}
-                    placeholder="Ej: acreedor@firma.com"
-                    className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                  />
-                  <datalist id="acreedor-suggestions">
-                    {apoderadoOptions
-                      .filter((ap) => ap.email)
-                      .map((ap) => (
-                        <option key={ap.id} value={ap.email ?? ""}>
-                          {ap.nombre}
-                        </option>
+                <p className="text-sm text-zinc-600 dark:text-zinc-300">
+                  Indica si el apoderado representa a un acreedor o un deudor, luego escribe o busca su nombre.
+                  Si el nombre coincide con uno existente se completará el correo automáticamente.
+                </p>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-[0.3em] text-zinc-500">
+                    <span>Apoderados</span>
+                    <button
+                      type="button"
+                      onClick={addPanelApoderadoRow}
+                      className="rounded-full border border-dashed border-zinc-300 px-2 py-0.5 text-[10px]"
+                    >
+                      + agregar
+                    </button>
+                  </div>
+                  <div className="space-y-3">
+                    {panelApoderados.map((row) => (
+                      <div
+                        key={row.id}
+                        className="rounded-2xl border border-zinc-200 bg-white/80 p-3 dark:border-white/10 dark:bg-white/5"
+                      >
+                        <div className="flex flex-wrap items-center gap-3">
+                          <div className="flex-1 min-w-[140px]">
+                            <label className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+                              Relación
+                            </label>
+                            <select
+                              value={row.categoria}
+                              onChange={(e) =>
+                                handlePanelApoderadoCategoriaChange(
+                                  row.id,
+                                  e.target.value as PanelApoderadoRow["categoria"],
+                                )
+                              }
+                              className="mt-1 h-9 w-full rounded-2xl border border-zinc-200 bg-zinc-50 px-3 text-xs outline-none dark:border-white/10 dark:bg-black/20"
+                            >
+                              <option value="acreedor">Acreedor</option>
+                              <option value="deudor">Deudor</option>
+                            </select>
+                          </div>
+                          {panelApoderados.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => removePanelApoderadoRow(row.id)}
+                              className="rounded-full bg-red-50 px-2 text-[11px] text-red-600 dark:bg-red-900/40 dark:text-red-300"
+                            >
+                              Eliminar
+                            </button>
+                          )}
+                        </div>
+                        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                          <div>
+                            <label className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+                              Apoderado
+                            </label>
+                            <input
+                              list="panel-apoderado-names"
+                              value={row.nombre}
+                              onChange={(e) =>
+                                handlePanelApoderadoNombreChange(row.id, e.target.value)
+                              }
+                              placeholder="Nombre o búsqueda"
+                              className="mt-1 h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none dark:border-white/10 dark:bg-black/20"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+                              Correo
+                            </label>
+                            <input
+                              value={row.email}
+                              onChange={(e) =>
+                                handlePanelApoderadoEmailChange(row.id, e.target.value)
+                              }
+                              placeholder="correo@firma.com"
+                              className="mt-1 h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none dark:border-white/10 dark:bg-black/20"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    <datalist id="panel-apoderado-names">
+                      {apoderadoOptions.map((option) => (
+                        <option key={option.id} value={option.nombre ?? ""} />
                       ))}
-                  </datalist>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                    Correos de apoderados
-                  </label>
-                  <textarea
-                    value={apoderadoEmailsInput}
-                    onChange={(e) => setApoderadoEmailsInput(e.target.value)}
-                    rows={4}
-                    placeholder="Un correo por línea o separado por comas"
-                    className="w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                  />
-                  <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-                    Puedes copiar los correos desde el listado de procesos o agregarlos manualmente.
-                  </p>
+                    </datalist>
+                  </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={enviarRegistroPorCorreo}
-                    disabled={enviandoRegistro}
-                    className="h-12 rounded-2xl bg-zinc-950 px-6 text-sm font-medium text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-white dark:text-black"
-                  >
-                    {enviandoRegistro ? "Enviando..." : "Enviar correos a los apoderados"}
-                  </button>
+                  
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
                     Procesos disponibles: {procesos.length}
                   </p>
@@ -468,7 +639,7 @@ export default function ProcesosPage() {
                       onChange={(e) =>
                         setNuevoProceso((prev) => ({ ...prev, numero: e.target.value }))
                       }
-                      className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none"
+                      className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs text-zinc-950 dark:text-zinc-950 outline-none"
                     />
                   </div>
                   <div>
@@ -481,7 +652,7 @@ export default function ProcesosPage() {
                       onChange={(e) =>
                         setNuevoProceso((prev) => ({ ...prev, fecha: e.target.value }))
                       }
-                      className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none"
+                      className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs text-zinc-950 dark:text-zinc-950 outline-none"
                     />
                   </div>
                   <div>
@@ -493,7 +664,7 @@ export default function ProcesosPage() {
                       onChange={(e) =>
                         setNuevoProceso((prev) => ({ ...prev, estado: e.target.value }))
                       }
-                      className="h-10 w-full cursor-pointer rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none"
+                      className="h-10 w-full cursor-pointer rounded-2xl border border-zinc-200 bg-white px-3 text-xs text-zinc-950 dark:text-zinc-950 outline-none"
                     >
                       {["Activo", "En trámite", "Suspendido", "Finalizado"].map((option) => (
                         <option key={option} value={option}>
@@ -511,7 +682,7 @@ export default function ProcesosPage() {
                       onChange={(e) =>
                         setNuevoProceso((prev) => ({ ...prev, tipo: e.target.value }))
                       }
-                      className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none"
+                      className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs text-zinc-950 dark:text-zinc-950 outline-none"
                     />
                   </div>
                 </div>
@@ -524,7 +695,7 @@ export default function ProcesosPage() {
                     onChange={(e) =>
                       setNuevoProceso((prev) => ({ ...prev, juzgado: e.target.value }))
                     }
-                    className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none"
+                    className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs text-zinc-950 dark:text-zinc-950 outline-none"
                   />
                 </div>
                 <div>
@@ -537,7 +708,7 @@ export default function ProcesosPage() {
                       setNuevoProceso((prev) => ({ ...prev, descripcion: e.target.value }))
                     }
                     rows={2}
-                    className="w-full rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-xs outline-none"
+                    className="w-full rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-950 dark:text-zinc-950 outline-none"
                   />
                 </div>
                 <div className="flex flex-col gap-2">
@@ -547,7 +718,7 @@ export default function ProcesosPage() {
                     disabled={creandoProceso}
                     className="h-12 rounded-2xl bg-emerald-600 px-6 text-sm font-medium text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-emerald-400 dark:text-black"
                   >
-                    {creandoProceso ? "Creando proceso..." : "Guardar proceso"}
+                    {creandoProceso ? "Creando proceso..." : "Guardar proceso y enviar correos a los apoderados"}
                   </button>
                   {mensajeProceso && (
                     <p className="text-xs text-zinc-500 dark:text-zinc-400">{mensajeProceso}</p>

@@ -1,13 +1,25 @@
 "use client";
-
-import { Fragment } from "react";
 import type { ProcesoFormContext } from "@/lib/hooks/useProcesoForm";
+
+type FocusSection = "deudores" | "acreedores";
 
 type ProcesoFormProps = {
   form: ProcesoFormContext;
+  showGeneralInfo?: boolean;
+  focusSection?: FocusSection;
+  submitLabel?: string;
+  disableSubmit?: boolean;
+  submitDisabledReason?: string;
 };
 
-export default function ProcesoForm({ form }: ProcesoFormProps) {
+export default function ProcesoForm({
+  form,
+  showGeneralInfo = true,
+  focusSection,
+  submitLabel,
+  disableSubmit = false,
+  submitDisabledReason,
+}: ProcesoFormProps) {
   const {
     error,
     exito,
@@ -51,6 +63,18 @@ export default function ProcesoForm({ form }: ProcesoFormProps) {
     resetFormFields,
   } = form;
 
+  const focusSectionNormalized =
+    focusSection === "acreedores"
+      ? "acreedores"
+      : focusSection === "deudores"
+      ? "deudores"
+      : undefined;
+
+  const shouldShowDeudoresSection =
+    focusSectionNormalized ? focusSectionNormalized === "deudores" : true;
+  const shouldShowAcreedoresSection =
+    focusSectionNormalized ? focusSectionNormalized === "acreedores" : true;
+
   return (
     <>
 
@@ -92,107 +116,112 @@ export default function ProcesoForm({ form }: ProcesoFormProps) {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
-              Número de Proceso *
-            </label>
-            <input
-              type="text"
-              value={numeroProceso}
-              onChange={(e) => setNumeroProceso(e.target.value)}
-              placeholder="Ej: 2024-001234"
-              className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-              required
-            />
-          </div>
+          {showGeneralInfo && (
+            <>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                  Número de Proceso *
+                </label>
+                <input
+                  type="text"
+                  value={numeroProceso}
+                  onChange={(e) => setNumeroProceso(e.target.value)}
+                  placeholder="Ej: 2024-001234"
+                  className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                  required
+                />
+              </div>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                Fecha de Inicio
-              </label>
-              <input
-                type="date"
-                value={fechaprocesos}
-                onChange={(e) => setFechaprocesos(e.target.value)}
-                className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-              />
-            </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                    Fecha de Inicio
+                  </label>
+                  <input
+                    type="date"
+                    value={fechaprocesos}
+                    onChange={(e) => setFechaprocesos(e.target.value)}
+                    className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                  />
+                </div>
 
-            <div>
-              <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                Estado
-              </label>
-              <select
-                value={estado}
-                onChange={(e) => setEstado(e.target.value)}
-                className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10 cursor-pointer"
-              >
-                <option value="Activo">Activo</option>
-                <option value="En trámite">En trámite</option>
-                <option value="Suspendido">Suspendido</option>
-                <option value="Finalizado">Finalizado</option>
-                <option value="Archivado">Archivado</option>
-              </select>
-            </div>
-          </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                    Estado
+                  </label>
+                  <select
+                    value={estado}
+                    onChange={(e) => setEstado(e.target.value)}
+                    className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10 cursor-pointer"
+                  >
+                    <option value="Activo">Activo</option>
+                    <option value="En trámite">En trámite</option>
+                    <option value="Suspendido">Suspendido</option>
+                    <option value="Finalizado">Finalizado</option>
+                    <option value="Archivado">Archivado</option>
+                  </select>
+                </div>
+              </div>
 
-          <div>
-            <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
-              Tipo de Proceso
-            </label>
-            <input
-              type="text"
-              value={tipoProceso}
-              onChange={(e) => setTipoProceso(e.target.value)}
-              placeholder="Ej: Liquidación, Reorganización"
-              className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-            />
-          </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                  Tipo de Proceso
+                </label>
+                <input
+                  type="text"
+                  value={tipoProceso}
+                  onChange={(e) => setTipoProceso(e.target.value)}
+                  placeholder="Ej: Liquidación, Reorganización"
+                  className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                />
+              </div>
 
-          <div>
-            <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
-              Juzgado
-            </label>
-            <input
-              type="text"
-              value={juzgado}
-              onChange={(e) => setJuzgado(e.target.value)}
-              placeholder="Ej: Juzgado 1 Civil del Circuito"
-              className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-            />
-          </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                  Juzgado
+                </label>
+                <input
+                  type="text"
+                  value={juzgado}
+                  onChange={(e) => setJuzgado(e.target.value)}
+                  placeholder="Ej: Juzgado 1 Civil del Circuito"
+                  className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                />
+              </div>
 
-          <div>
-            <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
-              Descripción
-            </label>
-            <textarea
-              value={descripcion}
-              onChange={(e) => setDescripcion(e.target.value)}
-              placeholder="Descripción del proceso..."
-              rows={3}
-              className="w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10 resize-none"
-            />
-          </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                  Descripción
+                </label>
+                <textarea
+                  value={descripcion}
+                  onChange={(e) => setDescripcion(e.target.value)}
+                  placeholder="Descripción del proceso..."
+                  rows={3}
+                  className="w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10 resize-none"
+                />
+              </div>
+            </>
+          )}
 
           <div className="space-y-6">
-            <div className="rounded-2xl border border-zinc-200 bg-white/80 p-4 shadow-sm dark:border-white/10 dark:bg-white/5">
-              <div className="flex items-center justify-between">
-                <div>
+            {shouldShowDeudoresSection && (
+              <div className="rounded-2xl border border-zinc-200 bg-white/80 p-4 shadow-sm dark:border-white/10 dark:bg-white/5">
+                <div className="flex items-center justify-between">
+                  <div>
                   <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Deudores</p>
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
                     Agrega los deudores que participan en este proceso.
                   </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={agregarDeudorRow}
+                    className="h-10 rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-700 shadow-sm transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:bg-white/10"
+                  >
+                    + Agregar deudor
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={agregarDeudorRow}
-                  className="h-10 rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-700 shadow-sm transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:bg-white/10"
-                >
-                  + Agregar deudor
-                </button>
-              </div>
 
               <div className="space-y-4 mt-4">
                 {deudoresForm.map((deudor, index) => (
@@ -365,23 +394,24 @@ export default function ProcesoForm({ form }: ProcesoFormProps) {
                 </div>
               )}
             </div>
-
-            <div className="rounded-2xl border border-zinc-200 bg-white/80 p-4 shadow-sm dark:border-white/10 dark:bg-white/5">
-              <div className="flex items-center justify-between">
-                <div>
+          )}
+            {shouldShowAcreedoresSection && (
+              <div className="rounded-2xl border border-zinc-200 bg-white/80 p-4 shadow-sm dark:border-white/10 dark:bg-white/5">
+                <div className="flex items-center justify-between">
+                  <div>
                   <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Acreedores</p>
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
                     Añade los acreedores relacionados con el proceso.
                   </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={agregarAcreedorRow}
+                    className="h-10 rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-700 shadow-sm transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:bg-white/10"
+                  >
+                    + Agregar acreedor
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={agregarAcreedorRow}
-                  className="h-10 rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-700 shadow-sm transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:bg-white/10"
-                >
-                  + Agregar acreedor
-                </button>
-              </div>
 
               <div className="space-y-4 mt-4">
                 {acreedoresForm.map((acreedor, index) => (
@@ -570,7 +600,8 @@ export default function ProcesoForm({ form }: ProcesoFormProps) {
                   </select>
                 </div>
               )}
-            </div>
+              </div>
+            )}
           </div>
 
           <datalist id="apoderados-list">
@@ -589,11 +620,16 @@ export default function ProcesoForm({ form }: ProcesoFormProps) {
 
           <button
             type="submit"
-            disabled={guardando || !numeroProceso.trim()}
+            disabled={guardando || !numeroProceso.trim() || disableSubmit}
             className="h-11 w-full rounded-2xl bg-zinc-950 px-6 text-sm font-medium text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-white dark:text-black"
           >
-            {guardando ? "Guardando..." : editingProcesoId ? "Guardar y continuar" : "Crear Proceso"}
+            {guardando
+              ? "Guardando..."
+              : submitLabel ?? (editingProcesoId ? "Guardar y continuar" : "Crear Proceso")}
           </button>
+          {submitDisabledReason && (
+            <p className="mt-2 text-xs text-red-600 dark:text-red-300">{submitDisabledReason}</p>
+          )}
         </form>
       </section>
 
