@@ -129,8 +129,8 @@ export default function ProcesoForm({
         ? formatMontoInputValue(totalObligaciones)
         : acreedor.monto;
     const totalObligacionesLabel = formatMontoLabel(totalObligaciones);
-    const nitDigitCount = getDigitCount(acrecedor.identificacion);
-    const usesNit = isNitIdentification(acrecedor.tipoIdentificacion);
+    const nitDigitCount = getDigitCount(acreedor.identificacion);
+    const usesNit = isNitIdentification(acreedor.tipoIdentificacion);
     const highlightNitError =
       usesNit && nitDigitCount > 0 && nitDigitCount !== NIT_REQUIRED_DIGITS;
     const showNitHint = usesNit && nitDigitCount !== NIT_REQUIRED_DIGITS;

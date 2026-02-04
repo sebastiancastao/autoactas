@@ -8,7 +8,7 @@ export async function getInventario() {
       *,
       proceso (*),
       acreedores (*),
-      apoderados (*)
+      apoderados!inventario_apoderado_id_fkey (*)
     `)
     .order('created_at', { ascending: false })
 
@@ -22,7 +22,7 @@ export async function getInventarioByProceso(procesoId: string) {
     .select(`
       *,
       acreedores (*),
-      apoderados (*)
+      apoderados!inventario_apoderado_id_fkey (*)
     `)
     .eq('proceso_id', procesoId)
     .order('created_at', { ascending: false })
@@ -37,7 +37,7 @@ export async function getInventarioByAcreedor(acreedorId: string) {
     .select(`
       *,
       proceso (*),
-      apoderados (*)
+      apoderados!inventario_apoderado_id_fkey (*)
     `)
     .eq('acreedor_id', acreedorId)
     .order('created_at', { ascending: false })
@@ -68,7 +68,7 @@ export async function getInventarioById(id: string) {
       *,
       proceso (*),
       acreedores (*),
-      apoderados (*)
+      apoderados!inventario_apoderado_id_fkey (*)
     `)
     .eq('id', id)
     .single()

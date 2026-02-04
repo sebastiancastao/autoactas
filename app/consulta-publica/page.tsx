@@ -22,7 +22,7 @@ export default async function ConsultaPublicaPage() {
     supabase.from("apoderados").select("*").order("nombre", { ascending: true }),
     supabase
       .from("acreedores")
-      .select("*, apoderados (*)")
+      .select("*, apoderados!acreedores_apoderado_id_fkey (*)")
       .order("created_at", { ascending: false }),
   ]);
 
