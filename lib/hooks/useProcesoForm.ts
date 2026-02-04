@@ -10,6 +10,11 @@ import {
   updateProceso,
 } from "@/lib/api/proceso";
 import { updateProgresoByProcesoId } from "@/lib/api/progreso";
+import {
+  getDigitCount,
+  isNitIdentification,
+  NIT_REQUIRED_DIGITS,
+} from "@/lib/utils/identificacion";
 import type {
   Acreedor,
   Apoderado,
@@ -59,6 +64,7 @@ type ApoderadoForm = {
   email: string;
   telefono: string;
   direccion: string;
+  tarjetaProfesional: string;
 };
 
 type AcreedorWithApoderado = Acreedor & {
@@ -156,6 +162,7 @@ function createApoderadoForm(): ApoderadoForm {
     email: "",
     telefono: "",
     direccion: "",
+    tarjetaProfesional: "",
   };
 }
 
@@ -586,6 +593,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
         email: apoderadoForm.email.trim() || null,
         telefono: apoderadoForm.telefono.trim() || null,
         direccion: apoderadoForm.direccion.trim() || null,
+        tarjeta_profesional: apoderadoForm.tarjetaProfesional.trim() || null,
       });
       setApoderados((prev) => [created, ...prev]);
       if (apoderadoModalTarget.tipo === "deudor") {
@@ -623,6 +631,21 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
       return;
     }
 
+    const invalidNitAcreedor = acreedoresForm.find((fila) => {
+      if (!isNitIdentification(fila.tipoIdentificacion)) {
+        return false;
+      }
+      return getDigitCount(fila.identificacion) !== NIT_REQUIRED_DIGITS;
+    });
+
+    if (invalidNitAcreedor) {
+      const displayName = invalidNitAcreedor.nombre.trim() || "sin nombre";
+      setError(
+        `El NIT del acreedor ${displayName} debe contener exactamente ${NIT_REQUIRED_DIGITS} dígitos numéricos.`,
+      );
+      return;
+    }
+
     try {
       setGuardando(true);
       const procesoPayload: ProcesoInsert = {
@@ -653,6 +676,12 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
           await updateProgresoByProcesoId(savedProceso.id, { estado: "iniciado" });
         } catch (err) {
           console.error("Error updating progreso:", err);
+        }
+      } else {
+        try {
+          await updateProgresoByProcesoId(savedProceso.id, { estado: "no_iniciado" });
+        } catch (err) {
+          console.error("Error initializing progreso for new proceso:", err);
         }
       }
 

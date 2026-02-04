@@ -1,4 +1,10 @@
 "use client";
+
+import {
+  NIT_REQUIRED_DIGITS,
+  getDigitCount,
+  isNitIdentification,
+} from "@/lib/utils/identificacion";
 import type { ProcesoFormContext } from "@/lib/hooks/useProcesoForm";
 
 type FocusSection = "deudores" | "acreedores";
@@ -123,6 +129,23 @@ export default function ProcesoForm({
         ? formatMontoInputValue(totalObligaciones)
         : acreedor.monto;
     const totalObligacionesLabel = formatMontoLabel(totalObligaciones);
+    const nitDigitCount = getDigitCount(acrecedor.identificacion);
+    const usesNit = isNitIdentification(acrecedor.tipoIdentificacion);
+    const highlightNitError =
+      usesNit && nitDigitCount > 0 && nitDigitCount !== NIT_REQUIRED_DIGITS;
+    const showNitHint = usesNit && nitDigitCount !== NIT_REQUIRED_DIGITS;
+    const identificacionInputBase =
+      "h-11 w-full rounded-2xl bg-white px-3 text-sm outline-none transition focus:ring-4 dark:bg-black/20";
+    const identificacionValidBorders =
+      "border border-zinc-200 focus:border-zinc-950/30 focus:ring-zinc-950/10 dark:border-white/10 dark:focus:border-white/20 dark:focus:ring-white/10";
+    const identificacionErrorBorders =
+      "border border-red-500 focus:border-red-500 focus:ring-red-100 dark:border-red-500 dark:focus:border-red-400 dark:focus:ring-red-200";
+    const identificacionInputClassName = `${identificacionInputBase} ${
+      highlightNitError ? identificacionErrorBorders : identificacionValidBorders
+    }`;
+    const nitHintColorClass =
+      nitDigitCount > 0 ? "text-red-600 dark:text-red-300" : "text-zinc-500 dark:text-zinc-400";
+    const nitHintText = `El NIT debe contener exactamente ${NIT_REQUIRED_DIGITS} dígitos numéricos.`;
 
     return (
       <div
@@ -155,8 +178,11 @@ export default function ProcesoForm({
               value={acreedor.nombre}
               onChange={(e) => actualizarAcreedorRow(acreedor.id, { nombre: e.target.value })}
               placeholder="Ej: Banco ABC"
-              className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+              className={identificacionInputClassName}
             />
+            {showNitHint && (
+              <p className={`mt-1 text-xs ${nitHintColorClass}`}>{nitHintText}</p>
+            )}
           </div>
 
           <div>
@@ -942,6 +968,19 @@ export default function ProcesoForm({
                   />
                 </div>
               </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-zinc-600 dark:text-zinc-300">
+                  Tarjeta profesional
+                </label>
+                <input
+                  value={apoderadoForm.tarjetaProfesional}
+                  onChange={(e) =>
+                    setApoderadoForm((prev) => ({ ...prev, tarjetaProfesional: e.target.value }))
+                  }
+                  placeholder="Ej: 123456"
+                  className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                />
+              </div>
             </div>
             <div className="mt-5 flex justify-end gap-3">
               <button
@@ -966,4 +1005,3 @@ export default function ProcesoForm({
     </>
   );
 }
-

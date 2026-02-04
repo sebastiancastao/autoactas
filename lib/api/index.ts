@@ -3,6 +3,7 @@ export * from './apoderados'
 export * from './proceso'
 export * from './deudores'
 export * from './acreedores'
+export * from './acreencias'
 export * from './inventario'
 export * from './auth-users'
 
@@ -22,6 +23,9 @@ export type {
   Acreedor,
   AcreedorInsert,
   AcreedorUpdate,
+  Acreencia,
+  AcreenciaInsert,
+  AcreenciaUpdate,
   Inventario,
   InventarioInsert,
   InventarioUpdate,

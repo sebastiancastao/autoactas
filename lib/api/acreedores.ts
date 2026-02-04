@@ -7,7 +7,7 @@ export async function getAcreedores() {
     .select(`
       *,
       proceso (*),
-      apoderados (*)
+      apoderados!acreedores_apoderado_id_fkey (*)
     `)
     .order('created_at', { ascending: false })
 
@@ -20,7 +20,7 @@ export async function getAcreedoresByProceso(procesoId: string) {
     .from('acreedores')
     .select(`
       *,
-      apoderados (*)
+      apoderados!acreedores_apoderado_id_fkey (*)
     `)
     .eq('proceso_id', procesoId)
     .order('created_at', { ascending: false })
@@ -49,7 +49,7 @@ export async function getAcreedorById(id: string) {
     .select(`
       *,
       proceso (*),
-      apoderados (*)
+      apoderados!acreedores_apoderado_id_fkey (*)
     `)
     .eq('id', id)
     .single()

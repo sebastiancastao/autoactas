@@ -7,8 +7,6 @@
 import Link from "next/link";
 
 import {
-  Dispatch,
-  SetStateAction,
   useCallback,
   useEffect,
   useMemo,
@@ -554,7 +552,7 @@ export default function ProcesosPage() {
 
 
         <nav className="mb-8 flex flex-wrap gap-2">
-          
+
 
           <Link
 
@@ -565,6 +563,18 @@ export default function ProcesosPage() {
           >
 
             Calendario
+
+          </Link>
+
+          <Link
+
+            href="/procesos/export"
+
+            className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-indigo-100/60 px-4 py-2 text-sm font-semibold text-indigo-700 shadow-sm transition hover:bg-indigo-200/70 dark:border-indigo-400/60 dark:bg-indigo-500/10 dark:text-indigo-50 dark:hover:border-indigo-200 dark:hover:bg-indigo-500/20"
+
+          >
+
+            Exportar Word
 
           </Link>
 

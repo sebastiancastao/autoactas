@@ -18,6 +18,7 @@ export interface Database {
           email: string | null
           telefono: string | null
           direccion: string | null
+          tarjeta_profesional: string | null
           created_at: string
           updated_at: string
         }
@@ -29,6 +30,7 @@ export interface Database {
           email?: string | null
           telefono?: string | null
           direccion?: string | null
+          tarjeta_profesional?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -40,6 +42,7 @@ export interface Database {
           email?: string | null
           telefono?: string | null
           direccion?: string | null
+          tarjeta_profesional?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -244,6 +247,79 @@ export interface Database {
             columns: ["apoderado_id"]
             isOneToOne: false
             referencedRelation: "apoderados"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
+      acreencias: {
+        Row: {
+          id: string
+          proceso_id: string
+          apoderado_id: string
+          acreedor_id: string
+          naturaleza: string | null
+          prelacion: string | null
+          capital: number | null
+          int_cte: number | null
+          int_mora: number | null
+          otros_cobros_seguros: number | null
+          total: number | null
+          porcentaje: number | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          proceso_id: string
+          apoderado_id: string
+          acreedor_id: string
+          naturaleza?: string | null
+          prelacion?: string | null
+          capital?: number | null
+          int_cte?: number | null
+          int_mora?: number | null
+          otros_cobros_seguros?: number | null
+          total?: number | null
+          porcentaje?: number | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          proceso_id?: string
+          apoderado_id?: string
+          acreedor_id?: string
+          naturaleza?: string | null
+          prelacion?: string | null
+          capital?: number | null
+          int_cte?: number | null
+          int_mora?: number | null
+          otros_cobros_seguros?: number | null
+          total?: number | null
+          porcentaje?: number | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "acreencias_proceso_id_fkey"
+            columns: ["proceso_id"]
+            isOneToOne: false
+            referencedRelation: "proceso"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "acreencias_apoderado_id_fkey"
+            columns: ["apoderado_id"]
+            isOneToOne: false
+            referencedRelation: "apoderados"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "acreencias_acreedor_id_fkey"
+            columns: ["acreedor_id"]
+            isOneToOne: false
+            referencedRelation: "acreedores"
             referencedColumns: ["id"]
           }
         ]
@@ -605,6 +681,10 @@ export type DeudorUpdate = Database['public']['Tables']['deudores']['Update']
 export type Acreedor = Database['public']['Tables']['acreedores']['Row']
 export type AcreedorInsert = Database['public']['Tables']['acreedores']['Insert']
 export type AcreedorUpdate = Database['public']['Tables']['acreedores']['Update']
+
+export type Acreencia = Database['public']['Tables']['acreencias']['Row']
+export type AcreenciaInsert = Database['public']['Tables']['acreencias']['Insert']
+export type AcreenciaUpdate = Database['public']['Tables']['acreencias']['Update']
 
 export type Inventario = Database['public']['Tables']['inventario']['Row']
 export type InventarioInsert = Database['public']['Tables']['inventario']['Insert']

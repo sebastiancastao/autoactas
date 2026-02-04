@@ -6,7 +6,7 @@ export async function getAsistenciasByProceso(procesoId: string) {
     .from('asistencia')
     .select(`
       *,
-      apoderados (*),
+      apoderados!asistencia_apoderado_id_fkey (*),
       eventos (*)
     `)
     .eq('proceso_id', procesoId)
@@ -21,7 +21,7 @@ export async function getAsistenciasByEvento(eventoId: string) {
     .from('asistencia')
     .select(`
       *,
-      apoderados (*),
+      apoderados!asistencia_apoderado_id_fkey (*),
       proceso (*)
     `)
     .eq('evento_id', eventoId)
@@ -36,7 +36,7 @@ export async function getAsistenciaById(id: string) {
     .from('asistencia')
     .select(`
       *,
-      apoderados (*),
+      apoderados!asistencia_apoderado_id_fkey (*),
       eventos (*),
       proceso (*)
     `)
