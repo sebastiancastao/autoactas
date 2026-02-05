@@ -35,6 +35,17 @@ export async function getAcreenciasByProceso(procesoId: string) {
   return data ?? []
 }
 
+export async function getAcreenciasHistorialByProceso(procesoId: string) {
+  const { data, error } = await supabase
+    .from('acreencias_historial' as never)
+    .select('*')
+    .eq('proceso_id', procesoId)
+    .order('changed_at', { ascending: false })
+
+  if (error) throw error
+  return (data as unknown as Array<Record<string, unknown>>) ?? []
+}
+
 export async function upsertAcreencias(items: AcreenciaInsert[]) {
   if (items.length === 0) return []
 
