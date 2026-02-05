@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
 
 import { getAcreedoresByProceso } from "@/lib/api/acreedores";
-import { createAcreencia, getAcreenciasByProcesoAndApoderado, updateAcreencia } from "@/lib/api/acreencias";
+import { getAcreenciasByProcesoAndApoderado, upsertAcreencias } from "@/lib/api/acreencias";
 import { getApoderadoById } from "@/lib/api/apoderados";
 import { getProcesoById } from "@/lib/api/proceso";
 import type { Acreedor, Acreencia } from "@/lib/database.types";
@@ -182,28 +182,21 @@ function AcreenciasContent() {
     setGuardadoOk(null);
 
     try {
-      const tareas = drafts.map(async (draft) => {
-        const payload = {
-          proceso_id: procesoId,
-          apoderado_id: apoderadoId,
-          acreedor_id: draft.acreedor_id,
-          naturaleza: draft.naturaleza.trim() || null,
-          prelacion: draft.prelacion.trim() || null,
-          capital: toNumberOrNull(draft.capital),
-          int_cte: toNumberOrNull(draft.int_cte),
-          int_mora: toNumberOrNull(draft.int_mora),
-          otros_cobros_seguros: toNumberOrNull(draft.otros_cobros_seguros),
-          total: toNumberOrNull(draft.total),
-          porcentaje: toNumberOrNull(draft.porcentaje),
-        };
+      const payloads = drafts.map((draft) => ({
+        proceso_id: procesoId,
+        apoderado_id: apoderadoId,
+        acreedor_id: draft.acreedor_id,
+        naturaleza: draft.naturaleza.trim() || null,
+        prelacion: draft.prelacion.trim() || null,
+        capital: toNumberOrNull(draft.capital),
+        int_cte: toNumberOrNull(draft.int_cte),
+        int_mora: toNumberOrNull(draft.int_mora),
+        otros_cobros_seguros: toNumberOrNull(draft.otros_cobros_seguros),
+        total: toNumberOrNull(draft.total),
+        porcentaje: toNumberOrNull(draft.porcentaje),
+      }));
 
-        if (draft.id) {
-          return updateAcreencia(draft.id, payload);
-        }
-        return createAcreencia(payload);
-      });
-
-      const guardadas = await Promise.all(tareas);
+      const guardadas = await upsertAcreencias(payloads);
       const byAcreedorId = new Map<string, Acreencia>();
       guardadas.forEach((a) => byAcreedorId.set(a.acreedor_id, a));
 

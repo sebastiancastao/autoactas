@@ -62,7 +62,7 @@ export default function FinalizacionPage() {
   const [observaciones, setObservaciones] = useState("");
 
   // Resultado final guardado
-  const [guardado, setGuardado] = useState<any>(null);
+  const [guardado, setGuardado] = useState<unknown | null>(null);
 
   const total = asistentes.length;
   const presentes = asistentes.filter((a) => a.estado === "Presente").length;

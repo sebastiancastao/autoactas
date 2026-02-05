@@ -7,7 +7,8 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { getProcesoWithRelations } from "@/lib/api/proceso";
 import { getApoderadosByIds } from "@/lib/api/apoderados";
 import { createAsistenciasBulk } from "@/lib/api/asistencia";
-import type { Apoderado, AsistenciaInsert } from "@/lib/database.types";
+import { getAcreenciasByProceso } from "@/lib/api/acreencias";
+import type { Acreedor, Acreencia, Apoderado, AsistenciaInsert } from "@/lib/database.types";
 
 type Categoria = "Acreedor" | "Deudor" | "Apoderado";
 type EstadoAsistencia = "Presente" | "Ausente";
@@ -105,6 +106,11 @@ function mergeApoderadosById(primary: Apoderado[], fallback: Apoderado[]): Apode
   return Array.from(merged.values());
 }
 
+type AcreenciaDetalle = Acreencia & {
+  acreedores?: Acreedor | null;
+  apoderados?: Apoderado | null;
+};
+
 function AttendanceContent() {
   const searchParams = useSearchParams();
   const procesoId = searchParams.get("procesoId");
@@ -116,12 +122,16 @@ function AttendanceContent() {
     { id: uid(), nombre: "", email: "", categoria: "Acreedor", estado: "Ausente", tarjetaProfesional: "", calidadApoderadoDe: "" },
   ]);
 
-  const [guardado, setGuardado] = useState<any>(null);
+  const [guardado, setGuardado] = useState<unknown | null>(null);
   const [guardando, setGuardando] = useState(false);
   const [guardadoError, setGuardadoError] = useState<string | null>(null);
   const [procesoApoderadosMensaje, setProcesoApoderadosMensaje] = useState<string | null>(null);
   const [procesoApoderadosCargando, setProcesoApoderadosCargando] = useState(false);
   const [procesoApoderadosError, setProcesoApoderadosError] = useState<string | null>(null);
+
+  const [acreencias, setAcreencias] = useState<AcreenciaDetalle[]>([]);
+  const [acreenciasCargando, setAcreenciasCargando] = useState(false);
+  const [acreenciasError, setAcreenciasError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!procesoId) {
@@ -193,6 +203,43 @@ function AttendanceContent() {
     };
 
     cargarApoderadosDelProceso();
+
+    return () => {
+      activo = false;
+    };
+  }, [procesoId]);
+
+  useEffect(() => {
+    if (!procesoId) {
+      setAcreencias([]);
+      setAcreenciasError(null);
+      setAcreenciasCargando(false);
+      return;
+    }
+
+    let activo = true;
+
+    const cargarAcreencias = async () => {
+      setAcreenciasCargando(true);
+      setAcreenciasError(null);
+
+      try {
+        const data = (await getAcreenciasByProceso(procesoId)) as unknown as AcreenciaDetalle[];
+        if (!activo) return;
+        setAcreencias(data ?? []);
+      } catch (error) {
+        console.error("Error cargando acreencias del proceso:", error);
+        if (activo) {
+          setAcreenciasError("No se pudieron cargar las acreencias del proceso.");
+        }
+      } finally {
+        if (activo) {
+          setAcreenciasCargando(false);
+        }
+      }
+    };
+
+    cargarAcreencias();
 
     return () => {
       activo = false;
@@ -610,6 +657,90 @@ function AttendanceContent() {
             )}
           </form>
         </section>
+
+        {procesoId && (
+          <section className="mt-8 rounded-3xl border border-zinc-200 bg-white/80 p-5 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/5 sm:p-6">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold tracking-tight">Acreencias del proceso</h2>
+                <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
+                  {acreenciasCargando
+                    ? "Cargando acreencias..."
+                    : acreencias.length === 0
+                    ? "No hay acreencias registradas."
+                    : `Total: ${acreencias.length}`}
+                </p>
+              </div>
+            </div>
+
+            {acreenciasError && (
+              <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+                {acreenciasError}
+              </div>
+            )}
+
+            {acreencias.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[980px] border-separate border-spacing-0 text-sm">
+                  <thead>
+                    <tr className="text-left text-xs uppercase tracking-[0.25em] text-zinc-400">
+                      <th className="pb-3 pr-4">Acreedor</th>
+                      <th className="pb-3 pr-4">Apoderado</th>
+                      <th className="pb-3 pr-4">Naturaleza</th>
+                      <th className="pb-3 pr-4">Prelación</th>
+                      <th className="pb-3 pr-4">Capital</th>
+                      <th className="pb-3 pr-4">Int. Cte.</th>
+                      <th className="pb-3 pr-4">Int. Mora</th>
+                      <th className="pb-3 pr-4">Otros</th>
+                      <th className="pb-3 pr-4">Total</th>
+                      <th className="pb-3 pr-4">%</th>
+                      <th className="pb-3 pr-0">Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {acreencias.map((acreencia) => {
+                      const hrefEditar = `/acreencias?${new URLSearchParams({
+                        procesoId,
+                        apoderadoId: acreencia.apoderado_id,
+                      }).toString()}`;
+
+                      return (
+                        <tr key={acreencia.id} className="border-t border-zinc-200/70 dark:border-white/10">
+                          <td className="py-3 pr-4 font-medium text-zinc-900 dark:text-zinc-50">
+                            <div className="max-w-[240px] truncate">
+                              {acreencia.acreedores?.nombre ?? acreencia.acreedor_id}
+                            </div>
+                          </td>
+                          <td className="py-3 pr-4">
+                            <div className="max-w-[220px] truncate">
+                              {acreencia.apoderados?.nombre ?? acreencia.apoderado_id}
+                            </div>
+                          </td>
+                          <td className="py-3 pr-4">{acreencia.naturaleza ?? "—"}</td>
+                          <td className="py-3 pr-4">{acreencia.prelacion ?? "—"}</td>
+                          <td className="py-3 pr-4">{acreencia.capital ?? "—"}</td>
+                          <td className="py-3 pr-4">{acreencia.int_cte ?? "—"}</td>
+                          <td className="py-3 pr-4">{acreencia.int_mora ?? "—"}</td>
+                          <td className="py-3 pr-4">{acreencia.otros_cobros_seguros ?? "—"}</td>
+                          <td className="py-3 pr-4 font-medium">{acreencia.total ?? "—"}</td>
+                          <td className="py-3 pr-4">{acreencia.porcentaje ?? "—"}</td>
+                          <td className="py-3 pr-0">
+                            <Link
+                              href={hrefEditar}
+                              className="inline-flex items-center rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white"
+                            >
+                              Editar
+                            </Link>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        )}
 
         <footer className="mt-8 text-xs text-zinc-500 dark:text-zinc-400">
           Tip: usa <span className="rounded bg-zinc-200 px-1 dark:bg-white/10">Tab</span>{" "}
