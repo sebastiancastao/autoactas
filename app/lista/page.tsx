@@ -122,7 +122,7 @@ function AttendanceContent() {
     { id: uid(), nombre: "", email: "", categoria: "Acreedor", estado: "Ausente", tarjetaProfesional: "", calidadApoderadoDe: "" },
   ]);
 
-  const [guardado, setGuardado] = useState<unknown | null>(null);
+  const [guardado, setGuardado] = useState<Record<string, unknown> | null>(null);
   const [guardando, setGuardando] = useState(false);
   const [guardadoError, setGuardadoError] = useState<string | null>(null);
   const [procesoApoderadosMensaje, setProcesoApoderadosMensaje] = useState<string | null>(null);
@@ -650,7 +650,7 @@ function AttendanceContent() {
             )}
 
             {/* Success message */}
-            {guardado && (
+            {guardado !== null && (
               <div className="rounded-2xl border border-green-200 bg-green-50 p-4 text-sm text-green-700 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-300">
                 Asistencia guardada correctamente ({presentes}/{total} presentes)
               </div>

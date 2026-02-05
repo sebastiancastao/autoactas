@@ -62,7 +62,7 @@ export default function FinalizacionPage() {
   const [observaciones, setObservaciones] = useState("");
 
   // Resultado final guardado
-  const [guardado, setGuardado] = useState<unknown | null>(null);
+  const [guardado, setGuardado] = useState<Record<string, unknown> | null>(null);
 
   const total = asistentes.length;
   const presentes = asistentes.filter((a) => a.estado === "Presente").length;
@@ -540,7 +540,7 @@ export default function FinalizacionPage() {
             </div>
 
             {/* JSON Preview */}
-            {guardado && (
+            {guardado !== null && (
               <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4 text-sm dark:border-white/10 dark:bg-white/5">
                 <div className="mb-2 flex items-center justify-between">
                   <p className="font-medium text-zinc-900 dark:text-zinc-50">
