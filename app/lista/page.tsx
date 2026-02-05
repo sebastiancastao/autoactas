@@ -7,7 +7,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { getProcesoWithRelations } from "@/lib/api/proceso";
 import { getApoderadosByIds } from "@/lib/api/apoderados";
 import { createAsistenciasBulk } from "@/lib/api/asistencia";
-import { getAcreenciasByProceso } from "@/lib/api/acreencias";
+import { getAcreenciasByProceso, updateAcreencia } from "@/lib/api/acreencias";
 import type { Acreedor, Acreencia, Apoderado, AsistenciaInsert } from "@/lib/database.types";
 
 type Categoria = "Acreedor" | "Deudor" | "Apoderado";
@@ -111,6 +111,42 @@ type AcreenciaDetalle = Acreencia & {
   apoderados?: Apoderado | null;
 };
 
+type AcreenciaDraft = {
+  naturaleza: string;
+  prelacion: string;
+  capital: string;
+  int_cte: string;
+  int_mora: string;
+  otros_cobros_seguros: string;
+  total: string;
+  porcentaje: string;
+};
+
+function normalizarNumero(valor: string) {
+  return valor.replace(",", ".").trim();
+}
+
+function toNumberOrNull(valor: string) {
+  const normalized = normalizarNumero(valor);
+  if (!normalized) return null;
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : null;
+}
+
+function toFixedOrEmpty(n: number | null | undefined) {
+  if (n === null || n === undefined) return "";
+  return String(n);
+}
+
+function calcularTotal(draft: Pick<AcreenciaDraft, "capital" | "int_cte" | "int_mora" | "otros_cobros_seguros">) {
+  const capital = toNumberOrNull(draft.capital) ?? 0;
+  const intCte = toNumberOrNull(draft.int_cte) ?? 0;
+  const intMora = toNumberOrNull(draft.int_mora) ?? 0;
+  const otros = toNumberOrNull(draft.otros_cobros_seguros) ?? 0;
+  const total = capital + intCte + intMora + otros;
+  return total === 0 ? "" : String(total);
+}
+
 function AttendanceContent() {
   const searchParams = useSearchParams();
   const procesoId = searchParams.get("procesoId");
@@ -132,6 +168,18 @@ function AttendanceContent() {
   const [acreencias, setAcreencias] = useState<AcreenciaDetalle[]>([]);
   const [acreenciasCargando, setAcreenciasCargando] = useState(false);
   const [acreenciasError, setAcreenciasError] = useState<string | null>(null);
+
+  const [acreenciaEditandoId, setAcreenciaEditandoId] = useState<string | null>(null);
+  const [acreenciaDrafts, setAcreenciaDrafts] = useState<Record<string, AcreenciaDraft>>({});
+  const [acreenciaGuardandoId, setAcreenciaGuardandoId] = useState<string | null>(null);
+  const [acreenciaGuardarError, setAcreenciaGuardarError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setAcreenciaEditandoId(null);
+    setAcreenciaDrafts({});
+    setAcreenciaGuardandoId(null);
+    setAcreenciaGuardarError(null);
+  }, [procesoId]);
 
   useEffect(() => {
     if (!procesoId) {
@@ -245,6 +293,78 @@ function AttendanceContent() {
       activo = false;
     };
   }, [procesoId]);
+
+  const iniciarEdicionAcreencia = (acreencia: AcreenciaDetalle) => {
+    setAcreenciaGuardarError(null);
+    setAcreenciaEditandoId(acreencia.id);
+    setAcreenciaDrafts((prev) => ({
+      ...prev,
+      [acreencia.id]: {
+        naturaleza: acreencia.naturaleza ?? "",
+        prelacion: acreencia.prelacion ?? "",
+        capital: toFixedOrEmpty(acreencia.capital),
+        int_cte: toFixedOrEmpty(acreencia.int_cte),
+        int_mora: toFixedOrEmpty(acreencia.int_mora),
+        otros_cobros_seguros: toFixedOrEmpty(acreencia.otros_cobros_seguros),
+        total: toFixedOrEmpty(acreencia.total),
+        porcentaje: toFixedOrEmpty(acreencia.porcentaje),
+      },
+    }));
+  };
+
+  const cancelarEdicionAcreencia = () => {
+    setAcreenciaGuardarError(null);
+    setAcreenciaEditandoId(null);
+  };
+
+  const onChangeAcreenciaDraft = (acreenciaId: string, patch: Partial<AcreenciaDraft>) => {
+    setAcreenciaDrafts((prev) => {
+      const base = prev[acreenciaId];
+      if (!base) return prev;
+      const merged: AcreenciaDraft = { ...base, ...patch };
+
+      const camposQueRecalcularonTotal = ["capital", "int_cte", "int_mora", "otros_cobros_seguros"] as const;
+      if (camposQueRecalcularonTotal.some((k) => k in patch)) {
+        merged.total = calcularTotal(merged);
+      }
+
+      return { ...prev, [acreenciaId]: merged };
+    });
+  };
+
+  const guardarEdicionAcreencia = async (acreenciaId: string) => {
+    if (acreenciaGuardandoId) return;
+    const draft = acreenciaDrafts[acreenciaId];
+    if (!draft) return;
+
+    setAcreenciaGuardandoId(acreenciaId);
+    setAcreenciaGuardarError(null);
+
+    try {
+      const updated = await updateAcreencia(acreenciaId, {
+        naturaleza: draft.naturaleza.trim() || null,
+        prelacion: draft.prelacion.trim() || null,
+        capital: toNumberOrNull(draft.capital),
+        int_cte: toNumberOrNull(draft.int_cte),
+        int_mora: toNumberOrNull(draft.int_mora),
+        otros_cobros_seguros: toNumberOrNull(draft.otros_cobros_seguros),
+        total: toNumberOrNull(draft.total),
+        porcentaje: toNumberOrNull(draft.porcentaje),
+      });
+
+      setAcreencias((prev) =>
+        prev.map((a) =>
+          a.id === acreenciaId ? ({ ...a, ...updated } as AcreenciaDetalle) : a
+        )
+      );
+      setAcreenciaEditandoId(null);
+    } catch (error) {
+      console.error("Error actualizando acreencia:", error);
+      setAcreenciaGuardarError("No se pudo guardar la acreencia. Intenta de nuevo.");
+    } finally {
+      setAcreenciaGuardandoId(null);
+    }
+  };
 
   const total = asistentes.length;
   const presentes = asistentes.filter((a) => a.estado === "Presente").length;
@@ -679,6 +799,12 @@ function AttendanceContent() {
               </div>
             )}
 
+            {acreenciaGuardarError && (
+              <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+                {acreenciaGuardarError}
+              </div>
+            )}
+
             {acreencias.length > 0 && (
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[980px] border-separate border-spacing-0 text-sm">
@@ -699,10 +825,14 @@ function AttendanceContent() {
                   </thead>
                   <tbody>
                     {acreencias.map((acreencia) => {
-                      const hrefEditar = `/acreencias?${new URLSearchParams({
-                        procesoId,
-                        apoderadoId: acreencia.apoderado_id,
-                      }).toString()}`;
+                      const draft = acreenciaDrafts[acreencia.id];
+                      const editando = acreenciaEditandoId === acreencia.id && Boolean(draft);
+                      const deshabilitado = acreenciaGuardandoId === acreencia.id;
+
+                      const qs = new URLSearchParams();
+                      if (procesoId) qs.set("procesoId", procesoId);
+                      qs.set("apoderadoId", acreencia.apoderado_id);
+                      const hrefDetalle = `/acreencias?${qs.toString()}`;
 
                       return (
                         <tr key={acreencia.id} className="border-t border-zinc-200/70 dark:border-white/10">
@@ -716,21 +846,165 @@ function AttendanceContent() {
                               {acreencia.apoderados?.nombre ?? acreencia.apoderado_id}
                             </div>
                           </td>
-                          <td className="py-3 pr-4">{acreencia.naturaleza ?? "—"}</td>
-                          <td className="py-3 pr-4">{acreencia.prelacion ?? "—"}</td>
-                          <td className="py-3 pr-4">{acreencia.capital ?? "—"}</td>
-                          <td className="py-3 pr-4">{acreencia.int_cte ?? "—"}</td>
-                          <td className="py-3 pr-4">{acreencia.int_mora ?? "—"}</td>
-                          <td className="py-3 pr-4">{acreencia.otros_cobros_seguros ?? "—"}</td>
-                          <td className="py-3 pr-4 font-medium">{acreencia.total ?? "—"}</td>
-                          <td className="py-3 pr-4">{acreencia.porcentaje ?? "—"}</td>
+                          <td className="py-3 pr-4">
+                            {editando ? (
+                              <input
+                                value={draft?.naturaleza ?? ""}
+                                onChange={(e) =>
+                                  onChangeAcreenciaDraft(acreencia.id, { naturaleza: e.target.value })
+                                }
+                                className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none focus:border-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-50 dark:focus:border-white"
+                                placeholder="Ej: Laboral"
+                              />
+                            ) : (
+                              acreencia.naturaleza ?? "—"
+                            )}
+                          </td>
+                          <td className="py-3 pr-4">
+                            {editando ? (
+                              <input
+                                value={draft?.prelacion ?? ""}
+                                onChange={(e) =>
+                                  onChangeAcreenciaDraft(acreencia.id, { prelacion: e.target.value })
+                                }
+                                className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none focus:border-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-50 dark:focus:border-white"
+                                placeholder="Ej: 1"
+                              />
+                            ) : (
+                              acreencia.prelacion ?? "—"
+                            )}
+                          </td>
+                          <td className="py-3 pr-4">
+                            {editando ? (
+                              <input
+                                inputMode="decimal"
+                                value={draft?.capital ?? ""}
+                                onChange={(e) =>
+                                  onChangeAcreenciaDraft(acreencia.id, { capital: e.target.value })
+                                }
+                                className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none focus:border-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-50 dark:focus:border-white"
+                                placeholder="0"
+                              />
+                            ) : (
+                              acreencia.capital ?? "—"
+                            )}
+                          </td>
+                          <td className="py-3 pr-4">
+                            {editando ? (
+                              <input
+                                inputMode="decimal"
+                                value={draft?.int_cte ?? ""}
+                                onChange={(e) =>
+                                  onChangeAcreenciaDraft(acreencia.id, { int_cte: e.target.value })
+                                }
+                                className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none focus:border-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-50 dark:focus:border-white"
+                                placeholder="0"
+                              />
+                            ) : (
+                              acreencia.int_cte ?? "—"
+                            )}
+                          </td>
+                          <td className="py-3 pr-4">
+                            {editando ? (
+                              <input
+                                inputMode="decimal"
+                                value={draft?.int_mora ?? ""}
+                                onChange={(e) =>
+                                  onChangeAcreenciaDraft(acreencia.id, { int_mora: e.target.value })
+                                }
+                                className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none focus:border-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-50 dark:focus:border-white"
+                                placeholder="0"
+                              />
+                            ) : (
+                              acreencia.int_mora ?? "—"
+                            )}
+                          </td>
+                          <td className="py-3 pr-4">
+                            {editando ? (
+                              <input
+                                inputMode="decimal"
+                                value={draft?.otros_cobros_seguros ?? ""}
+                                onChange={(e) =>
+                                  onChangeAcreenciaDraft(acreencia.id, {
+                                    otros_cobros_seguros: e.target.value,
+                                  })
+                                }
+                                className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none focus:border-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-50 dark:focus:border-white"
+                                placeholder="0"
+                              />
+                            ) : (
+                              acreencia.otros_cobros_seguros ?? "—"
+                            )}
+                          </td>
+                          <td className="py-3 pr-4 font-medium">
+                            {editando ? (
+                              <input
+                                inputMode="decimal"
+                                value={draft?.total ?? ""}
+                                onChange={(e) =>
+                                  onChangeAcreenciaDraft(acreencia.id, { total: e.target.value })
+                                }
+                                className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-900 shadow-sm outline-none focus:border-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-50 dark:focus:border-white"
+                                placeholder="0"
+                              />
+                            ) : (
+                              acreencia.total ?? "—"
+                            )}
+                          </td>
+                          <td className="py-3 pr-4">
+                            {editando ? (
+                              <input
+                                inputMode="decimal"
+                                value={draft?.porcentaje ?? ""}
+                                onChange={(e) =>
+                                  onChangeAcreenciaDraft(acreencia.id, { porcentaje: e.target.value })
+                                }
+                                className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none focus:border-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-50 dark:focus:border-white"
+                                placeholder="0"
+                              />
+                            ) : (
+                              acreencia.porcentaje ?? "—"
+                            )}
+                          </td>
                           <td className="py-3 pr-0">
-                            <Link
-                              href={hrefEditar}
-                              className="inline-flex items-center rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white"
-                            >
-                              Editar
-                            </Link>
+                            <div className="flex justify-end gap-2">
+                              {editando ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    disabled={deshabilitado}
+                                    onClick={() => guardarEdicionAcreencia(acreencia.id)}
+                                    className="inline-flex items-center rounded-full bg-zinc-950 px-3 py-1 text-xs font-medium text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-white dark:text-black"
+                                  >
+                                    {deshabilitado ? "Guardando..." : "Guardar"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={deshabilitado}
+                                    onClick={cancelarEdicionAcreencia}
+                                    className="inline-flex items-center rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white"
+                                  >
+                                    Cancelar
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => iniciarEdicionAcreencia(acreencia)}
+                                    className="inline-flex items-center rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white"
+                                  >
+                                    Editar
+                                  </button>
+                                  <Link
+                                    href={hrefDetalle}
+                                    className="inline-flex items-center rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white"
+                                  >
+                                    Detalle
+                                  </Link>
+                                </>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );

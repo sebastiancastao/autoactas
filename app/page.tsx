@@ -24,6 +24,8 @@ import ProcesoForm from "@/components/proceso-form";
 
 
 import { useProcesoForm } from "@/lib/hooks/useProcesoForm";
+import { createAsistenciasBulk } from "@/lib/api/asistencia";
+import type { AsistenciaInsert } from "@/lib/database.types";
 
 
 
@@ -220,13 +222,16 @@ function HomeContent() {
 
   const [guardado, setGuardado] = useState<
 
-
-
-    Omit<FilaPersona, "id">[] | null
-
-
-
+    | {
+        personas: Omit<FilaPersona, "id">[];
+        insertadas: number;
+        guardadoEn: string;
+      }
+    | null
   >(null);
+
+  const [guardando, setGuardando] = useState(false);
+  const [guardadoError, setGuardadoError] = useState<string | null>(null);
 
 
 
@@ -387,6 +392,7 @@ function HomeContent() {
 
 
     setGuardado(null);
+    setGuardadoError(null);
 
 
 
@@ -398,7 +404,7 @@ function HomeContent() {
 
 
 
-  function onSubmit(e: React.FormEvent) {
+  async function onSubmit(e: React.FormEvent) {
 
 
 
@@ -406,7 +412,7 @@ function HomeContent() {
 
 
 
-    if (!puedeGuardar) return;
+    if (!puedeGuardar || guardando) return;
 
 
 
@@ -450,7 +456,41 @@ function HomeContent() {
 
 
 
-    setGuardado(payload);
+    setGuardando(true);
+    setGuardadoError(null);
+
+    try {
+      const hoy = new Date().toISOString().slice(0, 10);
+      const titulo = "Registro inicial";
+
+      const registros: AsistenciaInsert[] = payload.map((p) => ({
+        proceso_id: procesoId || undefined,
+        nombre: p.nombre,
+        email: p.email || null,
+        categoria: p.categoria as AsistenciaInsert["categoria"],
+        estado: "Ausente",
+        tarjeta_profesional: p.tarjetaProfesional.trim() || null,
+        calidad_apoderado_de: p.calidadApoderadoDe.trim() || null,
+        fecha: hoy,
+        titulo,
+        observaciones: p.celular ? `Celular: ${p.celular}` : null,
+      }));
+
+      const inserted = await createAsistenciasBulk(registros);
+
+      setGuardado({
+        personas: payload,
+        insertadas: inserted?.length ?? registros.length,
+        guardadoEn: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("Error guardando en Supabase:", error);
+      setGuardadoError(
+        "No se pudo guardar en Supabase. Verifica tu sesiÃ³n, variables de entorno y polÃ­ticas (RLS)."
+      );
+    } finally {
+      setGuardando(false);
+    }
 
 
 
@@ -1538,7 +1578,7 @@ function HomeContent() {
 
 
 
-                  disabled={!puedeGuardar}
+                  disabled={!puedeGuardar || guardando}
 
 
 
@@ -1550,7 +1590,7 @@ function HomeContent() {
 
 
 
-                  Guardar
+                  {guardando ? "Guardando..." : "Guardar"}
 
 
 
@@ -1569,6 +1609,12 @@ function HomeContent() {
 
 
 
+
+            {guardadoError && (
+              <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+                {guardadoError}
+              </div>
+            )}
 
             {/* Preview JSON */}
 
@@ -1602,7 +1648,7 @@ function HomeContent() {
 
 
 
-                    {guardado.length} fila{guardado.length === 1 ? "" : "s"}
+                    {guardado.insertadas} fila{guardado.insertadas === 1 ? "" : "s"}
 
 
 
