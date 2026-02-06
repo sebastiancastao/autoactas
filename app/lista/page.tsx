@@ -296,6 +296,7 @@ function AttendanceContent() {
 
   const [titulo, setTitulo] = useState("Llamado de asistencia");
   const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0, 10));
+  const [numeroProceso, setNumeroProceso] = useState<string | null>(null);
 
   const [asistentes, setAsistentes] = useState<Asistente[]>([
     { id: uid(), nombre: "", email: "", categoria: "Acreedor", estado: "Ausente", tarjetaProfesional: "", calidadApoderadoDe: "" },
@@ -304,6 +305,11 @@ function AttendanceContent() {
   const [guardado, setGuardado] = useState<Record<string, unknown> | null>(null);
   const [guardando, setGuardando] = useState(false);
   const [guardadoError, setGuardadoError] = useState<string | null>(null);
+  const [terminandoAudiencia, setTerminandoAudiencia] = useState(false);
+  const [terminarAudienciaError, setTerminarAudienciaError] = useState<string | null>(null);
+  const [terminarAudienciaResult, setTerminarAudienciaResult] = useState<
+    { fileId: string; fileName: string; webViewLink: string | null } | null
+  >(null);
   const [procesoApoderadosMensaje, setProcesoApoderadosMensaje] = useState<string | null>(null);
   const [procesoApoderadosCargando, setProcesoApoderadosCargando] = useState(false);
   const [procesoApoderadosError, setProcesoApoderadosError] = useState<string | null>(null);
@@ -407,6 +413,7 @@ function AttendanceContent() {
     if (!procesoId) {
       setProcesoApoderadosMensaje(null);
       setProcesoApoderadosError(null);
+      setNumeroProceso(null);
       return;
     }
 
@@ -419,6 +426,9 @@ function AttendanceContent() {
 
       try {
         const procesoConRelaciones = await getProcesoWithRelations(procesoId);
+        if (activo) {
+          setNumeroProceso(procesoConRelaciones.numero_proceso ?? null);
+        }
         const apoderadoIds = new Set<string>();
 
         procesoConRelaciones.deudores?.forEach((deudor) => {
@@ -567,10 +577,10 @@ function AttendanceContent() {
     });
   };
 
-  const guardarEdicionAcreencia = async (acreenciaId: string) => {
-    if (acreenciaGuardandoId) return;
+  const guardarEdicionAcreencia = async (acreenciaId: string): Promise<boolean> => {
+    if (acreenciaGuardandoId) return false;
     const draft = acreenciaDrafts[acreenciaId];
-    if (!draft) return;
+    if (!draft) return false;
 
     setAcreenciaGuardandoId(acreenciaId);
     setAcreenciaGuardarError(null);
@@ -594,9 +604,11 @@ function AttendanceContent() {
       );
       setAcreenciaEditandoId(null);
       setAcreenciasRefreshToken((v) => v + 1);
+      return true;
     } catch (error) {
       console.error("Error actualizando acreencia:", error);
       setAcreenciaGuardarError("No se pudo guardar la acreencia. Intenta de nuevo.");
+      return false;
     } finally {
       setAcreenciaGuardandoId(null);
     }
@@ -704,15 +716,30 @@ function AttendanceContent() {
     setGuardado(null);
   }
 
-  async function guardarAsistencia(e: React.FormEvent) {
-    e.preventDefault();
-    if (!puedeGuardar || guardando) return;
+  const buildAsistenciaPayload = () => {
+    return {
+      titulo: titulo.trim(),
+      fecha,
+      resumen: { total, presentes, ausentes },
+      asistentes: asistentes.map((a) => ({
+        nombre: a.nombre.trim(),
+        email: a.email ? limpiarEmail(a.email) : "",
+        categoria: a.categoria,
+        estado: a.estado,
+        tarjetaProfesional: a.tarjetaProfesional.trim(),
+        calidadApoderadoDe: a.calidadApoderadoDe.trim(),
+      })),
+      guardadoEn: new Date().toISOString(),
+    };
+  };
+
+  const guardarAsistenciaInterno = async () => {
+    if (!puedeGuardar || guardando) return false;
 
     setGuardando(true);
     setGuardadoError(null);
 
     try {
-      // Prepare records for database
       const registros: AsistenciaInsert[] = asistentes.map((a) => ({
         proceso_id: procesoId || undefined,
         apoderado_id: a.apoderadoId || undefined,
@@ -726,33 +753,97 @@ function AttendanceContent() {
         titulo: titulo.trim() || null,
       }));
 
-      // Save to database
       await createAsistenciasBulk(registros);
-
-      // Also set local state for preview
-      const payload = {
-        titulo: titulo.trim(),
-        fecha,
-        resumen: { total, presentes, ausentes },
-        asistentes: asistentes.map((a) => ({
-          nombre: a.nombre.trim(),
-          email: a.email ? limpiarEmail(a.email) : "",
-          categoria: a.categoria,
-          estado: a.estado,
-          tarjetaProfesional: a.tarjetaProfesional.trim(),
-          calidadApoderadoDe: a.calidadApoderadoDe.trim(),
-        })),
-        guardadoEn: new Date().toISOString(),
-      };
-
-      setGuardado(payload);
+      setGuardado(buildAsistenciaPayload());
+      return true;
     } catch (error) {
       console.error("Error guardando asistencia:", error);
       setGuardadoError("No se pudo guardar la asistencia. Intenta de nuevo.");
+      return false;
     } finally {
       setGuardando(false);
     }
+  };
+
+  async function guardarAsistencia(e: React.FormEvent) {
+    e.preventDefault();
+    await guardarAsistenciaInterno();
   }
+
+  const terminarAudiencia = async () => {
+    if (!procesoId || terminandoAudiencia) return;
+
+    setTerminandoAudiencia(true);
+    setTerminarAudienciaError(null);
+    setTerminarAudienciaResult(null);
+
+    try {
+      if (acreenciaEditandoId && acreenciaDrafts[acreenciaEditandoId]) {
+        const okAcreencia = await guardarEdicionAcreencia(acreenciaEditandoId);
+        if (!okAcreencia) {
+          throw new Error("No se pudo guardar la acreencia en edición.");
+        }
+      }
+
+      if (guardado === null) {
+        const okAsistencia = await guardarAsistenciaInterno();
+        if (!okAsistencia) {
+          throw new Error("No se pudo guardar la asistencia.");
+        }
+      }
+
+      const asistenciaPayload = buildAsistenciaPayload();
+      const acreenciasPayload = acreencias.map((a) => ({
+        acreedor: a.acreedores?.nombre ?? null,
+        apoderado: a.apoderados?.nombre ?? null,
+        naturaleza: a.naturaleza ?? null,
+        prelacion: a.prelacion ?? null,
+        capital: a.capital ?? null,
+        int_cte: a.int_cte ?? null,
+        int_mora: a.int_mora ?? null,
+        otros: a.otros_cobros_seguros ?? null,
+        total: a.total ?? null,
+        porcentaje: a.porcentaje ?? null,
+      }));
+
+      const res = await fetch("/api/terminar-audiencia", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          procesoId,
+          numeroProceso,
+          titulo: asistenciaPayload.titulo,
+          fecha: asistenciaPayload.fecha,
+          resumen: asistenciaPayload.resumen,
+          asistentes: asistenciaPayload.asistentes,
+          acreencias: acreenciasPayload,
+        }),
+      });
+
+      const json = (await res.json().catch(() => null)) as
+        | { fileId: string; fileName: string; webViewLink: string | null; error?: string; detail?: string }
+        | null;
+
+      if (!res.ok) {
+        throw new Error(json?.detail || json?.error || "No se pudo terminar la audiencia.");
+      }
+
+      if (!json?.fileId) {
+        throw new Error("Respuesta inválida del servidor.");
+      }
+
+      setTerminarAudienciaResult({
+        fileId: json.fileId,
+        fileName: json.fileName,
+        webViewLink: json.webViewLink ?? null,
+      });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setTerminarAudienciaError(msg);
+    } finally {
+      setTerminandoAudiencia(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-950 dark:bg-black dark:text-zinc-50">
@@ -1057,6 +1148,21 @@ function AttendanceContent() {
                 >
                   {guardando ? "Guardando..." : "Guardar asistencia"}
                 </button>
+
+                <button
+                  type="button"
+                  onClick={terminarAudiencia}
+                  disabled={
+                    !procesoId ||
+                    !puedeGuardar ||
+                    guardando ||
+                    terminandoAudiencia ||
+                    acreenciaGuardandoId !== null
+                  }
+                  className="h-12 rounded-2xl bg-amber-500 px-6 text-sm font-semibold text-amber-950 shadow-sm transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-amber-400 dark:text-black"
+                >
+                  {terminandoAudiencia ? "Terminando..." : "Terminar audiencia"}
+                </button>
               </div>
             </div>
 
@@ -1067,10 +1173,39 @@ function AttendanceContent() {
               </div>
             )}
 
+            {terminarAudienciaError && (
+              <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+                {terminarAudienciaError}
+              </div>
+            )}
+
             {/* Success message */}
             {guardado !== null && (
               <div className="rounded-2xl border border-green-200 bg-green-50 p-4 text-sm text-green-700 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-300">
                 Asistencia guardada correctamente ({presentes}/{total} presentes)
+              </div>
+            )}
+
+            {terminarAudienciaResult && (
+              <div className="rounded-2xl border border-green-200 bg-green-50 p-4 text-sm text-green-700 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-300">
+                <p className="font-medium">Audiencia terminada.</p>
+                <p className="mt-1 break-words">
+                  Documento: {terminarAudienciaResult.fileName}
+                  {terminarAudienciaResult.webViewLink ? (
+                    <>
+                      {" "}
+                      ·{" "}
+                      <a
+                        href={terminarAudienciaResult.webViewLink}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline underline-offset-2"
+                      >
+                        Abrir en Drive
+                      </a>
+                    </>
+                  ) : null}
+                </p>
               </div>
             )}
           </form>
