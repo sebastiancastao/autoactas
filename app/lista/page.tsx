@@ -6,9 +6,11 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 
 import { getProcesoWithRelations } from "@/lib/api/proceso";
 import { getApoderadosByIds } from "@/lib/api/apoderados";
+import { getDeudoresByProceso } from "@/lib/api/deudores";
 import { createAsistenciasBulk } from "@/lib/api/asistencia";
 import { getAcreenciasByProceso, getAcreenciasHistorialByProceso, updateAcreencia } from "@/lib/api/acreencias";
 import type { Acreedor, Acreencia, Apoderado, AsistenciaInsert } from "@/lib/database.types";
+import { supabase } from "@/lib/supabase";
 
 type Categoria = "Acreedor" | "Deudor" | "Apoderado";
 type EstadoAsistencia = "Presente" | "Ausente";
@@ -18,6 +20,7 @@ type Asistente = {
   apoderadoId?: string;
   nombre: string;
   email: string;
+  identificacion: string;
   categoria: Categoria;
   estado: EstadoAsistencia;
   tarjetaProfesional: string;
@@ -38,6 +41,32 @@ function esEmailValido(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
 
+function getBogotaTimeHHMMNow(fallback = "11:30") {
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "America/Bogota",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      hourCycle: "h23",
+    }).formatToParts(new Date());
+
+    const hour = parts.find((p) => p.type === "hour")?.value ?? "00";
+    const minute = parts.find((p) => p.type === "minute")?.value ?? "00";
+    return `${hour}:${minute}`;
+  } catch {
+    return fallback;
+  }
+}
+
+function normalizeHoraHHMM(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  const match = trimmed.match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+  return `${match[1].padStart(2, "0")}:${match[2]}`;
+}
+
 type AcreedorConApoderadoId = {
   id?: string;
   nombre?: string | null;
@@ -47,6 +76,7 @@ type AcreedorConApoderadoId = {
 type DeudorConApoderadoId = {
   id?: string;
   nombre?: string | null;
+  identificacion?: string | null;
   apoderado_id?: string | null;
 };
 
@@ -89,9 +119,10 @@ function mapApoderadosFromProceso(
       apoderadoId: apoderado.id,
       nombre: apoderado.nombre,
       email: apoderado.email ?? "",
+      identificacion: apoderado.identificacion ?? "",
       categoria: "Apoderado",
       estado: "Ausente",
-      tarjetaProfesional: "",
+      tarjetaProfesional: apoderado.tarjeta_profesional ?? "",
       calidadApoderadoDe: calidadDe,
     });
   });
@@ -202,6 +233,11 @@ function formatValorAcreencia(valor: string | number | null) {
   return v ? v : "—";
 }
 
+function formatPorcentaje(value: number | null | undefined) {
+  if (typeof value !== "number" || Number.isNaN(value)) return "—";
+  return value.toFixed(2);
+}
+
 function getAcreenciaCambios(prev: AcreenciaSnapshot, next: AcreenciaSnapshot): AcreenciaCambio[] {
   const cambios: AcreenciaCambio[] = [];
 
@@ -216,7 +252,6 @@ function getAcreenciaCambios(prev: AcreenciaSnapshot, next: AcreenciaSnapshot): 
     { key: "int_mora", label: "Int. Mora" },
     { key: "otros_cobros_seguros", label: "Otros" },
     { key: "total", label: "Total" },
-    { key: "porcentaje", label: "%" },
   ];
 
   campos.forEach(({ key, label }) => {
@@ -293,13 +328,72 @@ function snapshotFromHistorialData(data: Record<string, unknown> | null): Acreen
 function AttendanceContent() {
   const searchParams = useSearchParams();
   const procesoId = searchParams.get("procesoId");
+  const eventoId = searchParams.get("eventoId");
+  const debugRaw = searchParams.get("debug");
+  const debugLista = debugRaw === "1" || debugRaw?.toLowerCase() === "true";
 
   const [titulo, setTitulo] = useState("Llamado de asistencia");
   const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0, 10));
+  const [hora, setHora] = useState(() => getBogotaTimeHHMMNow("11:30"));
+  const [ciudad, setCiudad] = useState("Cali");
   const [numeroProceso, setNumeroProceso] = useState<string | null>(null);
 
+  // Deudor info
+  const [deudorNombre, setDeudorNombre] = useState("");
+  const [deudorIdentificacion, setDeudorIdentificacion] = useState("");
+
+  // Operador/Conciliador info
+  const [operadorNombre, setOperadorNombre] = useState("JOSE ALEJANDRO PARDO MARTINEZ");
+  const [operadorIdentificacion, setOperadorIdentificacion] = useState("1.154.967.376");
+  const [operadorTarjetaProfesional, setOperadorTarjetaProfesional] = useState("429.496");
+  const [operadorEmail, setOperadorEmail] = useState("fundaseer@gmail.com");
+
+  useEffect(() => {
+    if (!eventoId) return;
+
+    let canceled = false;
+    (async () => {
+      try {
+        const { data: evento, error: eventoError } = await supabase
+          .from("eventos")
+          .select("usuario_id, hora")
+          .eq("id", eventoId)
+          .maybeSingle();
+
+        if (eventoError) throw eventoError;
+        const usuarioId = evento?.usuario_id ?? null;
+        const eventoHora = normalizeHoraHHMM(evento?.hora ?? null);
+        if (eventoHora && !canceled) setHora(eventoHora);
+        if (!usuarioId) return;
+
+        const { data: usuario, error: usuarioError } = await supabase
+          .from("usuarios")
+          .select("nombre, email")
+          .eq("id", usuarioId)
+          .maybeSingle();
+
+        if (usuarioError) throw usuarioError;
+        if (canceled) return;
+
+        if (usuario?.nombre) setOperadorNombre(usuario.nombre);
+        if (usuario?.email) setOperadorEmail(usuario.email);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.warn("[/lista] Unable to resolve event creator user:", msg);
+      }
+    })();
+
+    return () => {
+      canceled = true;
+    };
+  }, [eventoId]);
+
+  // Próxima audiencia
+  const [proximaFecha, setProximaFecha] = useState("");
+  const [proximaHora, setProximaHora] = useState("9:30");
+
   const [asistentes, setAsistentes] = useState<Asistente[]>([
-    { id: uid(), nombre: "", email: "", categoria: "Acreedor", estado: "Ausente", tarjetaProfesional: "", calidadApoderadoDe: "" },
+    { id: uid(), nombre: "", email: "", identificacion: "", categoria: "Acreedor", estado: "Ausente", tarjetaProfesional: "", calidadApoderadoDe: "" },
   ]);
 
   const [guardado, setGuardado] = useState<Record<string, unknown> | null>(null);
@@ -308,7 +402,12 @@ function AttendanceContent() {
   const [terminandoAudiencia, setTerminandoAudiencia] = useState(false);
   const [terminarAudienciaError, setTerminarAudienciaError] = useState<string | null>(null);
   const [terminarAudienciaResult, setTerminarAudienciaResult] = useState<
-    { fileId: string; fileName: string; webViewLink: string | null } | null
+    { fileId: string; fileName: string; webViewLink: string | null; apoderadoEmails?: string[] } | null
+  >(null);
+  const [enviandoCorreos, setEnviandoCorreos] = useState(false);
+  const [enviarCorreosError, setEnviarCorreosError] = useState<string | null>(null);
+  const [enviarCorreosResult, setEnviarCorreosResult] = useState<
+    { emailsSent: number; emailErrors?: string[] } | null
   >(null);
   const [procesoApoderadosMensaje, setProcesoApoderadosMensaje] = useState<string | null>(null);
   const [procesoApoderadosCargando, setProcesoApoderadosCargando] = useState(false);
@@ -327,6 +426,27 @@ function AttendanceContent() {
   const [acreenciaDrafts, setAcreenciaDrafts] = useState<Record<string, AcreenciaDraft>>({});
   const [acreenciaGuardandoId, setAcreenciaGuardandoId] = useState<string | null>(null);
   const [acreenciaGuardarError, setAcreenciaGuardarError] = useState<string | null>(null);
+
+  const porcentajeCalculadoByAcreenciaId = useMemo(() => {
+    const totalById = new Map<string, number>();
+    let totalSum = 0;
+
+    acreencias.forEach((acreencia) => {
+      const draft = acreenciaDrafts[acreencia.id];
+      const editando = acreenciaEditandoId === acreencia.id && Boolean(draft);
+      const total = editando ? (toNumberOrNull(draft.total) ?? 0) : (acreencia.total ?? 0);
+      totalById.set(acreencia.id, total);
+      totalSum += total;
+    });
+
+    const byAcreenciaId = new Map<string, number | null>();
+    acreencias.forEach((acreencia) => {
+      const total = totalById.get(acreencia.id) ?? 0;
+      byAcreenciaId.set(acreencia.id, totalSum > 0 ? (total / totalSum) * 100 : null);
+    });
+
+    return { totalSum, byAcreenciaId };
+  }, [acreencias, acreenciaDrafts, acreenciaEditandoId]);
 
   const acreenciasVistasStorageKey = useMemo(() => {
     if (!procesoId) return null;
@@ -425,13 +545,39 @@ function AttendanceContent() {
       setProcesoApoderadosCargando(true);
 
       try {
-        const procesoConRelaciones = await getProcesoWithRelations(procesoId);
+        // Fetch proceso and deudores in parallel
+        const [procesoConRelaciones, deudores] = await Promise.all([
+          getProcesoWithRelations(procesoId),
+          getDeudoresByProceso(procesoId),
+        ]);
+
+        if (debugLista) {
+          console.log("[/lista debug] deudores fetch result", {
+            procesoId,
+            deudoresCount: deudores?.length ?? 0,
+            primerDeudor: deudores?.[0] ?? null,
+          });
+        }
+
         if (activo) {
           setNumeroProceso(procesoConRelaciones.numero_proceso ?? null);
+
+          // Set deudor info from direct fetch
+          const primerDeudor = deudores?.[0];
+          if (primerDeudor) {
+            setDeudorNombre(primerDeudor.nombre || "");
+            setDeudorIdentificacion(primerDeudor.identificacion || "");
+            if (debugLista) {
+              console.log("[/lista debug] deudor set from DB", {
+                nombre: primerDeudor.nombre ?? null,
+                identificacion: primerDeudor.identificacion ?? null,
+              });
+            }
+          }
         }
         const apoderadoIds = new Set<string>();
 
-        procesoConRelaciones.deudores?.forEach((deudor) => {
+        deudores?.forEach((deudor) => {
           if (deudor.apoderado_id) {
             apoderadoIds.add(deudor.apoderado_id);
           }
@@ -454,7 +600,7 @@ function AttendanceContent() {
         );
 
         const filas = mapApoderadosFromProceso(
-          procesoConRelaciones,
+          { ...procesoConRelaciones, deudores },
           apoderadosParaMostrar
         );
 
@@ -487,7 +633,7 @@ function AttendanceContent() {
     return () => {
       activo = false;
     };
-  }, [procesoId]);
+  }, [procesoId, debugLista]);
 
   useEffect(() => {
     if (!procesoId) {
@@ -586,6 +732,7 @@ function AttendanceContent() {
     setAcreenciaGuardarError(null);
 
     try {
+      const porcentaje = porcentajeCalculadoByAcreenciaId.byAcreenciaId.get(acreenciaId) ?? null;
       const updated = await updateAcreencia(acreenciaId, {
         naturaleza: draft.naturaleza.trim() || null,
         prelacion: draft.prelacion.trim() || null,
@@ -594,7 +741,7 @@ function AttendanceContent() {
         int_mora: toNumberOrNull(draft.int_mora),
         otros_cobros_seguros: toNumberOrNull(draft.otros_cobros_seguros),
         total: toNumberOrNull(draft.total),
-        porcentaje: toNumberOrNull(draft.porcentaje),
+        porcentaje,
       });
 
       setAcreencias((prev) =>
@@ -691,7 +838,7 @@ function AttendanceContent() {
   function agregarFila() {
     setAsistentes((prev) => [
       ...prev,
-      { id: uid(), nombre: "", email: "", categoria: "Acreedor", estado: "Ausente", tarjetaProfesional: "", calidadApoderadoDe: "" },
+      { id: uid(), nombre: "", email: "", identificacion: "", categoria: "Acreedor", estado: "Ausente", tarjetaProfesional: "", calidadApoderadoDe: "" },
     ]);
   }
 
@@ -712,7 +859,7 @@ function AttendanceContent() {
   function reiniciar() {
     setTitulo("Llamado de asistencia");
     setFecha(new Date().toISOString().slice(0, 10));
-    setAsistentes([{ id: uid(), nombre: "", email: "", categoria: "Acreedor", estado: "Ausente", tarjetaProfesional: "", calidadApoderadoDe: "" }]);
+    setAsistentes([{ id: uid(), nombre: "", email: "", identificacion: "", categoria: "Acreedor", estado: "Ausente", tarjetaProfesional: "", calidadApoderadoDe: "" }]);
     setGuardado(null);
   }
 
@@ -724,6 +871,7 @@ function AttendanceContent() {
       asistentes: asistentes.map((a) => ({
         nombre: a.nombre.trim(),
         email: a.email ? limpiarEmail(a.email) : "",
+        identificacion: a.identificacion?.trim() || "",
         categoria: a.categoria,
         estado: a.estado,
         tarjetaProfesional: a.tarjetaProfesional.trim(),
@@ -742,6 +890,7 @@ function AttendanceContent() {
     try {
       const registros: AsistenciaInsert[] = asistentes.map((a) => ({
         proceso_id: procesoId || undefined,
+        evento_id: eventoId || undefined,
         apoderado_id: a.apoderadoId || undefined,
         nombre: a.nombre.trim(),
         email: a.email ? limpiarEmail(a.email) : null,
@@ -803,26 +952,65 @@ function AttendanceContent() {
         int_mora: a.int_mora ?? null,
         otros: a.otros_cobros_seguros ?? null,
         total: a.total ?? null,
-        porcentaje: a.porcentaje ?? null,
+        porcentaje: porcentajeCalculadoByAcreenciaId.byAcreenciaId.get(a.id) ?? null,
       }));
+
+      const terminarAudienciaPayload = {
+        procesoId,
+        numeroProceso,
+        titulo: asistenciaPayload.titulo,
+        fecha: asistenciaPayload.fecha,
+        eventoId,
+        hora,
+        ciudad,
+        resumen: asistenciaPayload.resumen,
+        asistentes: asistenciaPayload.asistentes,
+        acreencias: acreenciasPayload,
+        debug: debugLista,
+        deudor: deudorNombre
+          ? {
+              nombre: deudorNombre,
+              identificacion: deudorIdentificacion,
+            }
+          : undefined,
+        operador: {
+          nombre: operadorNombre,
+          identificacion: operadorIdentificacion,
+          tarjetaProfesional: operadorTarjetaProfesional,
+          email: operadorEmail,
+        },
+        proximaAudiencia: proximaFecha
+          ? {
+              fecha: proximaFecha,
+              hora: proximaHora,
+            }
+          : undefined,
+      };
+
+      // Always log deudor data for debugging
+      console.log("[/lista] ===== SENDING DEUDOR DATA =====");
+      console.log("[/lista] deudorNombre state:", deudorNombre);
+      console.log("[/lista] deudorIdentificacion state:", deudorIdentificacion);
+      console.log("[/lista] payload.deudor:", JSON.stringify(terminarAudienciaPayload.deudor, null, 2));
+      console.log("[/lista] ================================");
 
       const res = await fetch("/api/terminar-audiencia", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          procesoId,
-          numeroProceso,
-          titulo: asistenciaPayload.titulo,
-          fecha: asistenciaPayload.fecha,
-          resumen: asistenciaPayload.resumen,
-          asistentes: asistenciaPayload.asistentes,
-          acreencias: acreenciasPayload,
-        }),
+        body: JSON.stringify(terminarAudienciaPayload),
       });
 
       const json = (await res.json().catch(() => null)) as
-        | { fileId: string; fileName: string; webViewLink: string | null; error?: string; detail?: string }
+        | { fileId: string; fileName: string; webViewLink: string | null; apoderadoEmails?: string[]; error?: string; detail?: string }
         | null;
+
+      if (debugLista) {
+        console.log("[/lista debug] terminar-audiencia response", {
+          ok: res.ok,
+          status: res.status,
+          json,
+        });
+      }
 
       if (!res.ok) {
         throw new Error(json?.detail || json?.error || "No se pudo terminar la audiencia.");
@@ -836,12 +1024,62 @@ function AttendanceContent() {
         fileId: json.fileId,
         fileName: json.fileName,
         webViewLink: json.webViewLink ?? null,
+        apoderadoEmails: json.apoderadoEmails,
       });
+      // Reset email sending state when new doc is generated
+      setEnviarCorreosResult(null);
+      setEnviarCorreosError(null);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setTerminarAudienciaError(msg);
     } finally {
       setTerminandoAudiencia(false);
+    }
+  };
+
+  const enviarCorreosApoderados = async () => {
+    if (!terminarAudienciaResult?.webViewLink || enviandoCorreos) return;
+    if (!terminarAudienciaResult.apoderadoEmails || terminarAudienciaResult.apoderadoEmails.length === 0) {
+      setEnviarCorreosError("No hay correos de apoderados para enviar.");
+      return;
+    }
+
+    setEnviandoCorreos(true);
+    setEnviarCorreosError(null);
+    setEnviarCorreosResult(null);
+
+    try {
+      const payload = {
+        apoderadoEmails: terminarAudienciaResult.apoderadoEmails,
+        numeroProceso: numeroProceso || procesoId,
+        titulo: titulo,
+        fecha: fecha,
+        webViewLink: terminarAudienciaResult.webViewLink,
+      };
+
+      const res = await fetch("/api/enviar-acta", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const json = (await res.json().catch(() => null)) as
+        | { emailsSent: number; emailErrors?: string[]; error?: string; detail?: string }
+        | null;
+
+      if (!res.ok) {
+        throw new Error(json?.detail || json?.error || "No se pudieron enviar los correos.");
+      }
+
+      setEnviarCorreosResult({
+        emailsSent: json?.emailsSent ?? 0,
+        emailErrors: json?.emailErrors,
+      });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setEnviarCorreosError(msg);
+    } finally {
+      setEnviandoCorreos(false);
     }
   };
 
@@ -899,7 +1137,7 @@ function AttendanceContent() {
         <section className="rounded-3xl border border-zinc-200 bg-white/80 p-5 shadow-[0_12px_40px_-20px_rgba(0,0,0,0.35)] backdrop-blur dark:border-white/10 dark:bg-white/5 sm:p-6">
           <form onSubmit={guardarAsistencia} className="space-y-6">
             {/* Top Controls */}
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
               <div className="sm:col-span-2">
                 <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
                   Título
@@ -923,7 +1161,137 @@ function AttendanceContent() {
                   className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
                 />
               </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                  Hora (Bogota)
+                </label>
+                <input
+                  type="time"
+                  value={hora}
+                  onChange={(e) => setHora(e.target.value)}
+                  className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                />
+              </div>
             </div>
+
+            {/* Deudor & Ciudad */}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+              <div className="sm:col-span-2">
+                <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                  Nombre del Deudor
+                </label>
+                <input
+                  value={deudorNombre}
+                  onChange={(e) => setDeudorNombre(e.target.value)}
+                  placeholder="Ej: JORGE ARMANDO SERNA GARCIA"
+                  className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                  C.C. Deudor
+                </label>
+                <input
+                  value={deudorIdentificacion}
+                  onChange={(e) => setDeudorIdentificacion(e.target.value)}
+                  placeholder="Ej: 16.847.359"
+                  className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                  Ciudad
+                </label>
+                <input
+                  value={ciudad}
+                  onChange={(e) => setCiudad(e.target.value)}
+                  placeholder="Ej: Cali"
+                  className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                />
+              </div>
+            </div>
+
+            {/* Próxima Audiencia */}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                  Próxima Fecha
+                </label>
+                <input
+                  type="date"
+                  value={proximaFecha}
+                  onChange={(e) => setProximaFecha(e.target.value)}
+                  className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                  Próxima Hora
+                </label>
+                <input
+                  type="time"
+                  value={proximaHora}
+                  onChange={(e) => setProximaHora(e.target.value)}
+                  className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                />
+              </div>
+            </div>
+
+            {/* Operador/Conciliador (collapsible) */}
+            <details className="rounded-2xl border border-zinc-200 bg-white/60 p-4 dark:border-white/10 dark:bg-white/5">
+              <summary className="cursor-pointer text-sm font-medium text-zinc-700 dark:text-zinc-200">
+                Datos del Operador/Conciliador
+              </summary>
+              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                    Nombre Operador
+                  </label>
+                  <input
+                    value={operadorNombre}
+                    onChange={(e) => setOperadorNombre(e.target.value)}
+                    className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                    C.C. Operador
+                  </label>
+                  <input
+                    value={operadorIdentificacion}
+                    onChange={(e) => setOperadorIdentificacion(e.target.value)}
+                    className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                    Tarjeta Profesional
+                  </label>
+                  <input
+                    value={operadorTarjetaProfesional}
+                    onChange={(e) => setOperadorTarjetaProfesional(e.target.value)}
+                    className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                    Email Operador
+                  </label>
+                  <input
+                    value={operadorEmail}
+                    onChange={(e) => setOperadorEmail(e.target.value)}
+                    className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                  />
+                </div>
+              </div>
+            </details>
 
             {/* Stats + Bulk Actions */}
             <div className="flex flex-col gap-3 rounded-2xl border border-zinc-200 bg-white/60 p-4 dark:border-white/10 dark:bg-white/5 sm:flex-row sm:items-center sm:justify-between">
@@ -1044,6 +1412,19 @@ function AttendanceContent() {
                           Email inválido
                         </p>
                       )}
+                    </div>
+
+                    {/* Cédula/Identificación */}
+                    <div className="sm:col-span-1">
+                      <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                        Cédula/NIT
+                      </label>
+                      <input
+                        value={a.identificacion}
+                        onChange={(e) => actualizarFila(a.id, { identificacion: e.target.value })}
+                        placeholder="Ej: 1.144.109.996"
+                        className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                      />
                     </div>
 
                     {/* Tarjeta Profesional No. */}
@@ -1206,6 +1587,54 @@ function AttendanceContent() {
                     </>
                   ) : null}
                 </p>
+                {debugLista ? (
+                  <p className="mt-1 break-words text-xs opacity-80">
+                    Debug fileId: {terminarAudienciaResult.fileId}
+                  </p>
+                ) : null}
+
+                {/* Send to apoderados button */}
+                {terminarAudienciaResult.webViewLink && terminarAudienciaResult.apoderadoEmails && terminarAudienciaResult.apoderadoEmails.length > 0 && !enviarCorreosResult && (
+                  <div className="mt-4 border-t border-green-200 pt-4 dark:border-green-500/30">
+                    <p className="mb-2 text-zinc-700 dark:text-zinc-300">
+                      {terminarAudienciaResult.apoderadoEmails.length} apoderado{terminarAudienciaResult.apoderadoEmails.length > 1 ? "s" : ""} con correo registrado
+                    </p>
+                    <button
+                      type="button"
+                      onClick={enviarCorreosApoderados}
+                      disabled={enviandoCorreos}
+                      className="rounded-xl bg-blue-500 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {enviandoCorreos ? "Enviando..." : "Enviar acta a apoderados"}
+                    </button>
+                  </div>
+                )}
+
+                {/* No apoderados with email */}
+                {terminarAudienciaResult.webViewLink && (!terminarAudienciaResult.apoderadoEmails || terminarAudienciaResult.apoderadoEmails.length === 0) && (
+                  <p className="mt-3 text-zinc-500 dark:text-zinc-400">
+                    No hay apoderados con correo registrado para enviar el acta.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Email sending error */}
+            {enviarCorreosError && (
+              <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+                {enviarCorreosError}
+              </div>
+            )}
+
+            {/* Email sending success */}
+            {enviarCorreosResult && (
+              <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300">
+                <p className="font-medium">Correos enviados a apoderados: {enviarCorreosResult.emailsSent}</p>
+                {enviarCorreosResult.emailErrors && enviarCorreosResult.emailErrors.length > 0 && (
+                  <p className="mt-2 text-amber-700 dark:text-amber-300">
+                    Algunos correos no pudieron enviarse: {enviarCorreosResult.emailErrors.length}
+                  </p>
+                )}
               </div>
             )}
           </form>
@@ -1288,6 +1717,7 @@ function AttendanceContent() {
                       const actualizada = esAcreenciaActualizada(acreencia);
                       const visto = esAcreenciaVisto(acreencia);
                       const resaltar = actualizada && !visto;
+                      const porcentajeCalculado = porcentajeCalculadoByAcreenciaId.byAcreenciaId.get(acreencia.id) ?? null;
                       const snapshotNow = snapshotFromAcreencia(acreencia);
                       const snapshotPrev = acreenciasSnapshots[acreencia.id];
                       const historialItems = acreenciasHistorial[acreencia.id] ?? [];
@@ -1525,22 +1955,14 @@ function AttendanceContent() {
                             {editando ? (
                               <input
                                 inputMode="decimal"
-                                value={draft?.porcentaje ?? ""}
-                                onChange={(e) =>
-                                  onChangeAcreenciaDraft(acreencia.id, { porcentaje: e.target.value })
-                                }
-                                className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none focus:border-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-50 dark:focus:border-white"
-                                placeholder="0"
+                                value={porcentajeCalculado === null ? "" : porcentajeCalculado.toFixed(2)}
+                                readOnly
+                                disabled
+                                className="w-full cursor-not-allowed rounded-xl border border-zinc-200 bg-zinc-100 px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none dark:border-white/10 dark:bg-white/10 dark:text-zinc-50"
+                                placeholder={porcentajeCalculadoByAcreenciaId.totalSum > 0 ? "0" : "—"}
                               />
                             ) : (
-                              <div>
-                                <div>{acreencia.porcentaje ?? "—"}</div>
-                                {resaltar && cambiosByKey.porcentaje ? (
-                                  <p className="mt-1 text-[11px] text-amber-800/90 dark:text-amber-200/90">
-                                    Antes: {cambiosByKey.porcentaje.antes}
-                                  </p>
-                                ) : null}
-                              </div>
+                              <div>{formatPorcentaje(porcentajeCalculado)}</div>
                             )}
                           </td>
                           <td className="py-3 pr-0">

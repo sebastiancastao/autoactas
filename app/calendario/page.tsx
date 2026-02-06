@@ -407,7 +407,10 @@ function CalendarioContent() {
     return progreso ? progreso.estado : null;
   }
 
-  function getProgresoActionUrl(procesoId: string | undefined): { url: string; label: string } | null {
+  function getProgresoActionUrl(
+    procesoId: string | undefined,
+    eventoId?: string | undefined
+  ): { url: string; label: string } | null {
     if (!procesoId) return null;
     const estado = getProgresoEstado(procesoId);
 
@@ -416,7 +419,9 @@ function CalendarioContent() {
       return { url: `/?procesoId=${procesoId}`, label: 'Iniciar' };
     }
     if (estado === 'iniciado') {
-      return { url: `/lista?procesoId=${procesoId}`, label: 'Tomar asistencia' };
+      const qs = new URLSearchParams({ procesoId });
+      if (eventoId) qs.set("eventoId", eventoId);
+      return { url: `/lista?${qs.toString()}`, label: 'Tomar asistencia' };
     }
     // estado === 'finalizado' - no action needed
     return null;
@@ -657,7 +662,7 @@ function CalendarioContent() {
                     <div className="rounded-2xl border border-zinc-200 bg-white/60 p-6 text-sm text-zinc-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">No hay eventos para este día.</div>
                   ) : (
                     eventosDelDia.map((ev) => {
-                      const action = getProgresoActionUrl(ev.procesoId);
+                      const action = getProgresoActionUrl(ev.procesoId, ev.id);
                       const eventStyle = getEventoStyle(ev.usuarioId);
                       return (
                         <div key={ev.id} style={eventStyle} className="rounded-2xl border border-zinc-200 bg-white/60 p-3 shadow-sm dark:border-white/10 dark:bg-white/5">
@@ -704,7 +709,7 @@ function CalendarioContent() {
                 <div className="rounded-2xl border border-zinc-200 bg-white/60 p-4 text-sm text-zinc-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">No hay eventos para este día.</div>
               ) : (
                 eventosDelDia.map((ev) => {
-                  const action = getProgresoActionUrl(ev.procesoId);
+                  const action = getProgresoActionUrl(ev.procesoId, ev.id);
                   const eventStyle = getEventoStyle(ev.usuarioId);
                   return (
                     <div
@@ -792,7 +797,7 @@ function CalendarioContent() {
       )}
 
       {eventoSeleccionado && (() => {
-        const action = getProgresoActionUrl(eventoSeleccionado.procesoId);
+        const action = getProgresoActionUrl(eventoSeleccionado.procesoId, eventoSeleccionado.id);
         const estadoProgreso = getProgresoEstado(eventoSeleccionado.procesoId);
         return (
           <div className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center">

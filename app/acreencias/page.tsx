@@ -49,6 +49,11 @@ function calcularTotal(draft: Pick<AcreenciaDraft, "capital" | "int_cte" | "int_
   return total === 0 ? "" : String(total);
 }
 
+function formatPorcentaje(value: number | null | undefined) {
+  if (typeof value !== "number" || Number.isNaN(value)) return "";
+  return value.toFixed(2);
+}
+
 function toErrorMessage(e: unknown) {
   if (e instanceof Error) return e.message;
   if (e && typeof e === "object") {
@@ -80,6 +85,19 @@ function AcreenciasContent() {
     if (procesoId) qs.set("procesoId", procesoId);
     return `/lista?${qs.toString()}`;
   }, [procesoId]);
+
+  const porcentajeCalculadoByAcreedorId = useMemo(() => {
+    const totales = drafts.map((draft) => toNumberOrNull(draft.total) ?? 0);
+    const totalSum = totales.reduce((acc, n) => acc + n, 0);
+
+    const byAcreedorId = new Map<string, number | null>();
+    drafts.forEach((draft, idx) => {
+      const total = totales[idx] ?? 0;
+      byAcreedorId.set(draft.acreedor_id, totalSum > 0 ? (total / totalSum) * 100 : null);
+    });
+
+    return { totalSum, byAcreedorId };
+  }, [drafts]);
 
   useEffect(() => {
     if (!puedeCargar) {
@@ -193,7 +211,7 @@ function AcreenciasContent() {
         int_mora: toNumberOrNull(draft.int_mora),
         otros_cobros_seguros: toNumberOrNull(draft.otros_cobros_seguros),
         total: toNumberOrNull(draft.total),
-        porcentaje: toNumberOrNull(draft.porcentaje),
+        porcentaje: porcentajeCalculadoByAcreedorId.byAcreedorId.get(draft.acreedor_id) ?? null,
       }));
 
       const guardadas = await upsertAcreencias(payloads);
@@ -377,13 +395,20 @@ function AcreenciasContent() {
                         </td>
 
                         <td className="py-3 pr-0">
+                          {(() => {
+                            const porcentaje =
+                              porcentajeCalculadoByAcreedorId.byAcreedorId.get(draft.acreedor_id) ?? null;
+                            return (
                           <input
                             inputMode="decimal"
-                            value={draft.porcentaje}
-                            onChange={(e) => onChange(idx, { porcentaje: e.target.value })}
-                            className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none focus:border-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-50 dark:focus:border-white"
-                            placeholder="0"
+                            value={formatPorcentaje(porcentaje)}
+                            readOnly
+                            disabled
+                            className="w-full cursor-not-allowed rounded-xl border border-zinc-200 bg-zinc-100 px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none dark:border-white/10 dark:bg-white/10 dark:text-zinc-50"
+                            placeholder={porcentajeCalculadoByAcreedorId.totalSum > 0 ? "0" : "—"}
                           />
+                            );
+                          })()}
                         </td>
                       </tr>
                     ))}

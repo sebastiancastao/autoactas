@@ -7,6 +7,11 @@ export type GoogleDriveUploadResult = {
   webContentLink?: string;
 };
 
+function isValidEmail(email: string | undefined | null): email is string {
+  if (!email) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+}
+
 function getEnv(name: string) {
   const value = process.env[name];
   if (!value) throw new Error(`Missing env var: ${name}`);
@@ -28,11 +33,12 @@ export async function uploadDocxToGoogleDrive(params: {
   filename: string;
   buffer: Buffer;
   folderId?: string | null;
+  shareWithEmails?: string[] | null;
 }) {
   const clientEmail = getEnv("GOOGLE_DRIVE_CLIENT_EMAIL");
   const privateKey = parsePrivateKey(getEnv("GOOGLE_DRIVE_PRIVATE_KEY"));
   const folderId = params.folderId ?? process.env.GOOGLE_DRIVE_FOLDER_ID ?? null;
-  const shareWithEmail = process.env.GOOGLE_DRIVE_SHARE_WITH_EMAIL ?? null;
+  const envShareWithEmail = process.env.GOOGLE_DRIVE_SHARE_WITH_EMAIL ?? null;
   const publicAccessMode = (process.env.GOOGLE_DRIVE_PUBLIC_ACCESS ?? "anyone_reader").trim().toLowerCase();
 
   const jwtClient = new JWT({
@@ -79,30 +85,40 @@ export async function uploadDocxToGoogleDrive(params: {
 
   const uploaded = (await res.json()) as GoogleDriveUploadResult;
 
-  if (shareWithEmail && uploaded.id) {
-    const permRes = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
-        uploaded.id
-      )}/permissions?supportsAllDrives=true`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          type: "user",
-          role: "writer",
-          emailAddress: shareWithEmail,
-        }),
-      }
-    );
+  const shareEmails = [
+    ...(params.shareWithEmails ?? []),
+    ...(envShareWithEmail ? [envShareWithEmail] : []),
+  ]
+    .map((e) => e.trim().toLowerCase())
+    .filter(isValidEmail);
+  const uniqueShareEmails = [...new Set(shareEmails)];
 
-    if (!permRes.ok) {
-      const text = await permRes.text().catch(() => "");
-      throw new Error(
-        `Google Drive permission grant failed (${permRes.status}): ${text || permRes.statusText}`
+  if (uploaded.id && uniqueShareEmails.length > 0) {
+    for (const shareWithEmail of uniqueShareEmails) {
+      const permRes = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
+          uploaded.id
+        )}/permissions?supportsAllDrives=true`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            type: "user",
+            role: "writer",
+            emailAddress: shareWithEmail,
+          }),
+        }
       );
+
+      if (!permRes.ok) {
+        const text = await permRes.text().catch(() => "");
+        console.warn(
+          `Google Drive permission grant failed (${permRes.status}) for ${shareWithEmail}: ${text || permRes.statusText}`
+        );
+      }
     }
   }
 
