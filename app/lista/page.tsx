@@ -9,11 +9,20 @@ import { getApoderadosByIds } from "@/lib/api/apoderados";
 import { getDeudoresByProceso } from "@/lib/api/deudores";
 import { createAsistenciasBulk } from "@/lib/api/asistencia";
 import { getAcreenciasByProceso, getAcreenciasHistorialByProceso, updateAcreencia } from "@/lib/api/acreencias";
+import { createEvento, updateEvento } from "@/lib/api/eventos";
 import type { Acreedor, Acreencia, Apoderado, AsistenciaInsert } from "@/lib/database.types";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth-context";
 
 type Categoria = "Acreedor" | "Deudor" | "Apoderado";
 type EstadoAsistencia = "Presente" | "Ausente";
+
+type HorarioSugerido = {
+  fecha: string;
+  hora: string;
+  score: number;
+  reason: string;
+};
 
 type Asistente = {
   id: string;
@@ -65,6 +74,46 @@ function normalizeHoraHHMM(value: string | null | undefined) {
   const match = trimmed.match(/^(\d{1,2}):(\d{2})/);
   if (!match) return null;
   return `${match[1].padStart(2, "0")}:${match[2]}`;
+}
+
+const BOGOTA_TZ = "America/Bogota";
+const BOGOTA_OFFSET = "-05:00";
+
+function formatBogotaDateKey(date: Date) {
+  return date.toLocaleDateString("en-CA", { timeZone: BOGOTA_TZ });
+}
+
+function dateKeyToBogotaMidnight(dateKey: string) {
+  const d = new Date(`${dateKey}T00:00:00${BOGOTA_OFFSET}`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function addDaysBogota(dateKey: string, days: number) {
+  const d = dateKeyToBogotaMidnight(dateKey);
+  if (!d) return dateKey;
+  return formatBogotaDateKey(new Date(d.getTime() + days * 86400000));
+}
+
+function hhmmToMinutes(hhmm: string | null) {
+  if (!hhmm) return null;
+  const m = hhmm.match(/^(\d{2}):(\d{2})$/);
+  if (!m) return null;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+  return hh * 60 + mm;
+}
+
+function minutesToHHMM(total: number) {
+  const hh = Math.floor(total / 60);
+  const mm = total % 60;
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
+function getBusinessSlotsHHMM() {
+  const out: string[] = [];
+  for (let m = 8 * 60; m <= 17 * 60; m += 30) out.push(minutesToHHMM(m));
+  return out;
 }
 
 type AcreedorConApoderadoId = {
@@ -332,6 +381,8 @@ function AttendanceContent() {
   const debugRaw = searchParams.get("debug");
   const debugLista = debugRaw === "1" || debugRaw?.toLowerCase() === "true";
 
+  const { user } = useAuth();
+
   const [titulo, setTitulo] = useState("Llamado de asistencia");
   const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0, 10));
   const [hora, setHora] = useState(() => getBogotaTimeHHMMNow("11:30"));
@@ -390,7 +441,20 @@ function AttendanceContent() {
 
   // Próxima audiencia
   const [proximaFecha, setProximaFecha] = useState("");
-  const [proximaHora, setProximaHora] = useState("9:30");
+  const [proximaHora, setProximaHora] = useState("09:30");
+  const [proximaTitulo, setProximaTitulo] = useState("");
+  const [agendando, setAgendando] = useState(false);
+  const [agendarError, setAgendarError] = useState<string | null>(null);
+  const [agendarExito, setAgendarExito] = useState<string | null>(null);
+
+  const [sugiriendo, setSugiriendo] = useState(false);
+  const [sugerirError, setSugerirError] = useState<string | null>(null);
+  const [sugerencias, setSugerencias] = useState<HorarioSugerido[]>([]);
+  const [autoSugerido, setAutoSugerido] = useState(false);
+
+  const [eventoSiguienteId, setEventoSiguienteId] = useState<string | null>(null);
+  const [eventoSiguienteCargando, setEventoSiguienteCargando] = useState(false);
+  const [eventoSiguienteError, setEventoSiguienteError] = useState<string | null>(null);
 
   const [asistentes, setAsistentes] = useState<Asistente[]>([
     { id: uid(), nombre: "", email: "", identificacion: "", categoria: "Acreedor", estado: "Ausente", tarjetaProfesional: "", calidadApoderadoDe: "" },
@@ -404,6 +468,8 @@ function AttendanceContent() {
   const [terminarAudienciaResult, setTerminarAudienciaResult] = useState<
     { fileId: string; fileName: string; webViewLink: string | null; apoderadoEmails?: string[] } | null
   >(null);
+  const [mostrarModalTerminarAudiencia, setMostrarModalTerminarAudiencia] = useState(false);
+  const [terminarAudienciaAdvertencias, setTerminarAudienciaAdvertencias] = useState<string[]>([]);
   const [enviandoCorreos, setEnviandoCorreos] = useState(false);
   const [enviarCorreosError, setEnviarCorreosError] = useState<string | null>(null);
   const [enviarCorreosResult, setEnviarCorreosResult] = useState<
@@ -919,8 +985,30 @@ function AttendanceContent() {
     await guardarAsistenciaInterno();
   }
 
-  const terminarAudiencia = async () => {
+  const terminarAudiencia = async (opts?: { force?: boolean }) => {
     if (!procesoId || terminandoAudiencia) return;
+
+    const force = opts?.force === true;
+    const advertencias: string[] = [];
+
+    const acreenciasVacias =
+      !acreenciasCargando &&
+      !acreenciasError &&
+      (acreencias?.length ?? 0) === 0;
+    if (acreenciasVacias) {
+      advertencias.push("Acreencias del proceso: estÃ¡ vacÃ­o.");
+    }
+
+    const agendarVacio = !proximaFecha || !eventoSiguienteId;
+    if (agendarVacio) {
+      advertencias.push("Agendar prÃ³xima audiencia: estÃ¡ vacÃ­o (no hay evento prÃ³ximo guardado).");
+    }
+
+    if (!force && advertencias.length > 0) {
+      setTerminarAudienciaAdvertencias(advertencias);
+      setMostrarModalTerminarAudiencia(true);
+      return;
+    }
 
     setTerminandoAudiencia(true);
     setTerminarAudienciaError(null);
@@ -1083,12 +1171,312 @@ function AttendanceContent() {
     }
   };
 
+  const sugerirHorario = async () => {
+    if (sugiriendo) return;
+    if (!user?.id) {
+      setSugerirError("Inicia sesion para sugerencias basadas en tu calendario.");
+      return;
+    }
+
+    setSugiriendo(true);
+    setSugerirError(null);
+    setSugerencias([]);
+
+    try {
+      const todayKey = formatBogotaDateKey(new Date());
+      const anchorKey = proximaFecha || addDaysBogota(todayKey, 1);
+      const rangeEndKey = addDaysBogota(anchorKey, 14);
+      const historyStartKey = addDaysBogota(todayKey, -180);
+
+      const { data: history, error: historyError } = await supabase
+        .from("eventos")
+        .select("fecha, hora")
+        .eq("usuario_id", user.id)
+        .gte("fecha", historyStartKey)
+        .lte("fecha", todayKey);
+
+      if (historyError) throw historyError;
+
+      const { data: upcoming, error: upcomingError } = await supabase
+        .from("eventos")
+        .select("fecha, hora, fecha_fin, hora_fin")
+        .eq("usuario_id", user.id)
+        .gte("fecha", anchorKey)
+        .lte("fecha", rangeEndKey);
+
+      if (upcomingError) throw upcomingError;
+
+      const prefByKey = new Map<string, number>();
+      const prefSlot = new Map<string, number>();
+      const prefWeekday = new Map<number, number>();
+
+      const now = new Date();
+      const slots = getBusinessSlotsHHMM();
+
+      for (const evt of history ?? []) {
+        const fecha = (evt as any).fecha as string | null;
+        const hora = normalizeHoraHHMM((evt as any).hora);
+        if (!fecha || !hora) continue;
+
+        const d0 = dateKeyToBogotaMidnight(fecha);
+        if (!d0) continue;
+
+        const daysAgo = Math.max(0, Math.floor((now.getTime() - d0.getTime()) / 86400000));
+        const w = Math.exp(-daysAgo / 45);
+
+        const weekday = d0.getUTCDay();
+        const k = `${weekday}-${hora}`;
+        prefByKey.set(k, (prefByKey.get(k) ?? 0) + w);
+        prefSlot.set(hora, (prefSlot.get(hora) ?? 0) + w);
+        prefWeekday.set(weekday, (prefWeekday.get(weekday) ?? 0) + w);
+      }
+
+      const busyByDate = new Map<string, Array<[number, number]>>();
+      const defaultDurationMin = 60;
+
+      for (const evt of upcoming ?? []) {
+        const fecha = (evt as any).fecha as string | null;
+        const hora = normalizeHoraHHMM((evt as any).hora);
+        if (!fecha || !hora) continue;
+
+        const start = hhmmToMinutes(hora);
+        if (start === null) continue;
+
+        const horaFin = normalizeHoraHHMM((evt as any).hora_fin);
+        let end = start + defaultDurationMin;
+        const fechaFin = (evt as any).fecha_fin as string | null;
+        if (horaFin && (!fechaFin || fechaFin === fecha)) {
+          const endMin = hhmmToMinutes(horaFin);
+          if (endMin !== null && endMin > start) end = endMin;
+        }
+
+        const list = busyByDate.get(fecha) ?? [];
+        list.push([start, end]);
+        busyByDate.set(fecha, list);
+      }
+
+      const candidates: HorarioSugerido[] = [];
+      const daysToTry = proximaFecha ? 1 : 14;
+
+      for (let i = 0; i < daysToTry; i++) {
+        const dateKey = proximaFecha ? proximaFecha : addDaysBogota(anchorKey, i);
+        const d0 = dateKeyToBogotaMidnight(dateKey);
+        if (!d0) continue;
+        const weekday = d0.getUTCDay();
+
+        for (const hhmm of slots) {
+          const start = hhmmToMinutes(hhmm)!;
+          const end = start + defaultDurationMin;
+
+          const busy = busyByDate.get(dateKey) ?? [];
+          const conflict = busy.some(([bs, be]) => start < be && end > bs);
+          if (conflict) continue;
+
+          const k = `${weekday}-${hhmm}`;
+          const score =
+            (prefByKey.get(k) ?? 0) * 1.0 +
+            (prefSlot.get(hhmm) ?? 0) * 0.35 +
+            (prefWeekday.get(weekday) ?? 0) * 0.15 -
+            (proximaFecha ? 0 : i * 0.02);
+
+          const learned = (prefByKey.get(k) ?? 0) + (prefSlot.get(hhmm) ?? 0) + (prefWeekday.get(weekday) ?? 0);
+          const reason = learned > 0.25
+            ? "Basado en tu historial (preferencias aprendidas) y sin conflictos."
+            : "Sin conflictos en tu calendario.";
+
+          candidates.push({ fecha: dateKey, hora: hhmm, score, reason });
+        }
+      }
+
+      candidates.sort((a, b) => b.score - a.score);
+      const top = candidates.slice(0, 5);
+      setSugerencias(top);
+      if (top.length === 0) {
+        setSugerirError("No encontre espacios libres en el rango evaluado.");
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setSugerirError(msg);
+    } finally {
+      setSugiriendo(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!procesoId) {
+      setEventoSiguienteId(null);
+      setEventoSiguienteError(null);
+      setEventoSiguienteCargando(false);
+      return;
+    }
+
+    let canceled = false;
+    (async () => {
+      setEventoSiguienteCargando(true);
+      setEventoSiguienteError(null);
+      try {
+        const todayKey = formatBogotaDateKey(new Date());
+        const { data, error } = await supabase
+          .from("eventos")
+          .select("id, titulo, fecha, hora, tipo, completado")
+          .eq("proceso_id", procesoId)
+          .eq("completado", false)
+          .gte("fecha", todayKey)
+          .order("fecha", { ascending: true })
+          .order("hora", { ascending: true })
+          .limit(10);
+
+        if (error) throw error;
+
+        const eventos = (data ?? [])
+          .map((e) => ({ ...e, horaHHMM: normalizeHoraHHMM((e as any).hora) }))
+          .filter((e) => Boolean(e.fecha));
+
+        const pick =
+          eventos.find((e) => (e.tipo ?? "").toLowerCase() === "audiencia") ??
+          eventos[0] ??
+          null;
+
+        if (canceled) return;
+        if (!pick) {
+          setEventoSiguienteId(null);
+          return;
+        }
+
+        setEventoSiguienteId(pick.id);
+        setProximaTitulo(pick.titulo ?? "");
+        setProximaFecha(pick.fecha);
+
+        const slots = getBusinessSlotsHHMM();
+        const horaPick = (pick as any).horaHHMM as string | null;
+        if (horaPick && slots.includes(horaPick)) {
+          setProximaHora(horaPick);
+        } else if (horaPick) {
+          // Keep UI consistent with allowed schedule window.
+          setProximaHora(slots[0] ?? "08:00");
+          setEventoSiguienteError(`El evento existente tiene hora ${horaPick} fuera del horario 8:00-17:00. Ajusta antes de guardar.`);
+        }
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (!canceled) setEventoSiguienteError(msg);
+      } finally {
+        if (!canceled) setEventoSiguienteCargando(false);
+      }
+    })();
+
+    return () => {
+      canceled = true;
+    };
+  }, [procesoId]);
+
+  useEffect(() => {
+    if (autoSugerido) return;
+    if (!user?.id) return;
+    setAutoSugerido(true);
+    void sugerirHorario();
+  }, [autoSugerido, user?.id]);
+
+  const agendarProximaAudiencia = async () => {
+    if (!procesoId || !proximaFecha || agendando) return;
+
+    setAgendando(true);
+    setAgendarError(null);
+    setAgendarExito(null);
+
+    try {
+      const tituloEvento = proximaTitulo.trim() || `Audiencia - ${numeroProceso || procesoId}`;
+
+      const payloadBase = {
+        titulo: tituloEvento,
+        descripcion: `Proxima audiencia programada desde lista de asistencia.`,
+        fecha: proximaFecha,
+        hora: proximaHora ? `${proximaHora}:00` : null,
+        fecha_fin: null,
+        hora_fin: null,
+        usuario_id: user?.id ?? null,
+        proceso_id: procesoId,
+        tipo: "audiencia",
+        color: "#f59e0b",
+        // recordatorio=false means: reminder not sent yet (see /api/event-reminders)
+        recordatorio: false,
+        completado: false,
+      };
+
+      if (eventoSiguienteId) {
+        await updateEvento(eventoSiguienteId, payloadBase);
+      } else {
+        const creado = await createEvento(payloadBase);
+        setEventoSiguienteId(creado.id);
+      }
+
+      // Format time for display (24h -> 12h)
+      const [hh, mm] = proximaHora.split(":");
+      const h24 = Number(hh);
+      const meridiem = h24 >= 12 ? "PM" : "AM";
+      const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+      const horaDisplay = `${h12}:${mm} ${meridiem}`;
+
+      const accion = eventoSiguienteId ? "actualizado" : "agendado";
+      setAgendarExito(`Evento "${tituloEvento}" ${accion} para ${proximaFecha} a las ${horaDisplay}.`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setAgendarError(msg);
+    } finally {
+      setAgendando(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-950 dark:bg-black dark:text-zinc-50">
       {/* Gradient top */}
       <div className="pointer-events-none fixed inset-x-0 top-0 h-40 bg-gradient-to-b from-white/70 to-transparent dark:from-zinc-900/60" />
 
       <main className="mx-auto w-full max-w-4xl px-5 py-10 sm:px-8">
+        {mostrarModalTerminarAudiencia && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <button
+              type="button"
+              aria-label="Cerrar"
+              onClick={() => setMostrarModalTerminarAudiencia(false)}
+              className="absolute inset-0 cursor-default bg-black/40 backdrop-blur-sm"
+            />
+            <div className="relative w-full max-w-lg rounded-3xl border border-zinc-200 bg-white p-5 shadow-xl dark:border-white/10 dark:bg-zinc-950 sm:p-6">
+              <h3 className="text-base font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+                Faltan secciones antes de terminar
+              </h3>
+              <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
+                EstÃ¡s a punto de terminar la audiencia, pero estas secciones estÃ¡n vacÃ­as:
+              </p>
+
+              <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-zinc-700 dark:text-zinc-200">
+                {terminarAudienciaAdvertencias.map((a) => (
+                  <li key={a}>{a}</li>
+                ))}
+              </ul>
+
+              <div className="mt-5 flex flex-wrap justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMostrarModalTerminarAudiencia(false)}
+                  className="h-11 rounded-2xl border border-zinc-200 bg-white px-5 text-sm font-semibold text-zinc-900 shadow-sm transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:text-zinc-100 dark:hover:bg-white/10"
+                >
+                  Volver
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMostrarModalTerminarAudiencia(false);
+                    void terminarAudiencia({ force: true });
+                  }}
+                  className="h-11 rounded-2xl bg-amber-500 px-5 text-sm font-semibold text-amber-950 shadow-sm transition hover:bg-amber-400 dark:bg-amber-400 dark:text-black"
+                >
+                  Continuar y terminar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Header */}
         <header className="mb-8">
           <div className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/70 px-3 py-1 text-xs text-zinc-600 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
@@ -1125,6 +1513,12 @@ function AttendanceContent() {
           >
             Finalización
           </Link>
+          <a
+            href="#agendar"
+            className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white"
+          >
+            Agendar proxima
+          </a>
         </nav>
 
         {procesoId && mensajeApoderado && (
@@ -1231,13 +1625,33 @@ function AttendanceContent() {
               <div>
                 <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
                   Próxima Hora
+                  <span className="ml-1 text-zinc-400 dark:text-zinc-500">(8 AM – 5 PM)</span>
                 </label>
-                <input
-                  type="time"
+                <select
                   value={proximaHora}
                   onChange={(e) => setProximaHora(e.target.value)}
-                  className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                />
+                  className="h-11 w-full cursor-pointer rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                >
+                  <option value="08:00">8:00 AM</option>
+                  <option value="08:30">8:30 AM</option>
+                  <option value="09:00">9:00 AM</option>
+                  <option value="09:30">9:30 AM</option>
+                  <option value="10:00">10:00 AM</option>
+                  <option value="10:30">10:30 AM</option>
+                  <option value="11:00">11:00 AM</option>
+                  <option value="11:30">11:30 AM</option>
+                  <option value="12:00">12:00 PM</option>
+                  <option value="12:30">12:30 PM</option>
+                  <option value="13:00">1:00 PM</option>
+                  <option value="13:30">1:30 PM</option>
+                  <option value="14:00">2:00 PM</option>
+                  <option value="14:30">2:30 PM</option>
+                  <option value="15:00">3:00 PM</option>
+                  <option value="15:30">3:30 PM</option>
+                  <option value="16:00">4:00 PM</option>
+                  <option value="16:30">4:30 PM</option>
+                  <option value="17:00">5:00 PM</option>
+                </select>
               </div>
             </div>
 
@@ -1532,7 +1946,7 @@ function AttendanceContent() {
 
                 <button
                   type="button"
-                  onClick={terminarAudiencia}
+                  onClick={() => void terminarAudiencia()}
                   disabled={
                     !procesoId ||
                     !puedeGuardar ||
@@ -2106,6 +2520,156 @@ function AttendanceContent() {
             )}
           </section>
         )}
+
+        {/* Schedule Next Event */}
+        <section id="agendar" className="mt-8 scroll-mt-24 rounded-3xl border border-zinc-200 bg-white/80 p-5 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/5 sm:p-6">
+            <h2 className="text-lg font-semibold tracking-tight">Agendar próxima audiencia</h2>
+            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
+              Programa la fecha y hora del próximo evento para este proceso.
+              <span className="ml-1 text-zinc-400 dark:text-zinc-500">Horario: 8:00 AM – 5:00 PM (Bogotá)</span>
+            </p>
+
+            {!procesoId && (
+              <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                Para agendar, abre /lista con ?procesoId=... (por ejemplo desde Procesos o Calendario).
+              </div>
+            )}
+
+            {procesoId && (
+              <div className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
+                {eventoSiguienteCargando
+                  ? "Buscando evento existente en el calendario..."
+                  : eventoSiguienteId
+                    ? "Editando evento existente (se actualiza, no se crea uno nuevo)."
+                    : "No hay evento proximo: se creara uno nuevo al guardar."}
+              </div>
+            )}
+
+            {eventoSiguienteError && (
+              <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                {eventoSiguienteError}
+              </div>
+            )}
+
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-4">
+              <div className="sm:col-span-2">
+                <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                  Título del evento
+                </label>
+                <input
+                  value={proximaTitulo}
+                  onChange={(e) => setProximaTitulo(e.target.value)}
+                  placeholder={`Audiencia - ${numeroProceso || "Proceso"}`}
+                  className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                  Fecha
+                </label>
+                <input
+                  type="date"
+                  value={proximaFecha}
+                  onChange={(e) => setProximaFecha(e.target.value)}
+                  className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                  Hora
+                </label>
+                <select
+                  value={proximaHora}
+                  onChange={(e) => setProximaHora(e.target.value)}
+                  className="h-11 w-full cursor-pointer rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                >
+                  <option value="08:00">8:00 AM</option>
+                  <option value="08:30">8:30 AM</option>
+                  <option value="09:00">9:00 AM</option>
+                  <option value="09:30">9:30 AM</option>
+                  <option value="10:00">10:00 AM</option>
+                  <option value="10:30">10:30 AM</option>
+                  <option value="11:00">11:00 AM</option>
+                  <option value="11:30">11:30 AM</option>
+                  <option value="12:00">12:00 PM</option>
+                  <option value="12:30">12:30 PM</option>
+                  <option value="13:00">1:00 PM</option>
+                  <option value="13:30">1:30 PM</option>
+                  <option value="14:00">2:00 PM</option>
+                  <option value="14:30">2:30 PM</option>
+                  <option value="15:00">3:00 PM</option>
+                  <option value="15:30">3:30 PM</option>
+                  <option value="16:00">4:00 PM</option>
+                  <option value="16:30">4:30 PM</option>
+                  <option value="17:00">5:00 PM</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={sugerirHorario}
+                disabled={sugiriendo || !user?.id}
+                className="h-11 rounded-2xl border border-zinc-200 bg-white px-6 text-sm font-semibold text-zinc-900 shadow-sm transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:bg-white/5 dark:text-zinc-100 dark:hover:bg-white/10"
+              >
+                {sugiriendo ? "Sugiriendo..." : "Sugerir horario"}
+              </button>
+
+              <button
+                type="button"
+                onClick={agendarProximaAudiencia}
+                disabled={!procesoId || !proximaFecha || agendando}
+                className="h-11 rounded-2xl bg-zinc-950 px-6 text-sm font-semibold text-white shadow-sm transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-white dark:text-black dark:hover:bg-zinc-200"
+              >
+                {agendando ? "Guardando..." : (eventoSiguienteId ? "Guardar cambios" : "Agendar evento")}
+              </button>
+            </div>
+
+            {sugerirError && (
+              <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                {sugerirError}
+              </div>
+            )}
+
+            {sugerencias.length > 0 && (
+              <div className="mt-3 rounded-2xl border border-zinc-200 bg-white/60 p-4 text-sm text-zinc-700 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200">
+                <div className="mb-2 text-xs font-medium text-zinc-500 dark:text-zinc-400">Sugerencias</div>
+                <div className="flex flex-col gap-2">
+                  {sugerencias.map((s) => (
+                    <button
+                      key={`${s.fecha}-${s.hora}`}
+                      type="button"
+                      onClick={() => {
+                        setProximaFecha(s.fecha);
+                        setProximaHora(s.hora);
+                      }}
+                      className="flex w-full flex-col rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-left shadow-sm transition hover:bg-zinc-50 dark:border-white/10 dark:bg-black/20 dark:hover:bg-white/5"
+                    >
+                      <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+                        {s.fecha} {s.hora}
+                      </div>
+                      <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{s.reason}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {agendarError && (
+              <div className="mt-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+                {agendarError}
+              </div>
+            )}
+
+            {agendarExito && (
+              <div className="mt-3 rounded-2xl border border-green-200 bg-green-50 p-4 text-sm text-green-700 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-300">
+                {agendarExito}
+              </div>
+            )}
+          </section>
 
         <footer className="mt-8 text-xs text-zinc-500 dark:text-zinc-400">
           Tip: usa <span className="rounded bg-zinc-200 px-1 dark:bg-white/10">Tab</span>{" "}
