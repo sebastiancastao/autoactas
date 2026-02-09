@@ -26,6 +26,7 @@ import { useProcesoForm } from "@/lib/hooks/useProcesoForm";
 import { useRouter } from "next/navigation";
 import { sendResendEmail } from "@/lib/api/resend";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth-context";
 
 function esEmailValido(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
@@ -129,6 +130,8 @@ type EnviarRegistroResult = {
 
 export default function ProcesosPage() {
 
+  const { user } = useAuth();
+
   const [procesos, setProcesos] = useState<Proceso[]>([]);
 
   const [cargando, setCargando] = useState(true);
@@ -173,7 +176,10 @@ export default function ProcesosPage() {
       {
         loading: boolean;
         error: string | null;
-        result: { fileId: string; fileName: string; webViewLink: string | null } | null;
+        result: { fileId: string; fileName: string; webViewLink: string | null; apoderadoEmails?: string[] } | null;
+        emailSending?: boolean;
+        emailResult?: { sent: number; errors?: string[] } | null;
+        emailError?: string | null;
       }
     >
   >({});
@@ -462,10 +468,10 @@ export default function ProcesosPage() {
       const res = await fetch("/api/crear-auto-admisorio", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ procesoId: pid }),
+        body: JSON.stringify({ procesoId: pid, authUserId: user?.id }),
       });
       const json = (await res.json().catch(() => null)) as
-        | { fileId: string; fileName: string; webViewLink: string | null; error?: string; detail?: string }
+        | { fileId: string; fileName: string; webViewLink: string | null; apoderadoEmails?: string[]; error?: string; detail?: string }
         | null;
 
       if (!res.ok || !json?.fileId) {
@@ -477,7 +483,7 @@ export default function ProcesosPage() {
         [pid]: {
           loading: false,
           error: null,
-          result: { fileId: json.fileId, fileName: json.fileName, webViewLink: json.webViewLink ?? null },
+          result: { fileId: json.fileId, fileName: json.fileName, webViewLink: json.webViewLink ?? null, apoderadoEmails: json.apoderadoEmails },
         },
       }));
     } catch (e) {
@@ -485,6 +491,56 @@ export default function ProcesosPage() {
       setAutoAdmisorioStateByProcesoId((prev) => ({
         ...prev,
         [pid]: { loading: false, error: msg, result: prev[pid]?.result ?? null },
+      }));
+    }
+  }
+
+  async function enviarAutoAdmisorioApoderados(procesoId: string, proceso: Proceso) {
+    const state = autoAdmisorioStateByProcesoId[procesoId];
+    if (!state?.result?.webViewLink || state.emailSending) return;
+
+    const emails = state.result.apoderadoEmails ?? [];
+    if (emails.length === 0) return;
+
+    setAutoAdmisorioStateByProcesoId((prev) => ({
+      ...prev,
+      [procesoId]: { ...prev[procesoId], emailSending: true, emailError: null, emailResult: null },
+    }));
+
+    try {
+      const res = await fetch("/api/enviar-acta", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          apoderadoEmails: emails,
+          numeroProceso: proceso.numero_proceso || procesoId,
+          titulo: "Auto de Admisión",
+          fecha: new Date().toISOString().slice(0, 10),
+          webViewLink: state.result.webViewLink,
+        }),
+      });
+
+      const json = (await res.json().catch(() => null)) as
+        | { emailsSent: number; emailErrors?: string[]; error?: string; detail?: string }
+        | null;
+
+      if (!res.ok) {
+        throw new Error(json?.detail || json?.error || "No se pudieron enviar los correos.");
+      }
+
+      setAutoAdmisorioStateByProcesoId((prev) => ({
+        ...prev,
+        [procesoId]: {
+          ...prev[procesoId],
+          emailSending: false,
+          emailResult: { sent: json?.emailsSent ?? 0, errors: json?.emailErrors },
+        },
+      }));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setAutoAdmisorioStateByProcesoId((prev) => ({
+        ...prev,
+        [procesoId]: { ...prev[procesoId], emailSending: false, emailError: msg },
       }));
     }
   }
@@ -1256,17 +1312,54 @@ export default function ProcesosPage() {
                         )}
 
                         {autoState.result?.webViewLink && (
-                          <div className="mr-3 text-xs text-zinc-600 dark:text-zinc-300">
-                            Auto admisorio:{" "}
-                            <a
-                              href={autoState.result.webViewLink}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="font-semibold underline underline-offset-2"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              Abrir en Drive
-                            </a>
+                          <div className="mr-3 flex flex-col gap-1.5 text-xs text-zinc-600 dark:text-zinc-300">
+                            <div>
+                              Auto admisorio:{" "}
+                              <a
+                                href={autoState.result.webViewLink}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="font-semibold underline underline-offset-2"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                Abrir en Drive
+                              </a>
+                            </div>
+
+                            {autoState.result.apoderadoEmails && autoState.result.apoderadoEmails.length > 0 && !autoState.emailResult && (
+                              <div className="flex items-center gap-2">
+                                <span className="text-zinc-500 dark:text-zinc-400">
+                                  {autoState.result.apoderadoEmails.length} apoderado{autoState.result.apoderadoEmails.length > 1 ? "s" : ""} con correo
+                                </span>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void enviarAutoAdmisorioApoderados(proceso.id, proceso);
+                                  }}
+                                  disabled={autoState.emailSending}
+                                  className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-700 transition hover:border-blue-500 hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:border-blue-700 dark:hover:bg-blue-950/60"
+                                >
+                                  {autoState.emailSending ? "Enviando..." : "Enviar a apoderados"}
+                                </button>
+                              </div>
+                            )}
+
+                            {autoState.result.apoderadoEmails && autoState.result.apoderadoEmails.length === 0 && (
+                              <span className="text-zinc-400 dark:text-zinc-500">No hay apoderados con correo registrado</span>
+                            )}
+
+                            {autoState.emailError && (
+                              <span className="text-red-600 dark:text-red-400">{autoState.emailError}</span>
+                            )}
+
+                            {autoState.emailResult && (
+                              <span className="text-green-600 dark:text-green-400">
+                                Correos enviados: {autoState.emailResult.sent}
+                                {autoState.emailResult.errors && autoState.emailResult.errors.length > 0 && (
+                                  <span className="text-amber-600 dark:text-amber-400"> ({autoState.emailResult.errors.length} fallidos)</span>
+                                )}
+                              </span>
+                            )}
                           </div>
                         )}
  

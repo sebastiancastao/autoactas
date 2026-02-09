@@ -9,6 +9,7 @@ export const runtime = "nodejs";
 
 type Payload = {
   procesoId: string;
+  authUserId?: string; // Supabase auth.users.id of the logged-in user
   ciudad?: string;
   fechaAudiencia?: string; // YYYY-MM-DD
   horaAudiencia?: string;  // HH:MM (24h)
@@ -136,23 +137,6 @@ function bodyParagraph(text: string, opts?: { bold?: boolean; allCaps?: boolean 
   });
 }
 
-function bodyMixed(runs: { text: string; bold?: boolean; allCaps?: boolean }[]): Paragraph {
-  return new Paragraph({
-    alignment: AlignmentType.JUSTIFIED,
-    spacing: { after: 120 },
-    children: runs.map(
-      (r) =>
-        new TextRun({
-          text: r.text,
-          font: FONT,
-          size: SIZE_11,
-          bold: r.bold ?? false,
-          allCaps: r.allCaps ?? false,
-        })
-    ),
-  });
-}
-
 function numberedItem(reference: string, text: string): Paragraph {
   return new Paragraph({
     numbering: { reference, level: 0 },
@@ -217,6 +201,32 @@ export async function POST(req: Request) {
       .select("nombre, identificacion, tipo_identificacion, apoderado_id")
       .eq("proceso_id", procesoId);
 
+    const { data: acreedores } = await supabase
+      .from("acreedores")
+      .select("apoderado_id")
+      .eq("proceso_id", procesoId);
+
+    // Collect all apoderado IDs from deudores + acreedores + direct proceso link
+    const apoderadoIds = new Set<string>();
+    (deudores ?? []).forEach((d) => { if (d.apoderado_id) apoderadoIds.add(d.apoderado_id); });
+    (acreedores ?? []).forEach((a) => { if (a.apoderado_id) apoderadoIds.add(a.apoderado_id); });
+
+    // Fetch apoderados by proceso_id AND by referenced IDs
+    const { data: apoderadosByProceso } = await supabase
+      .from("apoderados")
+      .select("id, email")
+      .eq("proceso_id", procesoId);
+
+    const apoderadosByIds = apoderadoIds.size > 0
+      ? (await supabase.from("apoderados").select("id, email").in("id", Array.from(apoderadoIds))).data ?? []
+      : [];
+
+    // Merge and deduplicate
+    const allApoderadosMap = new Map<string, string | null>();
+    for (const ap of [...(apoderadosByProceso ?? []), ...apoderadosByIds]) {
+      if (!allApoderadosMap.has(ap.id)) allApoderadosMap.set(ap.id, ap.email);
+    }
+
     // Get the next scheduled event for the audiencia date
     const { data: eventos } = await supabase
       .from("eventos")
@@ -250,13 +260,42 @@ export async function POST(req: Request) {
     // Fecha de firma (today)
     const fechaFirmaTexto = formatFechaEnLetras(fechaKey);
 
-    // Operador/Conciliador
-    const operador = body?.operador ?? {
+    // Operador/Conciliador — resolve from logged-in user, then payload override, then defaults
+    let operador = {
       nombre: "JUAN CAMILO ROMERO BURGOS",
       identificacion: "1.143.941.218",
       tarjetaProfesional: "334936 del C S de la J.",
       email: "grupodeapoyojuridico1@gmail.com",
     };
+
+    // Look up the logged-in user's profile from the usuarios table
+    const authUserId = body?.authUserId?.trim();
+    if (authUserId) {
+      const { data: usuario } = await supabase
+        .from("usuarios")
+        .select("nombre, email, identificacion, tarjeta_profesional")
+        .eq("auth_id", authUserId)
+        .maybeSingle();
+
+      if (usuario) {
+        operador = {
+          nombre: usuario.nombre || operador.nombre,
+          identificacion: usuario.identificacion || operador.identificacion,
+          tarjetaProfesional: usuario.tarjeta_profesional || operador.tarjetaProfesional,
+          email: usuario.email || operador.email,
+        };
+      }
+    }
+
+    // Payload operador overrides anything from DB
+    if (body?.operador) {
+      operador = {
+        nombre: body.operador.nombre || operador.nombre,
+        identificacion: body.operador.identificacion || operador.identificacion,
+        tarjetaProfesional: body.operador.tarjetaProfesional || operador.tarjetaProfesional,
+        email: body.operador.email || operador.email,
+      };
+    }
 
     // --- Build document ---
     const doc = new Document({
@@ -481,10 +520,17 @@ export async function POST(req: Request) {
       buffer,
     });
 
+    // Collect apoderado emails for email notification
+    const apoderadoEmails = Array.from(allApoderadosMap.values())
+      .map((email) => email?.trim().toLowerCase())
+      .filter((e): e is string => !!e && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+    const uniqueEmails = [...new Set(apoderadoEmails)];
+
     return NextResponse.json({
       fileId: uploaded.id,
       fileName: uploaded.name,
       webViewLink: uploaded.webViewLink ?? null,
+      apoderadoEmails: uniqueEmails,
     });
   } catch (e) {
     return NextResponse.json({ error: "Unexpected error", detail: toErrorMessage(e) }, { status: 500 });

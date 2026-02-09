@@ -66,6 +66,8 @@ export interface Database {
           rol: string
           avatar_url: string | null
           activo: boolean
+          identificacion: string | null
+          tarjeta_profesional: string | null
           created_at: string
           updated_at: string
         }
@@ -78,6 +80,8 @@ export interface Database {
           rol?: string
           avatar_url?: string | null
           activo?: boolean
+          identificacion?: string | null
+          tarjeta_profesional?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -90,6 +94,8 @@ export interface Database {
           rol?: string
           avatar_url?: string | null
           activo?: boolean
+          identificacion?: string | null
+          tarjeta_profesional?: string | null
           created_at?: string
           updated_at?: string
         }

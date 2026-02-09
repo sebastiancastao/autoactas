@@ -16,6 +16,7 @@ import { useAuth } from "@/lib/auth-context";
 
 type Categoria = "Acreedor" | "Deudor" | "Apoderado";
 type EstadoAsistencia = "Presente" | "Ausente";
+type VotoAcuerdo = "POSITIVO" | "NEGATIVO" | "AUSENTE" | "ABSTENCION";
 
 type HorarioSugerido = {
   fecha: string;
@@ -470,6 +471,8 @@ function AttendanceContent() {
   >(null);
   const [mostrarModalTerminarAudiencia, setMostrarModalTerminarAudiencia] = useState(false);
   const [terminarAudienciaAdvertencias, setTerminarAudienciaAdvertencias] = useState<string[]>([]);
+  const [tipoDocumento, setTipoDocumento] = useState("ACTA AUDIENCIA");
+  const [votosAcuerdoByAcreenciaId, setVotosAcuerdoByAcreenciaId] = useState<Record<string, VotoAcuerdo | "">>({});
   const [enviandoCorreos, setEnviandoCorreos] = useState(false);
   const [enviarCorreosError, setEnviarCorreosError] = useState<string | null>(null);
   const [enviarCorreosResult, setEnviarCorreosResult] = useState<
@@ -513,6 +516,45 @@ function AttendanceContent() {
 
     return { totalSum, byAcreenciaId };
   }, [acreencias, acreenciaDrafts, acreenciaEditandoId]);
+
+  const mostrarVotacionAcuerdo = useMemo(() => {
+    return tipoDocumento.trim().toUpperCase().startsWith("ACUERDO DE PAGO");
+  }, [tipoDocumento]);
+
+  const resumenVotosAcuerdo = useMemo(() => {
+    const out = {
+      POSITIVO: 0,
+      NEGATIVO: 0,
+      AUSENTE: 0,
+      ABSTENCION: 0,
+      SIN_VOTO: 0,
+      TOTAL: 0,
+    };
+
+    if (!mostrarVotacionAcuerdo) return out;
+
+    acreencias.forEach((a) => {
+      const pct = porcentajeCalculadoByAcreenciaId.byAcreenciaId.get(a.id) ?? null;
+      if (typeof pct !== "number" || Number.isNaN(pct)) return;
+      out.TOTAL += pct;
+
+      const voto = votosAcuerdoByAcreenciaId[a.id];
+      if (!voto) {
+        out.SIN_VOTO += pct;
+        return;
+      }
+
+      if (voto === "POSITIVO") out.POSITIVO += pct;
+      else if (voto === "NEGATIVO") out.NEGATIVO += pct;
+      else if (voto === "AUSENTE") out.AUSENTE += pct;
+      else if (voto === "ABSTENCION") out.ABSTENCION += pct;
+      else out.SIN_VOTO += pct;
+    });
+
+    return out;
+  }, [acreencias, mostrarVotacionAcuerdo, porcentajeCalculadoByAcreenciaId, votosAcuerdoByAcreenciaId]);
+
+  const formatPctUi = (value: number) => value.toFixed(2).replace(".", ",") + "%";
 
   const acreenciasVistasStorageKey = useMemo(() => {
     if (!procesoId) return null;
@@ -1041,6 +1083,7 @@ function AttendanceContent() {
         otros: a.otros_cobros_seguros ?? null,
         total: a.total ?? null,
         porcentaje: porcentajeCalculadoByAcreenciaId.byAcreenciaId.get(a.id) ?? null,
+        voto: mostrarVotacionAcuerdo ? (votosAcuerdoByAcreenciaId[a.id] || null) : null,
       }));
 
       const terminarAudienciaPayload = {
@@ -1051,6 +1094,7 @@ function AttendanceContent() {
         eventoId,
         hora,
         ciudad,
+        tipoDocumento,
         resumen: asistenciaPayload.resumen,
         asistentes: asistenciaPayload.asistentes,
         acreencias: acreenciasPayload,
@@ -1917,6 +1961,115 @@ function AttendanceContent() {
               ))}
             </div>
 
+            {/* Votación apoderados (solo para acuerdos) */}
+            {mostrarVotacionAcuerdo && (
+              <section className="rounded-2xl border border-zinc-200 bg-white/60 p-4 dark:border-white/10 dark:bg-white/5">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">
+                      Votación de apoderados
+                    </h3>
+                    <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                      Captura el voto por acreedor (normalmente vota su apoderado) para el acuerdo de pago.
+                    </p>
+                  </div>
+
+                  {acreencias.length > 0 && (
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                      Total ponderado: {formatPctUi(resumenVotosAcuerdo.TOTAL)}
+                    </p>
+                  )}
+                </div>
+
+                {acreenciasCargando ? (
+                  <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-300">
+                    Cargando acreencias...
+                  </p>
+                ) : acreencias.length === 0 ? (
+                  <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-300">
+                    No hay acreencias registradas para capturar la votación.
+                  </p>
+                ) : (
+                  <div className="mt-3 overflow-x-auto">
+                    <table className="w-full min-w-[860px] border-separate border-spacing-0 text-sm">
+                      <thead>
+                        <tr className="text-left text-xs uppercase tracking-[0.25em] text-zinc-400">
+                          <th className="pb-3 pr-4">Acreedor</th>
+                          <th className="pb-3 pr-4">Apoderado</th>
+                          <th className="pb-3 pr-4 text-right">%</th>
+                          <th className="pb-3 pr-0">Voto</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {acreencias.map((a) => {
+                          const pct = porcentajeCalculadoByAcreenciaId.byAcreenciaId.get(a.id) ?? null;
+                          const voto = votosAcuerdoByAcreenciaId[a.id] ?? "";
+                          return (
+                            <tr
+                              key={a.id}
+                              className="border-t border-zinc-200/70 dark:border-white/10"
+                            >
+                              <td className="py-3 pr-4 font-medium text-zinc-900 dark:text-zinc-50">
+                                <div className="max-w-[320px] truncate">
+                                  {a.acreedores?.nombre ?? a.acreedor_id ?? "—"}
+                                </div>
+                              </td>
+                              <td className="py-3 pr-4">
+                                <div className="max-w-[280px] truncate">
+                                  {a.apoderados?.nombre ?? a.apoderado_id ?? "—"}
+                                </div>
+                              </td>
+                              <td className="py-3 pr-4 text-right tabular-nums">
+                                {typeof pct === "number" && !Number.isNaN(pct) ? formatPctUi(pct) : "—"}
+                              </td>
+                              <td className="py-3 pr-0">
+                                <select
+                                  value={voto}
+                                  onChange={(e) =>
+                                    setVotosAcuerdoByAcreenciaId((prev) => ({
+                                      ...prev,
+                                      [a.id]: e.target.value as VotoAcuerdo | "",
+                                    }))
+                                  }
+                                  className="h-10 w-full min-w-[220px] cursor-pointer rounded-2xl border border-zinc-200 bg-white px-3 text-sm font-medium shadow-sm dark:border-white/10 dark:bg-white/5 dark:text-white"
+                                >
+                                  <option value="">Seleccionar...</option>
+                                  <option value="POSITIVO">Voto positivo</option>
+                                  <option value="NEGATIVO">Voto negativo</option>
+                                  <option value="AUSENTE">Voto ausente</option>
+                                  <option value="ABSTENCION">Abstención</option>
+                                </select>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {acreencias.length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-2 text-xs text-zinc-600 dark:text-zinc-300">
+                    <span className="rounded-full border border-zinc-200 bg-white px-3 py-1 shadow-sm dark:border-white/10 dark:bg-white/10">
+                      Positivos: {formatPctUi(resumenVotosAcuerdo.POSITIVO)}
+                    </span>
+                    <span className="rounded-full border border-zinc-200 bg-white px-3 py-1 shadow-sm dark:border-white/10 dark:bg-white/10">
+                      Negativos: {formatPctUi(resumenVotosAcuerdo.NEGATIVO)}
+                    </span>
+                    <span className="rounded-full border border-zinc-200 bg-white px-3 py-1 shadow-sm dark:border-white/10 dark:bg-white/10">
+                      Ausentes: {formatPctUi(resumenVotosAcuerdo.AUSENTE)}
+                    </span>
+                    <span className="rounded-full border border-zinc-200 bg-white px-3 py-1 shadow-sm dark:border-white/10 dark:bg-white/10">
+                      Abstención: {formatPctUi(resumenVotosAcuerdo.ABSTENCION)}
+                    </span>
+                    <span className="rounded-full border border-zinc-200 bg-white px-3 py-1 shadow-sm dark:border-white/10 dark:bg-white/10">
+                      Sin voto: {formatPctUi(resumenVotosAcuerdo.SIN_VOTO)}
+                    </span>
+                  </div>
+                )}
+              </section>
+            )}
+
             {/* Footer Actions */}
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <button
@@ -1943,6 +2096,20 @@ function AttendanceContent() {
                 >
                   {guardando ? "Guardando..." : "Guardar asistencia"}
                 </button>
+
+                <select
+                  value={tipoDocumento}
+                  onChange={(e) => setTipoDocumento(e.target.value)}
+                  className="h-12 rounded-2xl border border-zinc-200 bg-white px-3 text-sm font-medium shadow-sm dark:border-white/10 dark:bg-white/5 dark:text-white"
+                >
+                  <option value="ACTA AUDIENCIA">Acta Audiencia</option>
+                  <option value="ACTA SUSPENSIÓN">Acta Suspensión</option>
+                  <option value="ACUERDO DE PAGO">Acuerdo de Pago</option>
+                  <option value="ACUERDO DE PAGO BILATERAL Y FRACASO DEL TRAMITE">Acuerdo de Pago Bilateral y Fracaso del Trámite</option>
+                  <option value="ACTA FRACASO DEL TRAMITE">Acta Fracaso del Trámite</option>
+                  <option value="ACTA RECHAZO DEL TRAMITE">Acta Rechazo del Trámite</option>
+                  <option value="AUTO DECLARA NULIDAD">Auto Declara Nulidad</option>
+                </select>
 
                 <button
                   type="button"

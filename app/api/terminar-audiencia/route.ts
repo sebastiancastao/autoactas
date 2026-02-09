@@ -47,6 +47,7 @@ type AcreenciaRow = {
   otros?: number | null;
   total?: number | null;
   porcentaje?: number | null;
+  voto?: string | null;
 };
 
 type TerminarAudienciaPayload = {
@@ -57,6 +58,7 @@ type TerminarAudienciaPayload = {
   eventoId?: string | null;
   hora?: string; // HH:MM
   ciudad?: string;
+  tipoDocumento?: string;
   debug?: boolean;
   resumen: { total: number; presentes: number; ausentes: number };
   asistentes: Asistente[];
@@ -299,6 +301,41 @@ function formatCurrency(value: number | null | undefined) {
 function formatPercentage(value: number | null | undefined) {
   if (typeof value !== "number" || Number.isNaN(value)) return "0,00%";
   return value.toFixed(2).replace(".", ",") + "%";
+}
+
+type VotoAcuerdo = "POSITIVO" | "NEGATIVO" | "AUSENTE" | "ABSTENCION";
+
+function normalizeVotoAcuerdo(value: string | null | undefined): VotoAcuerdo | null {
+  const raw = value?.trim();
+  if (!raw) return null;
+  const upper = raw.toUpperCase();
+
+  if (upper.includes("POSITIV")) return "POSITIVO";
+  if (upper.includes("NEGATIV")) return "NEGATIVO";
+  if (upper.includes("AUSENT")) return "AUSENTE";
+  if (upper.includes("ABSTEN")) return "ABSTENCION";
+  return null;
+}
+
+function computeVotosAcuerdo(acreencias: AcreenciaRow[]) {
+  const hasVotes = acreencias.some((a) => normalizeVotoAcuerdo(a.voto) !== null);
+  const totals: Record<VotoAcuerdo, number> = {
+    POSITIVO: 0,
+    NEGATIVO: 0,
+    AUSENTE: 0,
+    ABSTENCION: 0,
+  };
+
+  if (!hasVotes) return { hasVotes, totals };
+
+  acreencias.forEach((a) => {
+    const pct = a.porcentaje;
+    if (typeof pct !== "number" || Number.isNaN(pct)) return;
+    const voto = normalizeVotoAcuerdo(a.voto) ?? "AUSENTE";
+    totals[voto] += pct;
+  });
+
+  return { hasVotes, totals };
 }
 
 function isValidEmail(email: string | undefined | null): email is string {
@@ -577,15 +614,27 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
   }
 
   // Title
+  const tipoDoc = (payload.tipoDocumento || "ACTA AUDIENCIA").trim().toUpperCase();
   sections.push(new Paragraph({
-    children: [new TextRun({ text: "ACTA SUSPENSIÓN", bold: true, size: 28 })],
+    children: [new TextRun({ text: tipoDoc, bold: true, size: 28 })],
     heading: HeadingLevel.HEADING_1,
     alignment: AlignmentType.CENTER,
     spacing: { after: 120 },
   }));
 
+  const subtitulosPorTipo: Record<string, string> = {
+    "ACTA AUDIENCIA": "AUDIENCIA NEGOCIACION DE DEUDAS",
+    "ACTA SUSPENSIÓN": "SUSPENSION DE AUDIENCIA NEGOCIACION DE DEUDAS",
+    "ACUERDO DE PAGO": "ACUERDO DE PAGO NEGOCIACION DE DEUDAS",
+    "ACUERDO DE PAGO BILATERAL Y FRACASO DEL TRAMITE": "ACUERDO DE PAGO BILATERAL Y FRACASO DEL TRAMITE",
+    "ACTA FRACASO DEL TRAMITE": "FRACASO DEL TRAMITE DE NEGOCIACION DE DEUDAS",
+    "ACTA RECHAZO DEL TRAMITE": "RECHAZO DEL TRAMITE DE NEGOCIACION DE DEUDAS",
+    "AUTO DECLARA NULIDAD": "AUTO QUE DECLARA LA NULIDAD",
+  };
+  const subtitulo = subtitulosPorTipo[tipoDoc] || "NEGOCIACION DE DEUDAS";
+
   sections.push(new Paragraph({
-    children: [new TextRun({ text: "SUSPENSION DE AUDIENCIA NEGOCIACION DE DEUDAS", bold: true, size: 24 })],
+    children: [new TextRun({ text: subtitulo, bold: true, size: 24 })],
     alignment: AlignmentType.CENTER,
     spacing: { after: 60 },
   }));
@@ -790,24 +839,340 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
     sections = portraitAfter;
   }
 
-  const observaciones = payload.observacionesFinales ||
-    `Se deja constancia de que la apoderada del deudor procedió a verbalizar la propuesta de pago, frente a lo cual los acreedores asistentes expusieron las políticas aplicables de cada una de sus entidades. En razón de lo anterior, la apoderada del deudor solicitó la suspensión de la presente diligencia, con el fin de informar a su representado las observaciones efectuadas a la propuesta y evaluar la posibilidad de modificarla. En caso de realizarse ajustes, la nueva propuesta actualizada deberá ser remitida a este centro de conciliación, con copia a todos los acreedores. Finalmente se deja constancia de que se encuentra precluida la etapa de relación de acreencias.`;
+  if (tipoDoc.startsWith("ACUERDO DE PAGO")) {
+    const votosAcuerdo = computeVotosAcuerdo(payload.acreencias);
+    // --- PROPUESTA DE PAGO ---
+    sections.push(new Paragraph({
+      children: [new TextRun({ text: "PROPUESTA DE PAGO", bold: true, size: 24 })],
+      heading: HeadingLevel.HEADING_2,
+      spacing: { before: 200, after: 200 },
+    }));
 
-  sections.push(new Paragraph({
-    children: [new TextRun({ text: observaciones })],
-    spacing: { after: 200 },
-  }));
+    sections.push(new Paragraph({
+      children: [
+        new TextRun({
+          text: "Acto seguido el/la suscrito(a) conciliador(a) continua con el desarrollo del numeral 5 y 6 del art. 550 del CGP, que estipula que el deudor haga una exposición de la propuesta de pago, para lo cual le concede el uso de la palabra al apoderado del deudor quien indica:",
+        }),
+      ],
+      spacing: { after: 200 },
+    }));
 
-  sections.push(new Paragraph({
-    children: [
-      new TextRun({ text: `Teniendo en cuenta lo anterior y que no se han presentes los demás acreedores. El suscrito conciliador informa que se hace necesario suspender la presente audiencia. Fijando nueva fecha para el día ` }),
-      new TextRun({ text: proximaFecha, bold: true }),
-      new TextRun({ text: ` a las ` }),
-      new TextRun({ text: proximaHora, bold: true }),
-      new TextRun({ text: `.` }),
-    ],
-    spacing: { after: 400 },
-  }));
+    sections.push(new Paragraph({
+      children: [new TextRun({ text: "[DESCRIPCIÓN DE LA PROPUESTA DE PAGO]" })],
+      spacing: { after: 300 },
+      indent: { left: convertInchesToTwip(0.5) },
+    }));
+
+    // --- VOTACIÓN DEL ACUERDO ---
+    sections.push(new Paragraph({
+      children: [new TextRun({ text: "VOTACIÓN DEL ACUERDO", bold: true, size: 24 })],
+      heading: HeadingLevel.HEADING_2,
+      spacing: { before: 200, after: 200 },
+    }));
+
+    sections.push(new Paragraph({
+      children: [
+        new TextRun({
+          text: "Indicando a los acreedores que la propuesta de pago y proyección de este fue socializado a los correos electrónicos. Se corre traslado de la propuesta de pago a los acreedores, los cuales proceden a votar de la siguiente manera:",
+        }),
+      ],
+      spacing: { after: 200 },
+    }));
+
+    // Voting table from acreencias data
+    if (payload.acreencias.length > 0) {
+      const votingHeaders = ["ACREEDORES", "CAPITAL", "%", "VOTO"];
+      const votingColWidths = [40, 25, 15, 20];
+      const votingTableWidth = convertInchesToTwip(8.5 - 1.2);
+      const votingColTwip = votingColWidths.map((pct) => Math.round((votingTableWidth * pct) / 100));
+      const votingTwipSum = votingColTwip.reduce((a, v) => a + v, 0);
+      if (votingColTwip.length > 0 && votingTwipSum !== votingTableWidth) {
+        votingColTwip[votingColTwip.length - 1] += votingTableWidth - votingTwipSum;
+      }
+
+      const votingHeaderRow = new TableRow({
+        children: votingHeaders.map(
+          (h) =>
+            new TableCell({
+              children: [new Paragraph({ children: [new TextRun({ text: h, bold: true, size: 20 })], alignment: AlignmentType.CENTER })],
+              borders: tableBorders,
+              shading: { fill: "E0E0E0" },
+            })
+        ),
+      });
+
+      let totalCapitalVoting = 0;
+      payload.acreencias.forEach((a) => { totalCapitalVoting += a.capital ?? 0; });
+
+      const votingBodyRows = payload.acreencias.map(
+        (a) =>
+          new TableRow({
+            children: [
+              new TableCell({
+                children: [new Paragraph({ children: [new TextRun({ text: a.acreedor?.trim() || "—", size: 20 })] })],
+                borders: tableBorders,
+              }),
+              new TableCell({
+                children: [new Paragraph({ children: [new TextRun({ text: formatCurrency(a.capital), size: 20 })], alignment: AlignmentType.RIGHT })],
+                borders: tableBorders,
+              }),
+              new TableCell({
+                children: [new Paragraph({ children: [new TextRun({ text: formatPercentage(a.porcentaje), size: 20 })], alignment: AlignmentType.RIGHT })],
+                borders: tableBorders,
+              }),
+              new TableCell({
+                children: [
+                  new Paragraph({
+                    children: [
+                      new TextRun({
+                        text: votosAcuerdo.hasVotes ? (normalizeVotoAcuerdo(a.voto) ?? "AUSENTE") : "[VOTO]",
+                        size: 20,
+                      }),
+                    ],
+                    alignment: AlignmentType.CENTER,
+                  }),
+                ],
+                borders: tableBorders,
+              }),
+            ],
+          })
+      );
+
+      const votingTotalsRow = new TableRow({
+        children: [
+          new TableCell({
+            children: [new Paragraph({ children: [new TextRun({ text: "TOTAL CAPITAL", bold: true, size: 20 })] })],
+            borders: tableBorders,
+            shading: { fill: "E0E0E0" },
+          }),
+          new TableCell({
+            children: [new Paragraph({ children: [new TextRun({ text: formatCurrency(totalCapitalVoting), bold: true, size: 20 })], alignment: AlignmentType.RIGHT })],
+            borders: tableBorders,
+            shading: { fill: "E0E0E0" },
+          }),
+          new TableCell({
+            children: [new Paragraph({ children: [new TextRun({ text: "100%", bold: true, size: 20 })], alignment: AlignmentType.RIGHT })],
+            borders: tableBorders,
+            shading: { fill: "E0E0E0" },
+          }),
+          new TableCell({
+            children: [new Paragraph({ children: [new TextRun({ text: "", size: 20 })] })],
+            borders: tableBorders,
+            shading: { fill: "E0E0E0" },
+          }),
+        ],
+      });
+
+      sections.push(new Table({
+        rows: [votingHeaderRow, ...votingBodyRows, votingTotalsRow],
+        width: { size: votingTableWidth, type: WidthType.DXA },
+        columnWidths: votingColTwip,
+        margins: { top: 40, bottom: 40, left: 40, right: 40 },
+        layout: TableLayoutType.FIXED,
+        alignment: AlignmentType.CENTER,
+      }));
+    }
+
+    // --- RELACIÓN FINAL DE LOS VOTOS ---
+    sections.push(new Paragraph({
+      children: [new TextRun({ text: "RELACIÓN FINAL DE LOS VOTOS", bold: true, size: 24 })],
+      heading: HeadingLevel.HEADING_2,
+      spacing: { before: 300, after: 200 },
+    }));
+
+    const voteHeaders = ["VOTOS POSITIVOS", "VOTOS NEGATIVOS", "VOTOS AUSENTES", "ABSTENCIÓN DE VOTO"];
+    const voteColWidth = convertInchesToTwip(8.5 - 1.2);
+    const voteColTwip = [25, 25, 25, 25].map((pct) => Math.round((voteColWidth * pct) / 100));
+    const vtSum = voteColTwip.reduce((a, v) => a + v, 0);
+    if (voteColTwip.length > 0 && vtSum !== voteColWidth) {
+      voteColTwip[voteColTwip.length - 1] += voteColWidth - vtSum;
+    }
+
+    const finalVoteValues = votosAcuerdo.hasVotes
+      ? [
+          formatPercentage(votosAcuerdo.totals.POSITIVO),
+          formatPercentage(votosAcuerdo.totals.NEGATIVO),
+          formatPercentage(votosAcuerdo.totals.AUSENTE),
+          formatPercentage(votosAcuerdo.totals.ABSTENCION),
+        ]
+      : ["[__%]", "[__%]", "[__%]", "[__%]"];
+
+    sections.push(new Table({
+      rows: [
+        new TableRow({
+          children: voteHeaders.map(
+            (h) =>
+              new TableCell({
+                children: [new Paragraph({ children: [new TextRun({ text: h, bold: true, size: 20 })], alignment: AlignmentType.CENTER })],
+                borders: tableBorders,
+                shading: { fill: "E0E0E0" },
+              })
+          ),
+        }),
+        new TableRow({
+          children: finalVoteValues.map(
+            (v) =>
+              new TableCell({
+                children: [new Paragraph({ children: [new TextRun({ text: v, size: 20 })], alignment: AlignmentType.CENTER })],
+                borders: tableBorders,
+              })
+          ),
+        }),
+      ],
+      width: { size: voteColWidth, type: WidthType.DXA },
+      columnWidths: voteColTwip,
+      margins: { top: 40, bottom: 40, left: 40, right: 40 },
+      layout: TableLayoutType.FIXED,
+      alignment: AlignmentType.CENTER,
+    }));
+
+    // Agreement declaration
+    sections.push(new Paragraph({
+      children: [
+        new TextRun({ text: `A partir de la votación se establece que entre el señor ` }),
+        new TextRun({ text: deudorNombre.toUpperCase(), bold: true }),
+        new TextRun({ text: `, y sus acreedores, ` }),
+        new TextRun({ text: "HAY ACUERDO DE PAGO", bold: true }),
+        new TextRun({ text: "." }),
+      ],
+      spacing: { before: 300, after: 300 },
+    }));
+
+    // --- ACUERDO DE PAGO details ---
+    sections.push(new Paragraph({
+      children: [new TextRun({ text: "ACUERDO DE PAGO", bold: true, size: 24 })],
+      heading: HeadingLevel.HEADING_2,
+      spacing: { before: 200, after: 200 },
+    }));
+
+    // One placeholder line per acreedor
+    if (payload.acreencias.length > 0) {
+      const uniqueAcreedoresAcuerdo = [...new Set(
+        payload.acreencias.map((a) => a.acreedor?.trim() ?? "").filter(Boolean)
+      )];
+      uniqueAcreedoresAcuerdo.forEach((acreedor) => {
+        sections.push(new Paragraph({
+          children: [
+            new TextRun({ text: acreedor.toUpperCase(), bold: true }),
+            new TextRun({ text: ": [CONDICIONES DE PAGO]" }),
+          ],
+          spacing: { after: 150 },
+        }));
+      });
+    } else {
+      sections.push(new Paragraph({
+        children: [new TextRun({ text: "[DETALLES DEL ACUERDO CON CADA ACREEDOR]" })],
+        spacing: { after: 200 },
+      }));
+    }
+
+    // --- PROYECCION DE PAGOS ---
+    sections.push(new Paragraph({
+      children: [new TextRun({ text: "PROYECCION DE PAGOS", bold: true, size: 24 })],
+      heading: HeadingLevel.HEADING_2,
+      spacing: { before: 200, after: 200 },
+    }));
+
+    sections.push(new Paragraph({
+      children: [new TextRun({ text: "[PROYECCIÓN DE PAGOS ENVIADA POR LA PARTE DEUDORA]" })],
+      spacing: { after: 300 },
+    }));
+
+    // --- OBSERVACIONES FINALES (Acuerdo de pago version) ---
+    sections.push(new Paragraph({
+      children: [new TextRun({ text: "OBSERVACIONES FINALES", bold: true, size: 24 })],
+      heading: HeadingLevel.HEADING_2,
+      spacing: { before: 200, after: 200 },
+    }));
+
+    sections.push(new Paragraph({
+      children: [new TextRun({ text: "Conforme al artículo 553 de la Ley 1564 de 2012, el conciliador y los acreedores abajo firmantes dejan constancia en la presente acta que:" })],
+      spacing: { after: 200 },
+    }));
+
+    const observacionesAcuerdo = [
+      "Se deja constancia que los acreedores han sido debidamente comunicados del inicio del trámite de negociación de deudas y que se les dieron las garantías procesales que la ley les otorga para esta clase de procedimientos. Cualquier decisión adversa a sus intereses obedece a omisiones propias o decisiones tomadas por los jueces de conocimiento de las objeciones y/o controversias.",
+      "El acuerdo ha sido celebrado dentro del término previsto en la Ley, para la negociación de deudas.",
+      "Conforme a lo dispuesto en el numeral 3 del art 554 del C G del P. se deja constancia que los acreedores condonaron el 100% de los intereses adeudados a la fecha de inicio del presente tramite.",
+      "El término máximo para el cumplimiento general del acuerdo de pago será de sesenta 60 meses, sin perjuicio que el deudor pueda hacer pagos anticipados por oferta del acreedor.",
+      votosAcuerdo.hasVotes
+        ? `El acuerdo fue votado positivamente por el ${formatPercentage(votosAcuerdo.totals.POSITIVO)}.`
+        : "[El acuerdo fue votado positivamente por el ___%.]",
+      votosAcuerdo.hasVotes
+        ? `El acuerdo tuvo votos por ausencia de acreedores en un ${formatPercentage(votosAcuerdo.totals.AUSENTE)}.`
+        : "[El acuerdo tuvo votos por ausencia de acreedores en un ___%.]",
+      "El acuerdo comprende la totalidad de los acreedores objeto de la negociación, conforme a la relación de acreedores y acreencias presentada por el deudor para efectos de la admisión del trámite de negociación de deudas.",
+      "El presente acuerdo de pago no implica novación de las obligaciones, las cuales se mantendrán incólumes frente a los títulos de deuda primigenios.",
+      "Se ha dado igual trato a los acreedores de una misma clase o grado.",
+      `Se le advierte al deudor insolvente ${deudorNombre.toUpperCase()} de la obligación que ha adquirido con todos los acreedores que la apoyaron y sacaron adelante su propuesta, por ello debe cumplir en las condiciones en que hizo su propuesta de pago.`,
+      "Los acreedores, podrán ceder en cualquier momento y a cualquier título los créditos y se pondrá al cesionario como sustituto del cedente. En todo caso, el acreedor cedente deberá advertir al cesionario interesado sobre la existencia del presente acuerdo de pago y, por su parte, el cesionario deberá aceptar expresamente las condiciones del presente acuerdo de pago y del crédito que adquiera. Para tal efecto, el cedente notificara al deudor para lo pertinente respecto de los pagos.",
+      "El deudor puede hacer pagos anticipados o acogerse a rebajas o amnistías por oferta de los acreedores, respetando la prelación legal o apartándose de ella con aceptación expresa del acreedor de prelación superior que no se le haya efectuado el pago total de la obligación.",
+      "Se oficiará a los Juzgados si es el caso, informando el acuerdo de pago y a su vez se solicitará que los procesos ejecutivos deberán continuar suspendidos, de conformidad con el art. 555 del C.G.P.",
+      "Se advierte al deudor que no podrá disponer y/o enajenar los activos, hasta el cumplimiento total del acuerdo de pago.",
+      "Una vez se finalice los pagos a cada acreedor, los mismos acreedores se comprometen a entregar los respectivos paz y salvos y oficiar a los juzgados solicitando la terminación de los procesos por pago total.",
+      "Se deja constancia que la audiencia se realizó de forma virtual y fue grabada.",
+    ];
+
+    observacionesAcuerdo.forEach((item, idx) => {
+      sections.push(new Paragraph({
+        children: [new TextRun({ text: `${idx + 1}.\t${item}` })],
+        spacing: { after: 120 },
+        indent: { left: convertInchesToTwip(0.3) },
+      }));
+    });
+
+    // Closing paragraph
+    sections.push(new Paragraph({
+      children: [
+        new TextRun({
+          text: `Por lo expuesto al cumplir el presente acuerdo de pago con las exigencias de la Ley 1564 de 2012 en lo relacionado con la negociación de deudas del deudor `,
+        }),
+        new TextRun({ text: deudorNombre.toUpperCase(), bold: true }),
+        new TextRun({
+          text: ` Teniendo en cuenta esta audiencia se llevó a cabo virtualmente; el conciliador actuando con el PRINCIPIO DE LA BUENA FE, previa grabación de toda la audiencia; donde constan las actuaciones y el acuerdo realizado, con la asistencia de la mayoría de los acreedores que votaron la fórmula de pago del deudor, se suscribe en señal de aceptación de lo acordado.`,
+        }),
+      ],
+      spacing: { before: 200, after: 200 },
+    }));
+
+    sections.push(new Paragraph({
+      children: [new TextRun({ text: "No siendo más el objeto de la presente, se suspende la presente diligencia" })],
+      spacing: { after: 200 },
+    }));
+
+    // Confidentiality note
+    sections.push(new Paragraph({
+      children: [
+        new TextRun({ text: "NOTA: ", bold: true }),
+        new TextRun({
+          text: `"AVISO DE CONFIDENCIALIDAD: Se les informa a las partes que les corresponde mantener reserva en general sobre la información que reposa en este documento, a no ser que exista una autorización explícita. De usar su contenido sin autorización, podría tener consecuencias legales como las contenidas en la Ley 1273 del 5 de enero de 2009 y todas las que le apliquen".`,
+          italics: true,
+        }),
+      ],
+      spacing: { after: 400 },
+    }));
+
+  } else {
+    // Default content for ACTA AUDIENCIA, ACTA SUSPENSIÓN, etc.
+    const observaciones = payload.observacionesFinales ||
+      `Se deja constancia de que la apoderada del deudor procedió a verbalizar la propuesta de pago, frente a lo cual los acreedores asistentes expusieron las políticas aplicables de cada una de sus entidades. En razón de lo anterior, la apoderada del deudor solicitó la suspensión de la presente diligencia, con el fin de informar a su representado las observaciones efectuadas a la propuesta y evaluar la posibilidad de modificarla. En caso de realizarse ajustes, la nueva propuesta actualizada deberá ser remitida a este centro de conciliación, con copia a todos los acreedores. Finalmente se deja constancia de que se encuentra precluida la etapa de relación de acreencias.`;
+
+    sections.push(new Paragraph({
+      children: [new TextRun({ text: observaciones })],
+      spacing: { after: 200 },
+    }));
+
+    sections.push(new Paragraph({
+      children: [
+        new TextRun({ text: `Teniendo en cuenta lo anterior y que no se han presentes los demás acreedores. El suscrito conciliador informa que se hace necesario suspender la presente audiencia. Fijando nueva fecha para el día ` }),
+        new TextRun({ text: proximaFecha, bold: true }),
+        new TextRun({ text: ` a las ` }),
+        new TextRun({ text: proximaHora, bold: true }),
+        new TextRun({ text: `.` }),
+      ],
+      spacing: { after: 400 },
+    }));
+  }
 
   // Signature
   sections.push(new Paragraph({
@@ -919,8 +1284,9 @@ export async function POST(req: Request) {
       .replace(/\s+/g, " ")
       .slice(0, 80);
 
+    const tipoDocLabel = payload.tipoDocumento || "Acta Audiencia";
     const fileName = `${payload.numeroProceso?.trim() || payload.procesoId} - ${payload.fecha} - ${
-      safeTitle || "Acta Suspensión"
+      safeTitle || tipoDocLabel
     }.docx`;
 
     const eventoContext = await loadEventoUsuario({
