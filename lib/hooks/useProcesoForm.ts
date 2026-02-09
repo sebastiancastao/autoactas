@@ -3,7 +3,7 @@
 import { Dispatch, FormEvent, SetStateAction, useCallback, useEffect, useState } from "react";
 import { createAcreedor, deleteAcreedor, updateAcreedor } from "@/lib/api/acreedores";
 import { createDeudor, deleteDeudor, updateDeudor } from "@/lib/api/deudores";
-import { createApoderado, getApoderados } from "@/lib/api/apoderados";
+import { createApoderado, getApoderados, updateApoderado } from "@/lib/api/apoderados";
 import {
   createProceso,
   getProcesoWithRelations,
@@ -518,6 +518,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
 
     const construirPayload = (fila: DeudorFormRow) => ({
       proceso_id: procesoId,
+      apoderado_id: fila.apoderadoId.trim() || null,
       nombre: fila.nombre.trim(),
       identificacion: fila.identificacion.trim(),
       tipo_identificacion: fila.tipoIdentificacion.trim() || null,
@@ -671,6 +672,25 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
         await syncAcreedores(savedProceso.id, isEditing);
       }
 
+      // Update proceso_id on apoderados that were assigned but have no proceso_id yet
+      if (!isEditing) {
+        const usedApoderadoIds = new Set<string>();
+        for (const row of deudoresForm) {
+          if (row.apoderadoId.trim()) usedApoderadoIds.add(row.apoderadoId.trim());
+        }
+        for (const row of acreedoresForm) {
+          if (row.apoderadoId.trim()) usedApoderadoIds.add(row.apoderadoId.trim());
+        }
+        const apoderadosSinProceso = apoderados.filter(
+          (ap) => usedApoderadoIds.has(ap.id) && !ap.proceso_id
+        );
+        await Promise.all(
+          apoderadosSinProceso.map((ap) =>
+            updateApoderado(ap.id, { proceso_id: savedProceso.id })
+          )
+        );
+      }
+
       if (isEditing) {
         try {
           await updateProgresoByProcesoId(savedProceso.id, { estado: "iniciado" });
@@ -688,11 +708,11 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
       onSaveSuccess?.(savedProceso, { isEditing });
 
       if (isEditing) {
-        setExito("Proceso actualizado exitosamente");
         await cargarProcesoDetalle(savedProceso.id);
+        setExito("Proceso actualizado exitosamente");
       } else {
-        setExito("Proceso creado exitosamente");
         resetFormFields();
+        setExito("Proceso creado exitosamente");
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : (err as { message?: string })?.message || String(err);

@@ -337,15 +337,22 @@ export default function ProcesoForm({
                       <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
                         Prelación
                       </label>
-                      <input
-                        value={obligacion.prelacion}
+                      <select
+                        value={obligacion.prelacion ?? ""}
                         onChange={(e) =>
                           actualizarObligacionRow(acreedor.id, obligacion.id, {
                             prelacion: e.target.value,
                           })
                         }
-                        className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                      />
+                        className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 pr-8 text-xs outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                      >
+                        <option value="">Selecciona</option>
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                        <option value="5">5</option>
+                      </select>
                     </div>
                   </div>
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">

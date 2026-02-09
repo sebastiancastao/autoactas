@@ -18,12 +18,14 @@ import {
   deleteProceso,
   createProceso,
 } from "@/lib/api/proceso";
+import { updateProgresoByProcesoId } from "@/lib/api/progreso";
 import type { Proceso, ProcesoInsert, Apoderado } from "@/lib/database.types";
 import { getApoderados } from "@/lib/api/apoderados";
 import ProcesoForm from "@/components/proceso-form";
 import { useProcesoForm } from "@/lib/hooks/useProcesoForm";
 import { useRouter } from "next/navigation";
 import { sendResendEmail } from "@/lib/api/resend";
+import { supabase } from "@/lib/supabase";
 
 function esEmailValido(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
@@ -141,6 +143,41 @@ export default function ProcesosPage() {
   const [envioMensaje, setEnvioMensaje] = useState<string | null>(null);
   const [envioError, setEnvioError] = useState<string | null>(null);
   const [apoderadoOptions, setApoderadoOptions] = useState<Apoderado[]>([]);
+  const apoderadosByProcesoId = useMemo(() => {
+    const byId: Record<string, Apoderado[]> = {};
+    apoderadoOptions.forEach((ap) => {
+      const pid = ap.proceso_id ?? "";
+      if (!pid) return;
+      if (!byId[pid]) byId[pid] = [];
+      byId[pid].push(ap);
+    });
+    return byId;
+  }, [apoderadoOptions]);
+
+  const apoderadoById = useMemo(() => {
+    const map: Record<string, Apoderado> = {};
+    apoderadoOptions.forEach((ap) => {
+      map[ap.id] = ap;
+    });
+    return map;
+  }, [apoderadoOptions]);
+
+  const [apoderadoSubmissionByProcesoId, setApoderadoSubmissionByProcesoId] = useState<
+    Record<string, { deudorIds: string[]; acreedorIds: string[] }>
+  >({});
+  const [apoderadoSubmissionLoading, setApoderadoSubmissionLoading] = useState(false);
+
+  const [autoAdmisorioStateByProcesoId, setAutoAdmisorioStateByProcesoId] = useState<
+    Record<
+      string,
+      {
+        loading: boolean;
+        error: string | null;
+        result: { fileId: string; fileName: string; webViewLink: string | null } | null;
+      }
+    >
+  >({});
+
   const [panelApoderados, setPanelApoderados] = useState<PanelApoderadoRow[]>([
     createPanelApoderadoRow(),
   ]);
@@ -208,8 +245,17 @@ export default function ProcesosPage() {
 
   const router = useRouter();
 
+  const refreshApoderadoOptions = useCallback(async () => {
+    try {
+      const data = await getApoderados();
+      setApoderadoOptions(data ?? []);
+    } catch (error) {
+      console.error("Error refrescando apoderados:", error);
+    }
+  }, []);
+
   const handleSaveSuccess = useCallback(
-    (savedProceso: Proceso, context?: { isEditing: boolean }) => {
+    async (savedProceso: Proceso, context?: { isEditing: boolean }) => {
       setProcesos((prev) => {
         const exists = prev.some((proceso) => proceso.id === savedProceso.id);
         if (exists) {
@@ -220,11 +266,13 @@ export default function ProcesosPage() {
         return [savedProceso, ...prev];
       });
 
+      await refreshApoderadoOptions();
+
       if (context?.isEditing) {
         router.push(`/calendario?procesoId=${savedProceso.id}`);
       }
     },
-    [router]
+    [router, refreshApoderadoOptions]
   );
 
 
@@ -332,6 +380,115 @@ export default function ProcesosPage() {
     };
   }, []);
 
+  useEffect(() => {
+    const ids = (procesos ?? []).map((p) => p.id).filter(Boolean);
+    if (ids.length === 0) {
+      setApoderadoSubmissionByProcesoId({});
+      return;
+    }
+
+    let canceled = false;
+    (async () => {
+      setApoderadoSubmissionLoading(true);
+      try {
+        const { data: deudores, error: deudorError } = await supabase
+          .from("deudores")
+          .select("proceso_id, apoderado_id")
+          .in("proceso_id", ids)
+          .not("apoderado_id", "is", null);
+        if (deudorError) throw deudorError;
+
+        const { data: acreedores, error: acreedorError } = await supabase
+          .from("acreedores")
+          .select("proceso_id, apoderado_id")
+          .in("proceso_id", ids)
+          .not("apoderado_id", "is", null);
+        if (acreedorError) throw acreedorError;
+
+        const map = new Map<string, { deudor: Set<string>; acreedor: Set<string> }>();
+        const ensure = (pid: string) => {
+          const existing = map.get(pid);
+          if (existing) return existing;
+          const created = { deudor: new Set<string>(), acreedor: new Set<string>() };
+          map.set(pid, created);
+          return created;
+        };
+
+        (deudores ?? []).forEach((row) => {
+          const pid = (row as any).proceso_id as string | null;
+          const aid = (row as any).apoderado_id as string | null;
+          if (!pid || !aid) return;
+          ensure(pid).deudor.add(aid);
+        });
+
+        (acreedores ?? []).forEach((row) => {
+          const pid = (row as any).proceso_id as string | null;
+          const aid = (row as any).apoderado_id as string | null;
+          if (!pid || !aid) return;
+          ensure(pid).acreedor.add(aid);
+        });
+
+        const out: Record<string, { deudorIds: string[]; acreedorIds: string[] }> = {};
+        ids.forEach((pid) => {
+          const sets = map.get(pid);
+          out[pid] = {
+            deudorIds: sets ? Array.from(sets.deudor) : [],
+            acreedorIds: sets ? Array.from(sets.acreedor) : [],
+          };
+        });
+
+        if (!canceled) setApoderadoSubmissionByProcesoId(out);
+      } catch (err) {
+        console.error("Error loading apoderado submission summary:", err);
+        if (!canceled) setApoderadoSubmissionByProcesoId({});
+      } finally {
+        if (!canceled) setApoderadoSubmissionLoading(false);
+      }
+    })();
+
+    return () => {
+      canceled = true;
+    };
+  }, [procesos]);
+
+  async function crearAutoAdmisorioDesdeProceso(proceso: Proceso) {
+    const pid = proceso.id;
+    setAutoAdmisorioStateByProcesoId((prev) => ({
+      ...prev,
+      [pid]: { loading: true, error: null, result: prev[pid]?.result ?? null },
+    }));
+
+    try {
+      const res = await fetch("/api/crear-auto-admisorio", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ procesoId: pid }),
+      });
+      const json = (await res.json().catch(() => null)) as
+        | { fileId: string; fileName: string; webViewLink: string | null; error?: string; detail?: string }
+        | null;
+
+      if (!res.ok || !json?.fileId) {
+        throw new Error(json?.detail || json?.error || "No se pudo crear el auto admisorio.");
+      }
+
+      setAutoAdmisorioStateByProcesoId((prev) => ({
+        ...prev,
+        [pid]: {
+          loading: false,
+          error: null,
+          result: { fileId: json.fileId, fileName: json.fileName, webViewLink: json.webViewLink ?? null },
+        },
+      }));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setAutoAdmisorioStateByProcesoId((prev) => ({
+        ...prev,
+        [pid]: { loading: false, error: msg, result: prev[pid]?.result ?? null },
+      }));
+    }
+  }
+
   async function crearProcesoDesdePanel() {
     if (creandoProceso) return;
     if (!nuevoProceso.numero.trim()) {
@@ -350,6 +507,12 @@ export default function ProcesosPage() {
         descripcion: nuevoProceso.descripcion || null,
       };
       const nuevo = await createProceso(payload);
+      // Ensure progreso exists for the new proceso and starts as "no_iniciado".
+      try {
+        await updateProgresoByProcesoId(nuevo.id, { estado: "no_iniciado" });
+      } catch (err) {
+        console.error("Error initializing progreso for new proceso:", err);
+      }
       const totalProcesos = procesos.length + 1;
       setProcesos((prev) => [nuevo, ...prev]);
       setNuevoProceso({
@@ -911,6 +1074,32 @@ export default function ProcesosPage() {
                 {filteredProcesos.map((proceso) => {
 
                   const isSelected = editingProcesoId === proceso.id;
+                  const submission = apoderadoSubmissionByProcesoId[proceso.id] ?? { deudorIds: [], acreedorIds: [] };
+                  // Merge apoderados from proceso_id ownership AND from actual submissions
+                  const apoderadosDelProceso = (() => {
+                    const seen = new Set<string>();
+                    const result: Apoderado[] = [];
+                    const addUnique = (ap: Apoderado) => {
+                      if (!seen.has(ap.id)) {
+                        seen.add(ap.id);
+                        result.push(ap);
+                      }
+                    };
+                    (apoderadosByProcesoId[proceso.id] ?? []).forEach(addUnique);
+                    for (const aid of submission.deudorIds) {
+                      const ap = apoderadoById[aid];
+                      if (ap) addUnique(ap);
+                    }
+                    for (const aid of submission.acreedorIds) {
+                      const ap = apoderadoById[aid];
+                      if (ap) addUnique(ap);
+                    }
+                    return result;
+                  })();
+                  const deudorSet = new Set(submission.deudorIds);
+                  const acreedorSet = new Set(submission.acreedorIds);
+                  const submittedAnyCount = apoderadosDelProceso.filter((ap) => deudorSet.has(ap.id) || acreedorSet.has(ap.id)).length;
+                  const autoState = autoAdmisorioStateByProcesoId[proceso.id] ?? { loading: false, error: null, result: null };
 
                   return (
 
@@ -972,6 +1161,46 @@ export default function ProcesosPage() {
 
                           )}
 
+                          <div className="mt-3 flex flex-col gap-2">
+                            <div className="text-xs text-zinc-500 dark:text-zinc-400">
+                              Apoderados:{" "}
+                              <span className="font-semibold text-zinc-700 dark:text-zinc-200">
+                                {submittedAnyCount}/{apoderadosDelProceso.length}
+                              </span>{" "}
+                              {apoderadoSubmissionLoading ? "(cargando...)" : "registrados"}
+                            </div>
+                            {apoderadosDelProceso.length > 0 && (
+                              <div className="flex flex-wrap gap-1">
+                                {apoderadosDelProceso.slice(0, 6).map((ap) => {
+                                  const didD = deudorSet.has(ap.id);
+                                  const didA = acreedorSet.has(ap.id);
+                                  const ok = didD || didA;
+                                  const flags = `${didD ? "D" : ""}${didA ? "A" : ""}`;
+                                  return (
+                                    <span
+                                      key={ap.id}
+                                      className={[
+                                        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold",
+                                        ok
+                                          ? "border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950/40 dark:text-green-300"
+                                          : "border-zinc-200 bg-white/60 text-zinc-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300",
+                                      ].join(" ")}
+                                    >
+                                      <span className={ok ? "h-1.5 w-1.5 rounded-full bg-green-500" : "h-1.5 w-1.5 rounded-full bg-zinc-300 dark:bg-zinc-600"} />
+                                      <span className="truncate max-w-[160px]">{ap.nombre}</span>
+                                      {flags ? <span className="opacity-70">{flags}</span> : null}
+                                    </span>
+                                  );
+                                })}
+                                {apoderadosDelProceso.length > 6 && (
+                                  <span className="inline-flex items-center rounded-full border border-zinc-200 bg-white/60 px-2 py-0.5 text-[11px] font-semibold text-zinc-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
+                                    +{apoderadosDelProceso.length - 6}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+
                         </div>
 
                         <div className="flex flex-col items-end gap-2">
@@ -1020,10 +1249,31 @@ export default function ProcesosPage() {
 
                       <div className="mt-3 flex items-center justify-between gap-3">
 
+                        {autoState.error && (
+                          <div className="mr-3 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+                            {autoState.error}
+                          </div>
+                        )}
+
+                        {autoState.result?.webViewLink && (
+                          <div className="mr-3 text-xs text-zinc-600 dark:text-zinc-300">
+                            Auto admisorio:{" "}
+                            <a
+                              href={autoState.result.webViewLink}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="font-semibold underline underline-offset-2"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              Abrir en Drive
+                            </a>
+                          </div>
+                        )}
+ 
                         <p className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">
-
+ 
                           {isSelected ? "Editando este proceso" : "Haz clic para cargar y editar"}
-
+ 
                         </p>
 
                         <div className="flex gap-2">
@@ -1041,6 +1291,17 @@ export default function ProcesosPage() {
                             Programar en calendario
 
                           </Link>
+
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void crearAutoAdmisorioDesdeProceso(proceso);
+                            }}
+                            disabled={autoState.loading}
+                            className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-900 transition hover:border-amber-500 hover:bg-amber-100 disabled:opacity-50 disabled:cursor-not-allowed dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:border-amber-700 dark:hover:bg-amber-950/60"
+                          >
+                            {autoState.loading ? "Creando..." : "Crear auto admisorio"}
+                          </button>
 
                           <button
 
