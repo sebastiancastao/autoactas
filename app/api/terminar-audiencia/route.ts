@@ -84,6 +84,26 @@ type TerminarAudienciaPayload = {
   // Custom text sections
   resultadoDiligencia?: string;
   observacionesFinales?: string;
+  propuestaPago?: {
+    primera_clase?: {
+      numero_cuotas?: string;
+      interes_reconocido?: string;
+      inicio_pagos?: string;
+      fecha_fin_pagos?: string;
+    };
+    tercera_clase?: {
+      numero_cuotas?: string;
+      interes_reconocido?: string;
+      inicio_pagos?: string;
+      fecha_fin_pagos?: string;
+    };
+    quinta_clase?: {
+      numero_cuotas?: string;
+      interes_reconocido?: string;
+      inicio_pagos?: string;
+      fecha_fin_pagos?: string;
+    };
+  };
 };
 
 function toErrorMessage(e: unknown) {
@@ -197,6 +217,115 @@ function formatDateLong(value: string) {
     month: "long",
     year: "numeric",
   });
+}
+
+function normalizeDateKey(value: string | null | undefined) {
+  const v = String(value ?? "").trim();
+  if (!v) return null;
+  // Expect YYYY-MM-DD (from <input type="date">). If not, keep raw.
+  return v;
+}
+
+function parseCuotas(value: string | null | undefined) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const n = Number(raw.replace(/[^\d]/g, ""));
+  return Number.isFinite(n) ? Math.trunc(n) : null;
+}
+
+function buildPropuestaPagoParagraphs(payload: TerminarAudienciaPayload): Paragraph[] {
+  const p = payload.propuestaPago ?? {};
+
+  const blocks: Array<{
+    key: keyof NonNullable<TerminarAudienciaPayload["propuestaPago"]>;
+    title: string;
+  }> = [
+    { key: "primera_clase", title: "PAGO ACREEDOR DE PRIMERA CLASE:" },
+    { key: "tercera_clase", title: "Pago a acreedor tercera clase:" },
+    { key: "quinta_clase", title: "Pago a acreedores de quinta clase:" },
+  ];
+
+  const hasAny = blocks.some(({ key }) => {
+    const b = (p as any)?.[key] as any;
+    if (!b) return false;
+    return Boolean(
+      String(b.numero_cuotas ?? "").trim() ||
+      String(b.interes_reconocido ?? "").trim() ||
+      String(b.inicio_pagos ?? "").trim() ||
+      String(b.fecha_fin_pagos ?? "").trim()
+    );
+  });
+
+  if (!hasAny) {
+    return [
+      new Paragraph({
+        children: [new TextRun({ text: "[PROPUESTA DE PAGO]" })],
+        spacing: { after: 200 },
+        indent: { left: convertInchesToTwip(0.5) },
+      }),
+    ];
+  }
+
+  const out: Paragraph[] = [];
+
+  blocks.forEach(({ key, title }) => {
+    const b = (p as any)?.[key] as any;
+    if (!b) return;
+
+    const cuotas = parseCuotas(b.numero_cuotas);
+    const interes = String(b.interes_reconocido ?? "").trim();
+    const inicioKey = normalizeDateKey(b.inicio_pagos);
+    const finKey = normalizeDateKey(b.fecha_fin_pagos);
+
+    const hasThis =
+      cuotas !== null ||
+      Boolean(interes) ||
+      Boolean(inicioKey) ||
+      Boolean(finKey);
+    if (!hasThis) return;
+
+    out.push(new Paragraph({
+      children: [new TextRun({ text: title, bold: true })],
+      spacing: { after: 120 },
+    }));
+
+    if (cuotas !== null) {
+      const label = cuotas === 1 ? "1 cuota mensual" : `${cuotas} cuotas mensuales`;
+      out.push(new Paragraph({
+        children: [new TextRun({ text: `• Número de cuotas: ${label}.` })],
+        spacing: { after: 80 },
+        indent: { left: convertInchesToTwip(0.3) },
+      }));
+    }
+    if (interes) {
+      out.push(new Paragraph({
+        children: [new TextRun({ text: `• Interés reconocido: ${interes.replace(/\.$/, "")}.` })],
+        spacing: { after: 80 },
+        indent: { left: convertInchesToTwip(0.3) },
+      }));
+    }
+    if (inicioKey) {
+      out.push(new Paragraph({
+        children: [new TextRun({ text: `• Inicio de pagos: ${formatDateLong(inicioKey)}.` })],
+        spacing: { after: 80 },
+        indent: { left: convertInchesToTwip(0.3) },
+      }));
+    }
+    if (finKey) {
+      out.push(new Paragraph({
+        children: [new TextRun({ text: `• Fecha fin pagos: ${formatDateLong(finKey)}.` })],
+        spacing: { after: 80 },
+        indent: { left: convertInchesToTwip(0.3) },
+      }));
+    }
+
+    out.push(new Paragraph({
+      children: [new TextRun({ text: "" })],
+      spacing: { after: 120 },
+    }));
+  });
+
+  return out;
 }
 
 function formatDateParts(value: string) {
@@ -1229,11 +1358,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
       spacing: { after: 200 },
     }));
 
-    sections.push(new Paragraph({
-      children: [new TextRun({ text: "[DESCRIPCIÓN DE LA PROPUESTA DE PAGO]" })],
-      spacing: { after: 300 },
-      indent: { left: convertInchesToTwip(0.5) },
-    }));
+    sections.push(...buildPropuestaPagoParagraphs(payload));
 
     // --- VOTACIÓN DEL ACUERDO ---
     sections.push(new Paragraph({
@@ -1630,11 +1755,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
       spacing: { after: 200 },
     }));
 
-    sections.push(new Paragraph({
-      children: [new TextRun({ text: "[PROPUESTA DE PAGO]" })],
-      spacing: { after: 200 },
-      indent: { left: convertInchesToTwip(0.5) },
-    }));
+    sections.push(...buildPropuestaPagoParagraphs(payload));
 
     // --- VOTACIÓN DEL ACUERDO ---
     sections.push(new Paragraph({

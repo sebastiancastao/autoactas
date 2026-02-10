@@ -233,6 +233,19 @@ type AcreenciaCambio = {
   despues: string;
 };
 
+type PropuestaPagoClaseDraft = {
+  numero_cuotas: string;
+  interes_reconocido: string;
+  inicio_pagos: string; // YYYY-MM-DD
+  fecha_fin_pagos: string; // YYYY-MM-DD
+};
+
+type PropuestaPagoDraft = {
+  primera_clase: PropuestaPagoClaseDraft;
+  tercera_clase: PropuestaPagoClaseDraft;
+  quinta_clase: PropuestaPagoClaseDraft;
+};
+
 function normalizarNumero(valor: string) {
   return valor.replace(",", ".").trim();
 }
@@ -516,6 +529,11 @@ function AttendanceContent() {
   const [terminarAudienciaAdvertencias, setTerminarAudienciaAdvertencias] = useState<string[]>([]);
   const [tipoDocumento, setTipoDocumento] = useState("ACTA AUDIENCIA");
   const [votosAcuerdoByAcreenciaId, setVotosAcuerdoByAcreenciaId] = useState<Record<string, VotoAcuerdo | "">>({});
+  const [propuestaPago, setPropuestaPago] = useState<PropuestaPagoDraft>({
+    primera_clase: { numero_cuotas: "", interes_reconocido: "", inicio_pagos: "", fecha_fin_pagos: "" },
+    tercera_clase: { numero_cuotas: "", interes_reconocido: "", inicio_pagos: "", fecha_fin_pagos: "" },
+    quinta_clase: { numero_cuotas: "", interes_reconocido: "", inicio_pagos: "", fecha_fin_pagos: "" },
+  });
   const [enviandoCorreos, setEnviandoCorreos] = useState(false);
   const [enviarCorreosError, setEnviarCorreosError] = useState<string | null>(null);
   const [enviarCorreosResult, setEnviarCorreosResult] = useState<
@@ -1139,6 +1157,7 @@ function AttendanceContent() {
         hora,
         ciudad,
         tipoDocumento,
+        propuestaPago,
         resumen: asistenciaPayload.resumen,
         asistentes: asistenciaPayload.asistentes,
         acreencias: acreenciasPayload,
@@ -2007,6 +2026,113 @@ function AttendanceContent() {
 
             {/* Votación apoderados (acuerdos y fracaso del tramite) */}
             {mostrarVotacionAcuerdo && (
+              <>
+              <section className="rounded-2xl border border-zinc-200 bg-white/60 p-4 dark:border-white/10 dark:bg-white/5">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">
+                      Propuesta de pago
+                    </h3>
+                    <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                      Completa los campos recurrentes de la propuesta. Se imprimirán en el acta como viñetas.
+                    </p>
+                  </div>
+                </div>
+
+                {(
+                  [
+                    { key: "primera_clase", title: "Pago acreedor de primera clase" },
+                    { key: "tercera_clase", title: "Pago a acreedor tercera clase" },
+                    { key: "quinta_clase", title: "Pago a acreedores de quinta clase" },
+                  ] as const
+                ).map(({ key, title }) => {
+                  const v = propuestaPago[key];
+                  return (
+                    <div key={key} className="mt-4 rounded-2xl border border-zinc-200 bg-white p-4 dark:border-white/10 dark:bg-black/20">
+                      <h4 className="text-xs font-semibold uppercase tracking-[0.22em] text-zinc-500 dark:text-zinc-400">
+                        {title}
+                      </h4>
+
+                      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-4">
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                            Número de cuotas
+                          </label>
+                          <input
+                            type="number"
+                            min={0}
+                            step={1}
+                            value={v.numero_cuotas}
+                            onChange={(e) =>
+                              setPropuestaPago((prev) => ({
+                                ...prev,
+                                [key]: { ...prev[key], numero_cuotas: e.target.value },
+                              }))
+                            }
+                            placeholder="Ej: 80"
+                            className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                          />
+                        </div>
+
+                        <div className="sm:col-span-1">
+                          <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                            Interés reconocido
+                          </label>
+                          <input
+                            value={v.interes_reconocido}
+                            onChange={(e) =>
+                              setPropuestaPago((prev) => ({
+                                ...prev,
+                                [key]: { ...prev[key], interes_reconocido: e.target.value },
+                              }))
+                            }
+                            placeholder="Ej: 0,7% nominal mensual futuro"
+                            className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                            Inicio de pagos
+                          </label>
+                          <input
+                            type="date"
+                            value={v.inicio_pagos}
+                            onChange={(e) =>
+                              setPropuestaPago((prev) => ({
+                                ...prev,
+                                [key]: { ...prev[key], inicio_pagos: e.target.value },
+                              }))
+                            }
+                            className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                            Fecha fin pagos
+                          </label>
+                          <input
+                            type="date"
+                            value={v.fecha_fin_pagos}
+                            onChange={(e) =>
+                              setPropuestaPago((prev) => ({
+                                ...prev,
+                                [key]: { ...prev[key], fecha_fin_pagos: e.target.value },
+                              }))
+                            }
+                            className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                          />
+                          <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                            Opcional
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </section>
+
               <section className="rounded-2xl border border-zinc-200 bg-white/60 p-4 dark:border-white/10 dark:bg-white/5">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                   <div>
@@ -2112,6 +2238,7 @@ function AttendanceContent() {
                   </div>
                 )}
               </section>
+              </>
             )}
 
             {/* Footer Actions */}
