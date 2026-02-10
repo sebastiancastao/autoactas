@@ -400,6 +400,49 @@ function AttendanceContent() {
   const [operadorTarjetaProfesional, setOperadorTarjetaProfesional] = useState("429.496");
   const [operadorEmail, setOperadorEmail] = useState("fundaseer@gmail.com");
 
+  // If user is logged in, prefer the `usuarios` profile (by auth_id) as a fallback for operador.
+  // This avoids generating docs with the default placeholder when no eventoId/usuario_id is available.
+  useEffect(() => {
+    const authId = user?.id ?? null;
+    if (!authId) return;
+
+    const defaultNombre = "JOSE ALEJANDRO PARDO MARTINEZ";
+    const defaultEmail = "fundaseer@gmail.com";
+
+    const shouldSetNombre =
+      !operadorNombre.trim() || operadorNombre.trim().toUpperCase() === defaultNombre;
+    const shouldSetEmail =
+      !operadorEmail.trim() || operadorEmail.trim().toLowerCase() === defaultEmail;
+
+    if (!shouldSetNombre && !shouldSetEmail) return;
+
+    let canceled = false;
+    (async () => {
+      try {
+        const { data: usuario, error: usuarioError } = await supabase
+          .from("usuarios")
+          .select("nombre, email")
+          .eq("auth_id", authId)
+          .maybeSingle();
+
+        if (usuarioError) throw usuarioError;
+        if (canceled) return;
+
+        if (shouldSetNombre && usuario?.nombre) setOperadorNombre(usuario.nombre);
+        if (shouldSetEmail && usuario?.email) setOperadorEmail(usuario.email);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.warn("[/lista] Unable to resolve operador from usuarios(auth_id):", msg);
+      }
+    })();
+
+    return () => {
+      canceled = true;
+    };
+    // Intentionally do not include operadorNombre/operadorEmail in deps: we only want to run when auth user changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
   useEffect(() => {
     if (!eventoId) return;
 
@@ -518,7 +561,8 @@ function AttendanceContent() {
   }, [acreencias, acreenciaDrafts, acreenciaEditandoId]);
 
   const mostrarVotacionAcuerdo = useMemo(() => {
-    return tipoDocumento.trim().toUpperCase().startsWith("ACUERDO DE PAGO");
+    const t = tipoDocumento.trim().toUpperCase();
+    return t.startsWith("ACUERDO DE PAGO") || t === "ACTA FRACASO DEL TRAMITE";
   }, [tipoDocumento]);
 
   const resumenVotosAcuerdo = useMemo(() => {
@@ -1961,7 +2005,7 @@ function AttendanceContent() {
               ))}
             </div>
 
-            {/* Votación apoderados (solo para acuerdos) */}
+            {/* Votación apoderados (acuerdos y fracaso del tramite) */}
             {mostrarVotacionAcuerdo && (
               <section className="rounded-2xl border border-zinc-200 bg-white/60 p-4 dark:border-white/10 dark:bg-white/5">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -1970,7 +2014,7 @@ function AttendanceContent() {
                       Votación de apoderados
                     </h3>
                     <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                      Captura el voto por acreedor (normalmente vota su apoderado) para el acuerdo de pago.
+                      Captura el voto por acreedor (normalmente vota su apoderado) para el acuerdo de pago o el acta de fracaso.
                     </p>
                   </div>
 

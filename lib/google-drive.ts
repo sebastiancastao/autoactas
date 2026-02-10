@@ -29,9 +29,10 @@ function parsePrivateKey(raw: string) {
   return raw.replace(/\\n/g, "\n");
 }
 
-export async function uploadDocxToGoogleDrive(params: {
+async function uploadBufferToGoogleDrive(params: {
   filename: string;
   buffer: Buffer;
+  mimeType: string;
   folderId?: string | null;
   shareWithEmails?: string[] | null;
 }) {
@@ -51,12 +52,9 @@ export async function uploadDocxToGoogleDrive(params: {
   const accessToken = auth?.access_token ?? jwtClient.credentials.access_token ?? null;
   if (!accessToken) throw new Error("Failed to obtain Google access token.");
 
-  const mimeType =
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-
   const metadata: Record<string, unknown> = {
     name: params.filename,
-    mimeType,
+    mimeType: params.mimeType,
   };
   if (folderId) metadata.parents = [folderId];
 
@@ -66,7 +64,7 @@ export async function uploadDocxToGoogleDrive(params: {
     new Blob([JSON.stringify(metadata)], { type: "application/json; charset=UTF-8" })
   );
   const bytes = new Uint8Array(params.buffer);
-  form.append("file", new Blob([bytes], { type: mimeType }), params.filename);
+  form.append("file", new Blob([bytes], { type: params.mimeType }), params.filename);
 
   const uploadUrl =
     "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,name,webViewLink,webContentLink";
@@ -149,4 +147,29 @@ export async function uploadDocxToGoogleDrive(params: {
   }
 
   return uploaded;
+}
+
+export async function uploadDocxToGoogleDrive(params: {
+  filename: string;
+  buffer: Buffer;
+  folderId?: string | null;
+  shareWithEmails?: string[] | null;
+}) {
+  return uploadBufferToGoogleDrive({
+    ...params,
+    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  });
+}
+
+export async function uploadFileToGoogleDrive(params: {
+  filename: string;
+  buffer: Buffer;
+  mimeType: string;
+  folderId?: string | null;
+  shareWithEmails?: string[] | null;
+}) {
+  if (!params.mimeType?.trim()) {
+    throw new Error("Missing mimeType for Google Drive upload.");
+  }
+  return uploadBufferToGoogleDrive(params);
 }
