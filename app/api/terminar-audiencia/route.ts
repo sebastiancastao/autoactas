@@ -328,6 +328,75 @@ function buildPropuestaPagoParagraphs(payload: TerminarAudienciaPayload): Paragr
   return out;
 }
 
+async function saveActaAudienciaSnapshot(params: {
+  payload: TerminarAudienciaPayload;
+  uploaded: { id: string; name: string; webViewLink?: string | null; webContentLink?: string | null };
+}) {
+  const supabase = createSupabaseAdmin();
+  if (!supabase) return null;
+
+  const payload = params.payload;
+
+  const pp1 = payload.propuestaPago?.primera_clase ?? {};
+  const pp3 = payload.propuestaPago?.tercera_clase ?? {};
+  const pp5 = payload.propuestaPago?.quinta_clase ?? {};
+
+  const cleanText = (v: unknown) => {
+    const s = String(v ?? "").trim();
+    return s ? s : null;
+  };
+  const cleanDate = (v: unknown) => {
+    const s = String(v ?? "").trim();
+    return s ? s : null; // let Postgres cast if it's YYYY-MM-DD
+  };
+
+  const row = {
+    proceso_id: payload.procesoId,
+    evento_id: payload.eventoId ?? null,
+    tipo_documento: payload.tipoDocumento ?? null,
+    titulo: payload.titulo ?? null,
+    ciudad: payload.ciudad ?? null,
+    fecha: payload.fecha,
+    hora: payload.hora ?? null,
+
+    pp_primera_numero_cuotas: parseCuotas(pp1.numero_cuotas),
+    pp_primera_interes_reconocido: cleanText(pp1.interes_reconocido),
+    pp_primera_inicio_pagos: cleanDate(pp1.inicio_pagos),
+    pp_primera_fecha_fin_pagos: cleanDate(pp1.fecha_fin_pagos),
+
+    pp_tercera_numero_cuotas: parseCuotas(pp3.numero_cuotas),
+    pp_tercera_interes_reconocido: cleanText(pp3.interes_reconocido),
+    pp_tercera_inicio_pagos: cleanDate(pp3.inicio_pagos),
+    pp_tercera_fecha_fin_pagos: cleanDate(pp3.fecha_fin_pagos),
+
+    pp_quinta_numero_cuotas: parseCuotas(pp5.numero_cuotas),
+    pp_quinta_interes_reconocido: cleanText(pp5.interes_reconocido),
+    pp_quinta_inicio_pagos: cleanDate(pp5.inicio_pagos),
+    pp_quinta_fecha_fin_pagos: cleanDate(pp5.fecha_fin_pagos),
+
+    resumen: (payload.resumen ?? null) as any,
+    asistentes: (payload.asistentes ?? null) as any,
+    acreencias: (payload.acreencias ?? null) as any,
+    propuesta_pago: (payload.propuestaPago ?? null) as any,
+
+    drive_file_id: params.uploaded.id,
+    drive_file_name: params.uploaded.name,
+    drive_web_view_link: params.uploaded.webViewLink ?? null,
+  };
+
+  const { data, error } = await (supabase as any)
+    .from("actas_audiencia")
+    .insert(row)
+    .select("id")
+    .maybeSingle();
+
+  if (error) {
+    console.warn("[terminar-audiencia] Unable to save acta snapshot:", error.message);
+    return null;
+  }
+  return (data?.id as string | undefined) ?? null;
+}
+
 function formatDateParts(value: string) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return { day: "—", month: "—", year: "—" };
@@ -2119,6 +2188,8 @@ export async function POST(req: Request) {
           : null,
     });
 
+    const actaId = await saveActaAudienciaSnapshot({ payload, uploaded });
+
     // Collect apoderado emails for potential later use
     const apoderadoEmails = payload.asistentes
       .filter((a) => a.categoria === "Apoderado" && isValidEmail(a.email))
@@ -2130,6 +2201,7 @@ export async function POST(req: Request) {
       fileName: uploaded.name,
       webViewLink: uploaded.webViewLink ?? null,
       webContentLink: uploaded.webContentLink ?? null,
+      actaId,
       apoderadoEmails: uniqueEmails,
     });
   } catch (e: unknown) {

@@ -583,6 +583,52 @@ function AttendanceContent() {
     return t.startsWith("ACUERDO DE PAGO") || t === "ACTA FRACASO DEL TRAMITE";
   }, [tipoDocumento]);
 
+  const votosNegativosMayores = useMemo(() => {
+    if (!mostrarVotacionAcuerdo) return false;
+
+    let positivos = 0;
+    let negativos = 0;
+
+    acreencias.forEach((a) => {
+      const pct = porcentajeCalculadoByAcreenciaId.byAcreenciaId.get(a.id) ?? null;
+      if (typeof pct !== "number" || Number.isNaN(pct)) return;
+
+      const voto = votosAcuerdoByAcreenciaId[a.id];
+      if (voto === "POSITIVO") positivos += pct;
+      else if (voto === "NEGATIVO") negativos += pct;
+    });
+
+    return negativos > positivos;
+  }, [acreencias, mostrarVotacionAcuerdo, porcentajeCalculadoByAcreenciaId.byAcreenciaId, votosAcuerdoByAcreenciaId]);
+
+  const tipoDocumentoOpciones = useMemo(() => {
+    const base = [
+      { value: "ACTA AUDIENCIA", label: "Acta Audiencia" },
+      { value: "ACTA SUSPENSIÃ“N", label: "Acta SuspensiÃ³n" },
+      { value: "ACUERDO DE PAGO", label: "Acuerdo de Pago" },
+      { value: "ACUERDO DE PAGO BILATERAL Y FRACASO DEL TRAMITE", label: "Acuerdo de Pago Bilateral y Fracaso del TrÃ¡mite" },
+      { value: "ACTA FRACASO DEL TRAMITE", label: "Acta Fracaso del TrÃ¡mite" },
+      { value: "ACTA RECHAZO DEL TRAMITE", label: "Acta Rechazo del TrÃ¡mite" },
+      { value: "AUTO DECLARA NULIDAD", label: "Auto Declara Nulidad" },
+    ];
+
+    if (!votosNegativosMayores) return base;
+
+    // If the vote result is mostly negative, restrict the type choices to "rechazo" outcomes.
+    return base.filter((o) =>
+      o.value === "ACTA RECHAZO DEL TRAMITE" || o.value === "ACTA FRACASO DEL TRAMITE"
+    );
+  }, [votosNegativosMayores]);
+
+  useEffect(() => {
+    if (!votosNegativosMayores) return;
+    const allowed = new Set(tipoDocumentoOpciones.map((o) => o.value));
+    if (!allowed.has(tipoDocumento)) {
+      // Prefer "fracaso" as the default outcome when votes are mostly negative.
+      setTipoDocumento("ACTA FRACASO DEL TRAMITE");
+    }
+  }, [tipoDocumento, tipoDocumentoOpciones, votosNegativosMayores]);
+
   const resumenVotosAcuerdo = useMemo(() => {
     const out = {
       POSITIVO: 0,
@@ -1196,7 +1242,7 @@ function AttendanceContent() {
       });
 
       const json = (await res.json().catch(() => null)) as
-        | { fileId: string; fileName: string; webViewLink: string | null; apoderadoEmails?: string[]; error?: string; detail?: string }
+        | { fileId: string; fileName: string; webViewLink: string | null; apoderadoEmails?: string[]; actaId?: string | null; error?: string; detail?: string }
         | null;
 
       if (debugLista) {
@@ -2273,13 +2319,11 @@ function AttendanceContent() {
                   onChange={(e) => setTipoDocumento(e.target.value)}
                   className="h-12 rounded-2xl border border-zinc-200 bg-white px-3 text-sm font-medium shadow-sm dark:border-white/10 dark:bg-white/5 dark:text-white"
                 >
-                  <option value="ACTA AUDIENCIA">Acta Audiencia</option>
-                  <option value="ACTA SUSPENSIÓN">Acta Suspensión</option>
-                  <option value="ACUERDO DE PAGO">Acuerdo de Pago</option>
-                  <option value="ACUERDO DE PAGO BILATERAL Y FRACASO DEL TRAMITE">Acuerdo de Pago Bilateral y Fracaso del Trámite</option>
-                  <option value="ACTA FRACASO DEL TRAMITE">Acta Fracaso del Trámite</option>
-                  <option value="ACTA RECHAZO DEL TRAMITE">Acta Rechazo del Trámite</option>
-                  <option value="AUTO DECLARA NULIDAD">Auto Declara Nulidad</option>
+                  {tipoDocumentoOpciones.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
                 </select>
 
                 <button
