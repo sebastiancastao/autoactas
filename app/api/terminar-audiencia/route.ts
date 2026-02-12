@@ -34,7 +34,7 @@ export const runtime = "nodejs";
 
 type UsuarioEvento = Pick<
   Database["public"]["Tables"]["usuarios"]["Row"],
-  "id" | "nombre" | "email" | "identificacion"
+  "id" | "nombre" | "email" | "identificacion" | "firma_data_url"
 >;
 type EventoContext = { usuario: UsuarioEvento | null; horaHHMM: string | null };
 
@@ -891,6 +891,34 @@ function normalizeHoraHHMM(value: string | null | undefined) {
   return `${h}:${m}`;
 }
 
+type DocImageType = "png" | "jpg" | "gif" | "bmp";
+type DecodedSignatureImage = { data: Buffer; type: DocImageType };
+
+function decodeSignatureDataUrl(dataUrl: string | null | undefined): DecodedSignatureImage | null {
+  const raw = String(dataUrl ?? "").trim();
+  if (!raw) return null;
+
+  const match = raw.match(/^data:image\/([a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\r\n]+)$/);
+  if (!match) return null;
+
+  const subtypeRaw = match[1].toLowerCase();
+  const base64 = match[2].replace(/\s+/g, "");
+  if (!base64) return null;
+
+  let type: DocImageType | null = null;
+  if (subtypeRaw === "png") type = "png";
+  if (subtypeRaw === "jpg" || subtypeRaw === "jpeg") type = "jpg";
+  if (subtypeRaw === "gif") type = "gif";
+  if (subtypeRaw === "bmp") type = "bmp";
+  if (!type) return null;
+
+  try {
+    return { type, data: Buffer.from(base64, "base64") };
+  } catch {
+    return null;
+  }
+}
+
 async function loadEventoUsuario(params: {
   eventoId?: string | null;
   procesoId: string;
@@ -920,7 +948,7 @@ async function loadEventoUsuario(params: {
     if (evt?.usuario_id) {
       const { data: usuario, error: userErr } = await supabase
         .from("usuarios")
-        .select("id, nombre, email, identificacion")
+        .select("id, nombre, email, identificacion, firma_data_url")
         .eq("id", evt.usuario_id)
         .maybeSingle();
       if (userErr) {
@@ -957,7 +985,7 @@ async function loadEventoUsuario(params: {
 
   const { data: usuario, error: userErr } = await supabase
     .from("usuarios")
-    .select("id, nombre, email, identificacion")
+    .select("id, nombre, email, identificacion, firma_data_url")
     .eq("id", usuarioId)
     .maybeSingle();
 
@@ -967,6 +995,28 @@ async function loadEventoUsuario(params: {
   }
 
   return { usuario: (usuario ?? null) as UsuarioEvento | null, horaHHMM: eventoHora };
+}
+
+async function loadUsuarioFirmaDataUrlByEmail(email: string | null | undefined): Promise<string | null> {
+  const normalizedEmail = String(email ?? "").trim().toLowerCase();
+  if (!normalizedEmail) return null;
+
+  const supabase = createSupabaseAdmin();
+  if (!supabase) return null;
+
+  const { data, error } = await supabase
+    .from("usuarios")
+    .select("firma_data_url")
+    .eq("email", normalizedEmail)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("[terminar-audiencia] Unable to load usuario signature by email:", error.message);
+    return null;
+  }
+
+  const firma = data?.firma_data_url;
+  return typeof firma === "string" && firma.trim() ? firma : null;
 }
 
 function formatDateLong(value: string) {
@@ -1796,6 +1846,10 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
     operadorId = String(eventoContext.usuario.identificacion).trim();
   }
 
+  const operadorFirmaDataUrl =
+    eventoContext?.usuario?.firma_data_url ?? (await loadUsuarioFirmaDataUrlByEmail(operadorEmail));
+  const operadorSignatureImage = decodeSignatureDataUrl(operadorFirmaDataUrl);
+
   const proximaFecha = payload.proximaAudiencia?.fecha
     ? formatDateLong(payload.proximaAudiencia.fecha)
     : "[FECHA PRÃ“XIMA AUDIENCIA]";
@@ -2025,8 +2079,21 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
     }));
 
     // Signature block (exact as requested).
-    portraitBefore.push(new Paragraph({ children: [new TextRun({ text: "" })], spacing: { after: 200 } }));
-    portraitBefore.push(new Paragraph({ children: [new TextRun({ text: "" })], spacing: { after: 200 } }));
+    if (operadorSignatureImage) {
+      portraitBefore.push(new Paragraph({
+        children: [
+          new ImageRun({
+            type: operadorSignatureImage.type,
+            data: operadorSignatureImage.data,
+            transformation: { width: 190, height: 70 },
+          }),
+        ],
+        spacing: { after: 140 },
+      }));
+    } else {
+      portraitBefore.push(new Paragraph({ children: [new TextRun({ text: "" })], spacing: { after: 200 } }));
+      portraitBefore.push(new Paragraph({ children: [new TextRun({ text: "" })], spacing: { after: 200 } }));
+    }
 
     portraitBefore.push(new Paragraph({
       children: [new TextRun({ text: operadorNombre.toUpperCase(), bold: true })],
@@ -2974,9 +3041,22 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
     spacing: { before: 300, after: 400 },
   }));
 
-  sections.push(new Paragraph({
-    children: [new TextRun({ text: "\n\n\n\n" })],
-  }));
+  if (operadorSignatureImage) {
+    sections.push(new Paragraph({
+      children: [
+        new ImageRun({
+          type: operadorSignatureImage.type,
+          data: operadorSignatureImage.data,
+          transformation: { width: 190, height: 70 },
+        }),
+      ],
+      spacing: { after: 140 },
+    }));
+  } else {
+    sections.push(new Paragraph({
+      children: [new TextRun({ text: "\n\n\n\n" })],
+    }));
+  }
 
   sections.push(new Paragraph({
     children: [new TextRun({ text: operadorNombre.toUpperCase(), bold: true })],

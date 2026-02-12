@@ -13,8 +13,45 @@ type SignaturePoint = {
   y: number;
 };
 
+type UsuarioUpdate = Database["public"]["Tables"]["usuarios"]["Update"];
+
 const CANVAS_WIDTH = 900;
 const CANVAS_HEIGHT = 240;
+
+function toErrorMessage(error: unknown) {
+  if (error instanceof Error && error.message) return error.message;
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    const parts = [
+      record.message,
+      record.details,
+      record.hint,
+      record.code,
+      record.error_description,
+      record.status,
+      record.statusText,
+    ]
+      .map((value) => (value === undefined || value === null ? "" : String(value).trim()))
+      .filter(Boolean);
+
+    if (parts.length > 0) return parts.join(" | ");
+    try {
+      return JSON.stringify(error, Object.getOwnPropertyNames(error));
+    } catch {
+      return String(error);
+    }
+  }
+  return String(error);
+}
+
+function getMissingColumnFromPgrst204(error: unknown) {
+  if (!error || typeof error !== "object") return null;
+  const record = error as Record<string, unknown>;
+  if (record.code !== "PGRST204") return null;
+  const message = typeof record.message === "string" ? record.message : "";
+  const match = message.match(/Could not find the '([^']+)' column/i);
+  return match ? match[1] : null;
+}
 
 function getCanvasPoint(
   canvas: HTMLCanvasElement,
@@ -39,6 +76,45 @@ function isCanvasBlank(canvas: HTMLCanvasElement) {
     if (pixels[i] !== 0) return false;
   }
   return true;
+}
+
+function normalizeStrokePixelsToBlack(image: ImageData) {
+  const normalized = new ImageData(image.width, image.height);
+  const src = image.data;
+  const out = normalized.data;
+
+  for (let i = 0; i < src.length; i += 4) {
+    const alpha = src[i + 3];
+    if (alpha === 0) {
+      out[i] = 0;
+      out[i + 1] = 0;
+      out[i + 2] = 0;
+      out[i + 3] = 0;
+      continue;
+    }
+
+    out[i] = 0;
+    out[i + 1] = 0;
+    out[i + 2] = 0;
+    out[i + 3] = alpha;
+  }
+
+  return normalized;
+}
+
+function exportSignatureAsBlackPng(canvas: HTMLCanvasElement) {
+  const sourceCtx = canvas.getContext("2d");
+  if (!sourceCtx) return null;
+
+  const sourceImage = sourceCtx.getImageData(0, 0, canvas.width, canvas.height);
+  const outputCanvas = document.createElement("canvas");
+  outputCanvas.width = canvas.width;
+  outputCanvas.height = canvas.height;
+  const outputCtx = outputCanvas.getContext("2d");
+  if (!outputCtx) return null;
+
+  outputCtx.putImageData(normalizeStrokePixelsToBlack(sourceImage), 0, 0);
+  return outputCanvas.toDataURL("image/png");
 }
 
 export default function PerfilPage() {
@@ -99,7 +175,7 @@ export default function PerfilPage() {
         setHasSignature(Boolean(data.firma_data_url));
       } catch (err) {
         if (canceled) return;
-        const message = err instanceof Error ? err.message : String(err);
+        const message = toErrorMessage(err);
         setError(message || "No se pudo cargar el perfil.");
       } finally {
         if (!canceled) setLoading(false);
@@ -129,7 +205,15 @@ export default function PerfilPage() {
     const image = new Image();
     image.onload = () => {
       if (!active) return;
-      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const tempCanvas = document.createElement("canvas");
+      tempCanvas.width = canvas.width;
+      tempCanvas.height = canvas.height;
+      const tempCtx = tempCanvas.getContext("2d");
+      if (!tempCtx) return;
+
+      tempCtx.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const loadedImage = tempCtx.getImageData(0, 0, canvas.width, canvas.height);
+      ctx.putImageData(normalizeStrokePixelsToBlack(loadedImage), 0, 0);
       setHasSignature(true);
     };
     image.onerror = () => {
@@ -154,7 +238,7 @@ export default function PerfilPage() {
     const point = getCanvasPoint(canvas, event.clientX, event.clientY);
     canvas.setPointerCapture(event.pointerId);
 
-    ctx.strokeStyle = "#111827";
+    ctx.strokeStyle = "#000000";
     ctx.lineWidth = 2;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
@@ -221,28 +305,65 @@ export default function PerfilPage() {
     try {
       const canvas = canvasRef.current;
       const firmaDataUrl =
-        canvas && !isCanvasBlank(canvas) ? canvas.toDataURL("image/png") : null;
+        canvas && !isCanvasBlank(canvas) ? exportSignatureAsBlackPng(canvas) : null;
 
-      const { data, error: updateError } = await supabase
-        .from("usuarios")
-        .update({
-          nombre: trimmedNombre,
-          identificacion: identificacion.trim() || null,
-          telefono: telefono.trim() || null,
-          tarjeta_profesional: tarjetaProfesional.trim() || null,
-          firma_data_url: firmaDataUrl,
-        })
-        .eq("id", perfil.id)
-        .select("*")
-        .single();
+      const payload: Record<string, unknown> = {
+        nombre: trimmedNombre,
+        identificacion: identificacion.trim() || null,
+        telefono: telefono.trim() || null,
+        tarjeta_profesional: tarjetaProfesional.trim() || null,
+        firma_data_url: firmaDataUrl,
+      };
+      const omittedColumns: string[] = [];
 
-      if (updateError) throw updateError;
+      let updated: UsuarioRow | null = null;
+      let latestError: unknown = null;
 
-      setPerfil(data);
-      setHasSignature(Boolean(data.firma_data_url));
-      setSuccess("Perfil y firma guardados.");
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        const { data, error: updateError } = await supabase
+          .from("usuarios")
+          .update(payload as UsuarioUpdate)
+          .eq("id", perfil.id)
+          .select("*")
+          .single();
+
+        if (!updateError) {
+          updated = data;
+          latestError = null;
+          break;
+        }
+
+        const missingColumn = getMissingColumnFromPgrst204(updateError);
+        if (
+          missingColumn &&
+          Object.prototype.hasOwnProperty.call(payload, missingColumn) &&
+          missingColumn !== "nombre"
+        ) {
+          delete payload[missingColumn];
+          omittedColumns.push(missingColumn);
+          latestError = updateError;
+          continue;
+        }
+
+        latestError = updateError;
+        break;
+      }
+
+      if (!updated) throw latestError ?? new Error("No se pudo guardar el perfil.");
+
+      setPerfil(updated);
+      setHasSignature(Boolean(updated.firma_data_url));
+      if (omittedColumns.length > 0) {
+        setSuccess(
+          `Perfil guardado. Columnas pendientes en la base de datos: ${omittedColumns.join(
+            ", "
+          )}. Ejecuta las migraciones.`
+        );
+      } else {
+        setSuccess("Perfil y firma guardados.");
+      }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = toErrorMessage(err);
       setError(message || "No se pudo guardar el perfil.");
     } finally {
       setSaving(false);
@@ -391,7 +512,7 @@ export default function PerfilPage() {
                 onPointerMove={draw}
                 onPointerUp={stopDrawing}
                 onPointerCancel={stopDrawing}
-                className="h-56 w-full touch-none rounded-2xl border border-zinc-200 bg-white dark:border-white/10 dark:bg-black/30"
+                className="h-56 w-full touch-none rounded-2xl border border-zinc-200 bg-white dark:border-white/20 dark:bg-white"
               />
             </div>
 
