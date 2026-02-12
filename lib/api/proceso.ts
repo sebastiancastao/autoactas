@@ -29,7 +29,10 @@ export async function getProcesoWithRelations(id: string) {
     .select(`
       *,
       deudores (*),
-      acreedores (*),
+      acreedores (
+        *,
+        acreencias (*)
+      ),
       progreso (*)
     `)
     .eq('id', id)
@@ -62,7 +65,10 @@ export async function getProcesosWithRelations() {
     .select(`
       *,
       deudores (*),
-      acreedores (*),
+      acreedores (
+        *,
+        acreencias (*)
+      ),
       progreso (*)
     `)
     .order('created_at', { ascending: false })

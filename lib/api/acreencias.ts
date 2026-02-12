@@ -88,3 +88,14 @@ export async function updateAcreencia(id: string, acreencia: AcreenciaUpdate) {
   if (error) throw error
   return data
 }
+
+export async function deleteAcreenciasByAcreedorIds(acreedorIds: string[]) {
+  if (acreedorIds.length === 0) return
+
+  const { error } = await supabase
+    .from('acreencias')
+    .delete()
+    .in('acreedor_id', acreedorIds)
+
+  if (error) throw error
+}

@@ -524,7 +524,7 @@ export default function ProcesoForm({
                 : "Gestiona los datos del proceso que estás creando."}
             </p>
           </div>
-          {editingProcesoId && (
+          {editingProcesoId && showGeneralInfo && (
             <button
               type="button"
               onClick={resetFormFields}

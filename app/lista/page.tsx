@@ -315,6 +315,12 @@ type PropuestaPagoDraft = {
   quinta_clase: PropuestaPagoClaseDraft;
 };
 
+type InasistenciaDisclaimerItem = {
+  apoderadoId: string;
+  nombre: string;
+  eventosAusentes: number;
+};
+
 function normalizarNumero(valor: string) {
   return valor.replace(",", ".").trim();
 }
@@ -487,6 +493,7 @@ function AttendanceContent() {
   const [operadorIdentificacion, setOperadorIdentificacion] = useState("1.154.967.376");
   const [operadorTarjetaProfesional, setOperadorTarjetaProfesional] = useState("429.496");
   const [operadorEmail, setOperadorEmail] = useState("fundaseer@gmail.com");
+  const [mostrarDatosOperador, setMostrarDatosOperador] = useState(false);
 
   // If user is logged in, prefer the `usuarios` profile (by auth_id) as a fallback for operador.
   // This avoids generating docs with the default placeholder when no eventoId/usuario_id is available.
@@ -624,6 +631,15 @@ function AttendanceContent() {
   const [procesoApoderadosMensaje, setProcesoApoderadosMensaje] = useState<string | null>(null);
   const [procesoApoderadosCargando, setProcesoApoderadosCargando] = useState(false);
   const [procesoApoderadosError, setProcesoApoderadosError] = useState<string | null>(null);
+  const [deudorApoderadoIds, setDeudorApoderadoIds] = useState<string[]>([]);
+  const [deudorApoderadoNombreById, setDeudorApoderadoNombreById] = useState<Record<string, string>>({});
+  const [inasistenciaDisclaimerItems, setInasistenciaDisclaimerItems] = useState<InasistenciaDisclaimerItem[]>([]);
+  const [inasistenciaDisclaimerOpen, setInasistenciaDisclaimerOpen] = useState(false);
+  const [inasistenciaDisclaimerSignature, setInasistenciaDisclaimerSignature] = useState("");
+  const [inasistenciaDisclaimerSeenSignature, setInasistenciaDisclaimerSeenSignature] = useState("");
+  const [inasistenciaDisclaimerError, setInasistenciaDisclaimerError] = useState<string | null>(null);
+  const [asistenciaRefreshToken, setAsistenciaRefreshToken] = useState(0);
+  const [mostrarDatosAsistenteById, setMostrarDatosAsistenteById] = useState<Record<string, boolean>>({});
 
   const [acreencias, setAcreencias] = useState<AcreenciaDetalle[]>([]);
   const [acreenciasCargando, setAcreenciasCargando] = useState(false);
@@ -831,6 +847,14 @@ function AttendanceContent() {
       setProcesoApoderadosMensaje(null);
       setProcesoApoderadosError(null);
       setNumeroProceso(null);
+      setMostrarDatosAsistenteById({});
+      setDeudorApoderadoIds([]);
+      setDeudorApoderadoNombreById({});
+      setInasistenciaDisclaimerItems([]);
+      setInasistenciaDisclaimerOpen(false);
+      setInasistenciaDisclaimerSignature("");
+      setInasistenciaDisclaimerSeenSignature("");
+      setInasistenciaDisclaimerError(null);
       return;
     }
 
@@ -896,6 +920,23 @@ function AttendanceContent() {
           adicionales
         );
 
+        const deudorApoderadosUnicos = Array.from(
+          new Set(
+            (deudores ?? [])
+              .map((deudor) => deudor.apoderado_id ?? "")
+              .filter((id): id is string => Boolean(id))
+          )
+        );
+
+        const apoderadoNombreById = new Map(
+          apoderadosParaMostrar.map((apoderado) => [apoderado.id, apoderado.nombre ?? "Apoderado del deudor"])
+        );
+        const deudorApoderadoNombres: Record<string, string> = {};
+        deudorApoderadosUnicos.forEach((apoderadoId) => {
+          deudorApoderadoNombres[apoderadoId] =
+            apoderadoNombreById.get(apoderadoId) ?? "Apoderado del deudor";
+        });
+
         const filas = mapApoderadosFromProceso(
           { ...procesoConRelaciones, deudores },
           apoderadosParaMostrar
@@ -905,12 +946,15 @@ function AttendanceContent() {
 
         if (filas.length > 0) {
           setAsistentes(filas);
+          setMostrarDatosAsistenteById({});
           setProcesoApoderadosMensaje(`Apoderados cargados (${filas.length})`);
         } else {
           setProcesoApoderadosMensaje(
             "No se encontraron apoderados vinculados a este proceso."
           );
         }
+        setDeudorApoderadoIds(deudorApoderadosUnicos);
+        setDeudorApoderadoNombreById(deudorApoderadoNombres);
       } catch (error) {
         console.error("Error cargando apoderados del proceso:", error);
         if (activo) {
@@ -931,6 +975,87 @@ function AttendanceContent() {
       activo = false;
     };
   }, [procesoId, debugLista]);
+
+  useEffect(() => {
+    if (!procesoId || deudorApoderadoIds.length === 0) {
+      setInasistenciaDisclaimerItems([]);
+      setInasistenciaDisclaimerOpen(false);
+      setInasistenciaDisclaimerSignature("");
+      setInasistenciaDisclaimerError(null);
+      return;
+    }
+
+    let canceled = false;
+    (async () => {
+      try {
+        setInasistenciaDisclaimerError(null);
+        const { data, error } = await supabase
+          .from("asistencia")
+          .select("apoderado_id, evento_id, estado")
+          .eq("proceso_id", procesoId)
+          .in("apoderado_id", deudorApoderadoIds)
+          .eq("estado", "Ausente")
+          .not("evento_id", "is", null);
+
+        if (error) throw error;
+        if (canceled) return;
+
+        const ausenciasPorApoderado = new Map<string, Set<string>>();
+        (data ?? []).forEach((row) => {
+          const apoderadoId = row.apoderado_id ?? "";
+          const eventoId = row.evento_id ?? "";
+          if (!apoderadoId || !eventoId) return;
+          if (!ausenciasPorApoderado.has(apoderadoId)) {
+            ausenciasPorApoderado.set(apoderadoId, new Set<string>());
+          }
+          ausenciasPorApoderado.get(apoderadoId)!.add(eventoId);
+        });
+
+        const items = deudorApoderadoIds
+          .map((apoderadoId) => ({
+            apoderadoId,
+            nombre: deudorApoderadoNombreById[apoderadoId] ?? "Apoderado del deudor",
+            eventosAusentes: ausenciasPorApoderado.get(apoderadoId)?.size ?? 0,
+          }))
+          .filter((item) => item.eventosAusentes >= 2);
+
+        setInasistenciaDisclaimerItems(items);
+
+        if (items.length === 0) {
+          setInasistenciaDisclaimerSignature("");
+          setInasistenciaDisclaimerOpen(false);
+          return;
+        }
+
+        const signature = `${procesoId}:${items
+          .map((item) => `${item.apoderadoId}:${item.eventosAusentes}`)
+          .sort()
+          .join("|")}`;
+        setInasistenciaDisclaimerSignature(signature);
+
+        if (signature !== inasistenciaDisclaimerSeenSignature) {
+          setInasistenciaDisclaimerOpen(true);
+        }
+      } catch (error) {
+        if (!canceled) {
+          const detail = toErrorMessage(error);
+          setInasistenciaDisclaimerError(
+            `No se pudo verificar inasistencias de apoderados de deudor. ${detail}`
+          );
+        }
+      }
+    })();
+
+    return () => {
+      canceled = true;
+    };
+  }, [
+    procesoId,
+    deudorApoderadoIds,
+    deudorApoderadoNombreById,
+    asistenciaRefreshToken,
+    inasistenciaDisclaimerSeenSignature,
+  ]);
 
   useEffect(() => {
     if (!procesoId) {
@@ -1133,14 +1258,30 @@ function AttendanceContent() {
   }, [asistentes]);
 
   function agregarFila() {
+    const nuevaFila = {
+      id: uid(),
+      nombre: "",
+      email: "",
+      identificacion: "",
+      categoria: "Acreedor" as Categoria,
+      estado: "Ausente" as EstadoAsistencia,
+      tarjetaProfesional: "",
+      calidadApoderadoDe: "",
+    };
     setAsistentes((prev) => [
       ...prev,
-      { id: uid(), nombre: "", email: "", identificacion: "", categoria: "Acreedor", estado: "Ausente", tarjetaProfesional: "", calidadApoderadoDe: "" },
+      nuevaFila,
     ]);
+    setMostrarDatosAsistenteById((prev) => ({ ...prev, [nuevaFila.id]: true }));
   }
 
   function eliminarFila(id: string) {
     setAsistentes((prev) => prev.filter((a) => a.id !== id));
+    setMostrarDatosAsistenteById((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
   }
 
   function actualizarFila(id: string, patch: Partial<Asistente>) {
@@ -1149,14 +1290,29 @@ function AttendanceContent() {
     );
   }
 
+  function toggleDatosAsistente(id: string) {
+    setMostrarDatosAsistenteById((prev) => ({ ...prev, [id]: !prev[id] }));
+  }
+
   function marcarTodos(estado: EstadoAsistencia) {
     setAsistentes((prev) => prev.map((a) => ({ ...a, estado })));
   }
 
   function reiniciar() {
+    const filaInicial = {
+      id: uid(),
+      nombre: "",
+      email: "",
+      identificacion: "",
+      categoria: "Acreedor" as Categoria,
+      estado: "Ausente" as EstadoAsistencia,
+      tarjetaProfesional: "",
+      calidadApoderadoDe: "",
+    };
     setTitulo("Llamado de asistencia");
     setFecha(new Date().toISOString().slice(0, 10));
-    setAsistentes([{ id: uid(), nombre: "", email: "", identificacion: "", categoria: "Acreedor", estado: "Ausente", tarjetaProfesional: "", calidadApoderadoDe: "" }]);
+    setAsistentes([filaInicial]);
+    setMostrarDatosAsistenteById({ [filaInicial.id]: true });
     setGuardado(null);
   }
 
@@ -1214,6 +1370,7 @@ function AttendanceContent() {
 
       await createAsistenciasBulk(registros);
       setGuardado(buildAsistenciaPayload());
+      setAsistenciaRefreshToken((prev) => prev + 1);
       return true;
     } catch (error) {
       const detail = toErrorMessage(error);
@@ -1781,6 +1938,49 @@ function AttendanceContent() {
           </div>
         )}
 
+        {inasistenciaDisclaimerOpen && inasistenciaDisclaimerItems.length > 0 && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <button
+              type="button"
+              aria-label="Cerrar advertencia de inasistencia"
+              onClick={() => {
+                setInasistenciaDisclaimerSeenSignature(inasistenciaDisclaimerSignature);
+                setInasistenciaDisclaimerOpen(false);
+              }}
+              className="absolute inset-0 cursor-default bg-black/40 backdrop-blur-sm"
+            />
+            <div className="relative w-full max-w-lg rounded-3xl border border-red-200 bg-white p-5 shadow-xl dark:border-red-500/30 dark:bg-zinc-950 sm:p-6">
+              <h3 className="text-base font-semibold tracking-tight text-red-700 dark:text-red-300">
+                Advertencia de inasistencia
+              </h3>
+              <p className="mt-1 text-sm text-zinc-700 dark:text-zinc-200">
+                Se detectaron apoderados del deudor con inasistencia en 2 o m&aacute;s eventos:
+              </p>
+
+              <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-zinc-800 dark:text-zinc-100">
+                {inasistenciaDisclaimerItems.map((item) => (
+                  <li key={item.apoderadoId}>
+                    {item.nombre}: {item.eventosAusentes} inasistencias
+                  </li>
+                ))}
+              </ul>
+
+              <div className="mt-5 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInasistenciaDisclaimerSeenSignature(inasistenciaDisclaimerSignature);
+                    setInasistenciaDisclaimerOpen(false);
+                  }}
+                  className="h-11 rounded-2xl bg-red-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-red-500"
+                >
+                  Entendido
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Header */}
         <header className="mb-8">
           <div className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/70 px-3 py-1 text-xs text-zinc-600 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
@@ -1829,6 +2029,12 @@ function AttendanceContent() {
           <p className="mb-8 text-sm text-zinc-500 dark:text-zinc-400">
             {mensajeApoderado}
           </p>
+        )}
+
+        {inasistenciaDisclaimerError && (
+          <div className="mb-8 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+            {inasistenciaDisclaimerError}
+          </div>
         )}
 
         {/* Main Card */}
@@ -1960,56 +2166,65 @@ function AttendanceContent() {
             </div>
 
             {/* Operador/Conciliador (collapsible) */}
-            <details className="rounded-2xl border border-zinc-200 bg-white/60 p-4 dark:border-white/10 dark:bg-white/5">
-              <summary className="cursor-pointer text-sm font-medium text-zinc-700 dark:text-zinc-200">
-                Datos del Operador/Conciliador
-              </summary>
-              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                    Nombre Operador
-                  </label>
-                  <input
-                    value={operadorNombre}
-                    onChange={(e) => setOperadorNombre(e.target.value)}
-                    className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                  />
-                </div>
+            <div className="rounded-2xl border border-zinc-200 bg-white/60 p-4 dark:border-white/10 dark:bg-white/5">
+              <button
+                type="button"
+                onClick={() => setMostrarDatosOperador((prev) => !prev)}
+                className="flex w-full items-center justify-between text-left text-sm font-medium text-zinc-700 dark:text-zinc-200"
+              >
+                <span>Datos del Operador/Conciliador</span>
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                  {mostrarDatosOperador ? "Ocultar" : "Mostrar"}
+                </span>
+              </button>
+              {mostrarDatosOperador && (
+                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                      Nombre Operador
+                    </label>
+                    <input
+                      value={operadorNombre}
+                      onChange={(e) => setOperadorNombre(e.target.value)}
+                      className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                    />
+                  </div>
 
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                    C.C. Operador
-                  </label>
-                  <input
-                    value={operadorIdentificacion}
-                    onChange={(e) => setOperadorIdentificacion(e.target.value)}
-                    className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                  />
-                </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                      C.C. Operador
+                    </label>
+                    <input
+                      value={operadorIdentificacion}
+                      onChange={(e) => setOperadorIdentificacion(e.target.value)}
+                      className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                    />
+                  </div>
 
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                    Tarjeta Profesional
-                  </label>
-                  <input
-                    value={operadorTarjetaProfesional}
-                    onChange={(e) => setOperadorTarjetaProfesional(e.target.value)}
-                    className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                  />
-                </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                      Tarjeta Profesional
+                    </label>
+                    <input
+                      value={operadorTarjetaProfesional}
+                      onChange={(e) => setOperadorTarjetaProfesional(e.target.value)}
+                      className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                    />
+                  </div>
 
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                    Email Operador
-                  </label>
-                  <input
-                    value={operadorEmail}
-                    onChange={(e) => setOperadorEmail(e.target.value)}
-                    className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                  />
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                      Email Operador
+                    </label>
+                    <input
+                      value={operadorEmail}
+                      onChange={(e) => setOperadorEmail(e.target.value)}
+                      className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                    />
+                  </div>
                 </div>
-              </div>
-            </details>
+              )}
+            </div>
 
             {/* Stats + Bulk Actions */}
             <div className="flex flex-col gap-3 rounded-2xl border border-zinc-200 bg-white/60 p-4 dark:border-white/10 dark:bg-white/5 sm:flex-row sm:items-center sm:justify-between">
@@ -2055,18 +2270,29 @@ function AttendanceContent() {
                       </p>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => eliminarFila(a.id)}
-                      disabled={asistentes.length === 1}
-                      className="rounded-full px-3 py-1 text-sm text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-white/10 dark:hover:text-white"
-                      title={asistentes.length === 1 ? "Debe quedar al menos 1 fila" : "Eliminar"}
-                    >
-                      Eliminar
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleDatosAsistente(a.id)}
+                        className="rounded-full px-3 py-1 text-sm text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-white/10 dark:hover:text-white"
+                      >
+                        {Boolean(mostrarDatosAsistenteById[a.id]) ? "Ocultar datos" : "Mostrar datos"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => eliminarFila(a.id)}
+                        disabled={asistentes.length === 1}
+                        className="rounded-full px-3 py-1 text-sm text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-white/10 dark:hover:text-white"
+                        title={asistentes.length === 1 ? "Debe quedar al menos 1 fila" : "Eliminar"}
+                      >
+                        Eliminar
+                      </button>
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    {Boolean(mostrarDatosAsistenteById[a.id]) && (
+                      <>
                     {/* Nombre */}
                     <div className="sm:col-span-1">
                       <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
@@ -2176,6 +2402,9 @@ function AttendanceContent() {
                         Opcional
                       </p>
                     </div>
+
+                      </>
+                    )}
 
                     {/* Switch */}
                     <div className="sm:col-span-1">

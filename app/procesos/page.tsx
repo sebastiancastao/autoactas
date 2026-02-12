@@ -32,6 +32,53 @@ function esEmailValido(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
 
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+
+  if (typeof error === "string" && error.trim()) {
+    return error;
+  }
+
+  if (error && typeof error === "object") {
+    const candidate = error as {
+      message?: unknown;
+      detail?: unknown;
+      details?: unknown;
+      error?: unknown;
+    };
+    const firstMessage = [candidate.message, candidate.detail, candidate.details, candidate.error].find(
+      (value): value is string => typeof value === "string" && value.trim().length > 0,
+    );
+    if (firstMessage) {
+      return firstMessage;
+    }
+  }
+
+  return fallback;
+}
+
+function formatErrorForLog(error: unknown) {
+  if (error instanceof Error) {
+    return error.stack || error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  if (error && typeof error === "object") {
+    try {
+      return JSON.stringify(error, Object.getOwnPropertyNames(error));
+    } catch {
+      return String(error);
+    }
+  }
+
+  return String(error);
+}
+
 type PanelApoderadoRow = {
   id: string;
   categoria: "acreedor" | "deudor";
@@ -752,10 +799,9 @@ export default function ProcesosPage() {
       }
       setMensajeProceso(mensaje);
     } catch (error) {
-      console.error("Error creando proceso desde panel:", error);
-      setMensajeProceso(
-        error instanceof Error ? error.message : "No se pudo crear el proceso.",
-      );
+      const errorMessage = getErrorMessage(error, "No se pudo crear el proceso.");
+      console.warn("No se pudo crear proceso desde panel:", formatErrorForLog(error));
+      setMensajeProceso(errorMessage);
     } finally {
       setCreandoProceso(false);
     }
@@ -940,18 +986,6 @@ export default function ProcesosPage() {
           >
 
             Calendario
-
-          </Link>
-
-          <Link
-
-            href="/procesos/export"
-
-            className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-indigo-100/60 px-4 py-2 text-sm font-semibold text-indigo-700 shadow-sm transition hover:bg-indigo-200/70 dark:border-indigo-400/60 dark:bg-indigo-500/10 dark:text-indigo-50 dark:hover:border-indigo-200 dark:hover:bg-indigo-500/20"
-
-          >
-
-            Exportar Word
 
           </Link>
 

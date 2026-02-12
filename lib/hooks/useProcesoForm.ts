@@ -2,6 +2,10 @@
 
 import { Dispatch, FormEvent, SetStateAction, useCallback, useEffect, useState } from "react";
 import { createAcreedor, deleteAcreedor, updateAcreedor } from "@/lib/api/acreedores";
+import {
+  deleteAcreenciasByAcreedorIds,
+  upsertAcreencias,
+} from "@/lib/api/acreencias";
 import { createDeudor, deleteDeudor, updateDeudor } from "@/lib/api/deudores";
 import { createApoderado, getApoderados, updateApoderado } from "@/lib/api/apoderados";
 import {
@@ -17,6 +21,7 @@ import {
 } from "@/lib/utils/identificacion";
 import type {
   Acreedor,
+  Acreencia,
   Apoderado,
   Deudor,
   Proceso,
@@ -72,16 +77,12 @@ type AcreedorWithApoderado = Acreedor & {
 };
 
 type AcreedorWithObligaciones = AcreedorWithApoderado & {
+  acreencias?: Acreencia[];
   obligaciones?: {
     id?: string;
     descripcion?: string | null;
     monto?: number | null;
   }[];
-};
-
-type ProcesoWithRelations = Proceso & {
-  deudores?: Deudor[];
-  acreedores?: AcreedorWithApoderado[];
 };
 
 function uid() {
@@ -144,6 +145,13 @@ function parseObligacionValue(value: string) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function parseOptionalNumber(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function computeObligacionTotal(obligacion: ObligacionFormRow) {
   return obligationAmountFields.reduce(
     (acc, key) => acc + parseObligacionValue(obligacion[key]),
@@ -200,6 +208,52 @@ function mapAcreedoresToFormRows(
   const apoderadoLookup = new Map(apoderados?.map((a) => [a.id, a.nombre]) ?? []);
 
   return acreedores.map((acreedor) => ({
+    ...(() => {
+      const acreenciaFromRelation =
+        (acreedor.acreencias ?? []).find(
+          (item) => !acreedor.apoderado_id || item.apoderado_id === acreedor.apoderado_id,
+        ) ?? (acreedor.acreencias ?? [])[0];
+
+      const obligacionesFromAcreencias = acreenciaFromRelation
+        ? [
+            {
+              id: uid(),
+              descripcion: "",
+              naturaleza: acreenciaFromRelation.naturaleza ?? "",
+              prelacion: acreenciaFromRelation.prelacion ?? "",
+              capital:
+                acreenciaFromRelation.capital != null ? acreenciaFromRelation.capital.toString() : "",
+              interesCte:
+                acreenciaFromRelation.int_cte != null ? acreenciaFromRelation.int_cte.toString() : "",
+              interesMora:
+                acreenciaFromRelation.int_mora != null ? acreenciaFromRelation.int_mora.toString() : "",
+              otros:
+                acreenciaFromRelation.otros_cobros_seguros != null
+                  ? acreenciaFromRelation.otros_cobros_seguros.toString()
+                  : "",
+            },
+          ]
+        : [];
+
+      const obligacionesLegacy =
+        acreedor.obligaciones?.map((obligacion) => ({
+          id: uid(),
+          descripcion: obligacion.descripcion ?? "",
+          naturaleza: "",
+          prelacion: "",
+          capital: obligacion.monto != null ? obligacion.monto.toString() : "",
+          interesCte: "",
+          interesMora: "",
+          otros: "",
+        })) ?? [];
+
+      return {
+        obligaciones:
+          obligacionesFromAcreencias.length > 0
+            ? obligacionesFromAcreencias
+            : obligacionesLegacy,
+      };
+    })(),
     id: uid(),
     dbId: acreedor.id,
     nombre: acreedor.nombre,
@@ -214,17 +268,6 @@ function mapAcreedoresToFormRows(
       : "",
     monto: acreedor.monto_acreencia != null ? acreedor.monto_acreencia.toString() : "",
     tipoAcreencia: acreedor.tipo_acreencia ?? "",
-    obligaciones:
-      acreedor.obligaciones?.map((obligacion) => ({
-        id: uid(),
-        descripcion: obligacion.descripcion ?? "",
-        naturaleza: "",
-        prelacion: "",
-        capital: obligacion.monto != null ? obligacion.monto.toString() : "",
-        interesCte: "",
-        interesMora: "",
-        otros: "",
-      })) ?? [],
   }));
 }
 
@@ -232,6 +275,7 @@ export type UseProcesoFormOptions = {
   initialProcesoId?: string;
   onSaveSuccess?: (proceso: Proceso, context?: { isEditing: boolean }) => void;
   focusedMode?: "acreedores" | "deudores" | undefined;
+  updateProgresoOnSubmit?: boolean;
 };
 
 export type ProcesoFormContext = {
@@ -292,7 +336,12 @@ export type ProcesoFormContext = {
 };
 
 export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormContext {
-  const { initialProcesoId, onSaveSuccess, focusedMode } = options ?? {};
+  const {
+    initialProcesoId,
+    onSaveSuccess,
+    focusedMode,
+    updateProgresoOnSubmit = true,
+  } = options ?? {};
 
   const [numeroProceso, setNumeroProceso] = useState("");
   const [fechaprocesos, setFechaprocesos] = useState(() => new Date().toISOString().split("T")[0]);
@@ -572,12 +621,88 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
       };
     };
 
-    await Promise.all(paraCrear.map((fila) => createAcreedor(construirPayload(fila))));
-    await Promise.all(
-      paraActualizar.map((fila) => updateAcreedor(fila.dbId!, construirPayload(fila)))
+    const creados = await Promise.all(
+      paraCrear.map(async (fila) => {
+        const saved = await createAcreedor(construirPayload(fila));
+        return { formId: fila.id, dbId: saved.id };
+      }),
     );
+    const actualizados = await Promise.all(
+      paraActualizar.map(async (fila) => {
+        const saved = await updateAcreedor(fila.dbId!, construirPayload(fila));
+        return { formId: fila.id, dbId: saved.id };
+      }),
+    );
+
+    const acreedorDbIdByFormId = new Map<string, string>();
+    creados.forEach((item) => acreedorDbIdByFormId.set(item.formId, item.dbId));
+    actualizados.forEach((item) => acreedorDbIdByFormId.set(item.formId, item.dbId));
+
     if (idsParaEliminar.length > 0) {
+      await deleteAcreenciasByAcreedorIds(idsParaEliminar);
       await Promise.all(idsParaEliminar.map((id) => deleteAcreedor(id)));
+    }
+
+    const acreenciasPayload = filasConNombre.flatMap((fila) => {
+      const acreedorId = acreedorDbIdByFormId.get(fila.id) ?? fila.dbId;
+      const apoderadoId = fila.apoderadoId.trim();
+      if (!acreedorId || !apoderadoId) return [];
+
+      const naturaleza =
+        fila.obligaciones.find((obligacion) => obligacion.naturaleza.trim())?.naturaleza.trim() ||
+        null;
+      const prelacion =
+        fila.obligaciones.find((obligacion) => obligacion.prelacion.trim())?.prelacion.trim() ||
+        null;
+
+      const hasCapital = fila.obligaciones.some((obligacion) => obligacion.capital.trim() !== "");
+      const hasIntCte = fila.obligaciones.some((obligacion) => obligacion.interesCte.trim() !== "");
+      const hasIntMora = fila.obligaciones.some((obligacion) => obligacion.interesMora.trim() !== "");
+      const hasOtros = fila.obligaciones.some((obligacion) => obligacion.otros.trim() !== "");
+      const montoManual = parseOptionalNumber(fila.monto);
+      const hasAnyMeta = Boolean(naturaleza || prelacion);
+      const hasAnyComponente = hasCapital || hasIntCte || hasIntMora || hasOtros;
+
+      // Avoid creating empty acreencias rows when no acreencia data was provided.
+      if (!hasAnyMeta && !hasAnyComponente && montoManual == null) {
+        return [];
+      }
+
+      // Some legacy DBs define these columns as NOT NULL; send 0 when omitted.
+      const capital = hasCapital
+        ? fila.obligaciones.reduce((acc, obligacion) => acc + parseObligacionValue(obligacion.capital), 0)
+        : 0;
+      const intCte = hasIntCte
+        ? fila.obligaciones.reduce((acc, obligacion) => acc + parseObligacionValue(obligacion.interesCte), 0)
+        : 0;
+      const intMora = hasIntMora
+        ? fila.obligaciones.reduce((acc, obligacion) => acc + parseObligacionValue(obligacion.interesMora), 0)
+        : 0;
+      const otros = hasOtros
+        ? fila.obligaciones.reduce((acc, obligacion) => acc + parseObligacionValue(obligacion.otros), 0)
+        : 0;
+      const totalFromComponentes = capital + intCte + intMora + otros;
+      const total = hasAnyComponente ? totalFromComponentes : (montoManual ?? 0);
+
+      return [
+        {
+          proceso_id: procesoId,
+          apoderado_id: apoderadoId,
+          acreedor_id: acreedorId,
+          naturaleza,
+          prelacion,
+          capital,
+          int_cte: intCte,
+          int_mora: intMora,
+          otros_cobros_seguros: otros,
+          total,
+          porcentaje: 0,
+        },
+      ];
+    });
+
+    if (acreenciasPayload.length > 0) {
+      await upsertAcreencias(acreenciasPayload);
     }
   };
 
@@ -691,17 +816,19 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
         );
       }
 
-      if (isEditing) {
-        try {
-          await updateProgresoByProcesoId(savedProceso.id, { estado: "iniciado" });
-        } catch (err) {
-          console.error("Error updating progreso:", err);
-        }
-      } else {
-        try {
-          await updateProgresoByProcesoId(savedProceso.id, { estado: "no_iniciado" });
-        } catch (err) {
-          console.error("Error initializing progreso for new proceso:", err);
+      if (updateProgresoOnSubmit) {
+        if (isEditing) {
+          try {
+            await updateProgresoByProcesoId(savedProceso.id, { estado: "iniciado" });
+          } catch (err) {
+            console.error("Error updating progreso:", err);
+          }
+        } else {
+          try {
+            await updateProgresoByProcesoId(savedProceso.id, { estado: "no_iniciado" });
+          } catch (err) {
+            console.error("Error initializing progreso for new proceso:", err);
+          }
         }
       }
 

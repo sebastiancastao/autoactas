@@ -6,8 +6,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { getProcesos } from "@/lib/api/proceso";
 import { getUsuarios, type Usuario } from "@/lib/api/usuarios";
 import { getEventos, createEvento, deleteEvento as deleteEventoApi, type Evento } from "@/lib/api/eventos";
-import { getProgresos, type Progreso } from "@/lib/api/progreso";
+import { getProgresos, updateProgresoByProcesoId, type Progreso } from "@/lib/api/progreso";
 import type { Proceso } from "@/lib/database.types";
+import { useAuth } from "@/lib/auth-context";
+import { supabase } from "@/lib/supabase";
 
 type EventoCalendario = {
   id: string;
@@ -16,6 +18,26 @@ type EventoCalendario = {
   hora?: string;
   usuarioId?: string;
   procesoId?: string;
+};
+
+type AutoAdmisorioState = {
+  loading: boolean;
+  error: string | null;
+  result: {
+    fileId: string;
+    fileName: string;
+    webViewLink: string | null;
+    apoderadoEmails?: string[];
+  } | null;
+  emailSending: boolean;
+  emailResult: { sent: number; errors?: string[] } | null;
+  emailError: string | null;
+};
+
+type ProgresoAction = {
+  url: string;
+  label: string;
+  requiereIniciar: boolean;
 };
 
 function pad(n: number) {
@@ -89,7 +111,32 @@ function withAlpha(hex: string, alpha: string) {
   return hex;
 }
 
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+  if (typeof error === "string" && error.trim()) {
+    return error;
+  }
+  if (error && typeof error === "object") {
+    const candidate = error as {
+      message?: unknown;
+      detail?: unknown;
+      details?: unknown;
+      error?: unknown;
+    };
+    const firstMessage = [candidate.message, candidate.detail, candidate.details, candidate.error].find(
+      (value): value is string => typeof value === "string" && value.trim().length > 0,
+    );
+    if (firstMessage) {
+      return firstMessage;
+    }
+  }
+  return fallback;
+}
+
 function CalendarioContent() {
+  const { user } = useAuth();
   const hoy = useMemo(() => new Date(), []);
   const [viewDate, setViewDate] = useState(() => startOfMonth(new Date()));
   const [diaSeleccionadoISO, setDiaSeleccionadoISO] = useState(() => toISODate(new Date()));
@@ -111,6 +158,12 @@ function CalendarioContent() {
   const [cargandoUsuarios, setCargandoUsuarios] = useState(true);
   const [procesos, setProcesos] = useState<Proceso[]>([]);
   const [progresos, setProgresos] = useState<Progreso[]>([]);
+  const [iniciandoProcesoById, setIniciandoProcesoById] = useState<Record<string, boolean>>({});
+  const [iniciarProcesoErrorById, setIniciarProcesoErrorById] = useState<Record<string, string>>({});
+  const [apoderadosRegistradosByProcesoId, setApoderadosRegistradosByProcesoId] = useState<Record<string, boolean>>({});
+  const [autoAdmisorioStateByProcesoId, setAutoAdmisorioStateByProcesoId] = useState<
+    Record<string, AutoAdmisorioState>
+  >({});
   const [guardando, setGuardando] = useState(false);
 
   const userColorMap = useMemo(() => {
@@ -204,6 +257,59 @@ function CalendarioContent() {
     }
     fetchData();
   }, []);
+
+  useEffect(() => {
+    const procesoIds = procesos.map((p) => p.id).filter(Boolean);
+    if (procesoIds.length === 0) {
+      setApoderadosRegistradosByProcesoId({});
+      return;
+    }
+
+    let canceled = false;
+    (async () => {
+      try {
+        const { data: deudores, error: deudorError } = await supabase
+          .from("deudores")
+          .select("proceso_id, apoderado_id")
+          .in("proceso_id", procesoIds)
+          .not("apoderado_id", "is", null);
+        if (deudorError) throw deudorError;
+
+        const { data: acreedores, error: acreedorError } = await supabase
+          .from("acreedores")
+          .select("proceso_id, apoderado_id")
+          .in("proceso_id", procesoIds)
+          .not("apoderado_id", "is", null);
+        if (acreedorError) throw acreedorError;
+
+        const registered = new Set<string>();
+        (deudores ?? []).forEach((row) => {
+          if (row.proceso_id && row.apoderado_id) registered.add(row.proceso_id);
+        });
+        (acreedores ?? []).forEach((row) => {
+          if (row.proceso_id && row.apoderado_id) registered.add(row.proceso_id);
+        });
+
+        const next: Record<string, boolean> = {};
+        procesoIds.forEach((id) => {
+          next[id] = registered.has(id);
+        });
+
+        if (!canceled) {
+          setApoderadosRegistradosByProcesoId(next);
+        }
+      } catch (error) {
+        console.error("Error loading apoderados registrados por proceso:", error);
+        if (!canceled) {
+          setApoderadosRegistradosByProcesoId({});
+        }
+      }
+    })();
+
+    return () => {
+      canceled = true;
+    };
+  }, [procesos]);
 
   const vistaTexto = viewType === "week" ? "semanal" : viewType === "day" ? "diaria" : "mensual";
   const etiquetaPeriodo = useMemo(() => {
@@ -407,24 +513,207 @@ function CalendarioContent() {
     return progreso ? progreso.estado : null;
   }
 
+  function tieneApoderadosRegistrados(procesoId: string | undefined): boolean {
+    if (!procesoId) return false;
+    return Boolean(apoderadosRegistradosByProcesoId[procesoId]);
+  }
+
   function getProgresoActionUrl(
     procesoId: string | undefined,
     eventoId?: string | undefined
-  ): { url: string; label: string } | null {
+  ): ProgresoAction | null {
     if (!procesoId) return null;
     const estado = getProgresoEstado(procesoId);
+    const qs = new URLSearchParams({ procesoId });
+    if (eventoId) qs.set("eventoId", eventoId);
+    const listaUrl = `/lista?${qs.toString()}`;
 
-    // If no progreso record exists or estado is 'no_iniciado', show Iniciar button
+    // No iniciado keeps "Iniciar" label but now uses the same /lista flow.
     if (!estado || estado === 'no_iniciado') {
-      return { url: `/?procesoId=${procesoId}`, label: 'Iniciar' };
+      return { url: listaUrl, label: "Iniciar", requiereIniciar: true };
     }
     if (estado === 'iniciado') {
-      const qs = new URLSearchParams({ procesoId });
-      if (eventoId) qs.set("eventoId", eventoId);
-      return { url: `/lista?${qs.toString()}`, label: 'Tomar asistencia' };
+      return { url: listaUrl, label: "Tomar asistencia", requiereIniciar: false };
     }
     // estado === 'finalizado' - no action needed
     return null;
+  }
+
+  async function iniciarProcesoYIrLista(procesoId: string | undefined, url: string) {
+    if (!procesoId || iniciandoProcesoById[procesoId]) return;
+
+    setIniciandoProcesoById((prev) => ({ ...prev, [procesoId]: true }));
+    setIniciarProcesoErrorById((prev) => ({ ...prev, [procesoId]: "" }));
+
+    try {
+      const updated = await updateProgresoByProcesoId(procesoId, { estado: "iniciado" });
+      setProgresos((prev) => {
+        const index = prev.findIndex((item) => item.proceso_id === procesoId);
+        if (index === -1) return [...prev, updated];
+        const next = [...prev];
+        next[index] = updated;
+        return next;
+      });
+      router.push(url);
+    } catch (error) {
+      const message = getErrorMessage(error, "No se pudo iniciar el proceso.");
+      setIniciarProcesoErrorById((prev) => ({ ...prev, [procesoId]: message }));
+    } finally {
+      setIniciandoProcesoById((prev) => ({ ...prev, [procesoId]: false }));
+    }
+  }
+
+  function getAutoAdmisorioState(procesoId: string | undefined): AutoAdmisorioState | null {
+    if (!procesoId) return null;
+    return (
+      autoAdmisorioStateByProcesoId[procesoId] ?? {
+        loading: false,
+        error: null,
+        result: null,
+        emailSending: false,
+        emailResult: null,
+        emailError: null,
+      }
+    );
+  }
+
+  async function crearAutoAdmisorioDesdeCalendario(procesoId: string | undefined) {
+    if (!procesoId) return;
+
+    setAutoAdmisorioStateByProcesoId((prev) => ({
+      ...prev,
+      [procesoId]: {
+        loading: true,
+        error: null,
+        result: prev[procesoId]?.result ?? null,
+        emailSending: false,
+        emailResult: prev[procesoId]?.emailResult ?? null,
+        emailError: null,
+      },
+    }));
+
+    try {
+      const res = await fetch("/api/crear-auto-admisorio", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ procesoId, authUserId: user?.id }),
+      });
+      const json = (await res.json().catch(() => null)) as
+        | {
+            fileId: string;
+            fileName: string;
+            webViewLink: string | null;
+            apoderadoEmails?: string[];
+            error?: string;
+            detail?: string;
+          }
+        | null;
+
+      if (!res.ok || !json?.fileId) {
+        throw new Error(json?.detail || json?.error || "No se pudo crear el auto admisorio.");
+      }
+
+      setAutoAdmisorioStateByProcesoId((prev) => ({
+        ...prev,
+        [procesoId]: {
+          loading: false,
+          error: null,
+          result: {
+            fileId: json.fileId,
+            fileName: json.fileName,
+            webViewLink: json.webViewLink ?? null,
+            apoderadoEmails: json.apoderadoEmails,
+          },
+          emailSending: false,
+          emailResult: null,
+          emailError: null,
+        },
+      }));
+    } catch (error) {
+      const message = getErrorMessage(error, "No se pudo crear el auto admisorio.");
+      setAutoAdmisorioStateByProcesoId((prev) => ({
+        ...prev,
+        [procesoId]: {
+          loading: false,
+          error: message,
+          result: prev[procesoId]?.result ?? null,
+          emailSending: prev[procesoId]?.emailSending ?? false,
+          emailResult: prev[procesoId]?.emailResult ?? null,
+          emailError: prev[procesoId]?.emailError ?? null,
+        },
+      }));
+    }
+  }
+
+  async function enviarAutoAdmisorioApoderadosDesdeCalendario(procesoId: string | undefined) {
+    if (!procesoId) return;
+    const state = autoAdmisorioStateByProcesoId[procesoId];
+    if (!state?.result?.webViewLink || state.emailSending) return;
+
+    const emails = state.result.apoderadoEmails ?? [];
+    if (emails.length === 0) {
+      setAutoAdmisorioStateByProcesoId((prev) => ({
+        ...prev,
+        [procesoId]: {
+          ...prev[procesoId],
+          emailError: "No hay apoderados con correo registrado.",
+          emailResult: null,
+        },
+      }));
+      return;
+    }
+
+    setAutoAdmisorioStateByProcesoId((prev) => ({
+      ...prev,
+      [procesoId]: {
+        ...prev[procesoId],
+        emailSending: true,
+        emailError: null,
+        emailResult: null,
+      },
+    }));
+
+    try {
+      const res = await fetch("/api/enviar-acta", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          apoderadoEmails: emails,
+          numeroProceso: getNumeroProceso(procesoId) || procesoId,
+          titulo: "Auto de Admision",
+          fecha: new Date().toISOString().slice(0, 10),
+          webViewLink: state.result.webViewLink,
+        }),
+      });
+
+      const json = (await res.json().catch(() => null)) as
+        | { emailsSent: number; emailErrors?: string[]; error?: string; detail?: string }
+        | null;
+
+      if (!res.ok) {
+        throw new Error(json?.detail || json?.error || "No se pudieron enviar los correos.");
+      }
+
+      setAutoAdmisorioStateByProcesoId((prev) => ({
+        ...prev,
+        [procesoId]: {
+          ...prev[procesoId],
+          emailSending: false,
+          emailError: null,
+          emailResult: { sent: json?.emailsSent ?? 0, errors: json?.emailErrors },
+        },
+      }));
+    } catch (error) {
+      const message = getErrorMessage(error, "No se pudo enviar el auto admisorio por correo.");
+      setAutoAdmisorioStateByProcesoId((prev) => ({
+        ...prev,
+        [procesoId]: {
+          ...prev[procesoId],
+          emailSending: false,
+          emailError: message,
+        },
+      }));
+    }
   }
 
   function abrirDetalleEvento(evento: EventoCalendario) {
@@ -663,6 +952,12 @@ function CalendarioContent() {
                   ) : (
                     eventosDelDia.map((ev) => {
                       const action = getProgresoActionUrl(ev.procesoId, ev.id);
+                      const iniciandoProceso = ev.procesoId ? Boolean(iniciandoProcesoById[ev.procesoId]) : false;
+                      const iniciarProcesoError = ev.procesoId ? iniciarProcesoErrorById[ev.procesoId] : null;
+                      const autoState = getAutoAdmisorioState(ev.procesoId);
+                      const canCrearAutoAdmisorio =
+                        getProgresoEstado(ev.procesoId) === "no_iniciado" &&
+                        tieneApoderadosRegistrados(ev.procesoId);
                       const eventStyle = getEventoStyle(ev.usuarioId);
                       return (
                         <div key={ev.id} style={eventStyle} className="rounded-2xl border border-zinc-200 bg-white/60 p-3 shadow-sm dark:border-white/10 dark:bg-white/5">
@@ -679,13 +974,87 @@ function CalendarioContent() {
                               </p>
                             </div>
                           </div>
-                          {action && (
-                            <Link
-                              href={action.url}
-                              className="mt-3 flex h-9 w-full items-center justify-center rounded-xl bg-zinc-950 text-xs font-medium text-white shadow-sm transition hover:opacity-90 dark:bg-white dark:text-black"
-                            >
-                              {action.label}
-                            </Link>
+                          {(action || canCrearAutoAdmisorio) && (
+                            <div className="mt-3 flex flex-col gap-2">
+                              {action && (
+                                action.requiereIniciar ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => void iniciarProcesoYIrLista(ev.procesoId, action.url)}
+                                    disabled={iniciandoProceso}
+                                    className="flex h-9 w-full items-center justify-center rounded-xl bg-zinc-950 text-xs font-medium text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-black"
+                                  >
+                                    {iniciandoProceso ? "Iniciando..." : action.label}
+                                  </button>
+                                ) : (
+                                  <Link
+                                    href={action.url}
+                                    className="flex h-9 w-full items-center justify-center rounded-xl bg-zinc-950 text-xs font-medium text-white shadow-sm transition hover:opacity-90 dark:bg-white dark:text-black"
+                                  >
+                                    {action.label}
+                                  </Link>
+                                )
+                              )}
+                              {action?.requiereIniciar && iniciarProcesoError && (
+                                <p className="text-[11px] text-red-600 dark:text-red-400">{iniciarProcesoError}</p>
+                              )}
+                              {canCrearAutoAdmisorio && ev.procesoId && (
+                                <button
+                                  type="button"
+                                  onClick={() => void crearAutoAdmisorioDesdeCalendario(ev.procesoId)}
+                                  disabled={autoState?.loading}
+                                  className="flex h-9 w-full items-center justify-center rounded-xl border border-amber-200 bg-amber-50 text-xs font-semibold text-amber-900 shadow-sm transition hover:border-amber-500 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:border-amber-700 dark:hover:bg-amber-950/60"
+                                >
+                                  {autoState?.loading ? "Creando..." : "Crear auto admisorio"}
+                                </button>
+                              )}
+                              {canCrearAutoAdmisorio && autoState?.error && (
+                                <p className="text-[11px] text-red-600 dark:text-red-400">{autoState.error}</p>
+                              )}
+                              {canCrearAutoAdmisorio && autoState?.result?.webViewLink && (
+                                <a
+                                  href={autoState.result.webViewLink}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-[11px] font-semibold text-zinc-700 underline underline-offset-2 dark:text-zinc-200"
+                                >
+                                  Abrir auto admisorio
+                                </a>
+                              )}
+                              {canCrearAutoAdmisorio &&
+                                autoState?.result?.apoderadoEmails &&
+                                autoState.result.apoderadoEmails.length > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void enviarAutoAdmisorioApoderadosDesdeCalendario(ev.procesoId)}
+                                    disabled={autoState.emailSending}
+                                    className="flex h-9 w-full items-center justify-center rounded-xl border border-blue-200 bg-blue-50 text-xs font-semibold text-blue-700 shadow-sm transition hover:border-blue-500 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:border-blue-700 dark:hover:bg-blue-950/60"
+                                  >
+                                    {autoState.emailSending ? "Enviando..." : "Enviar a apoderados"}
+                                  </button>
+                                )}
+                              {canCrearAutoAdmisorio &&
+                                autoState?.result?.apoderadoEmails &&
+                                autoState.result.apoderadoEmails.length === 0 && (
+                                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                                    No hay apoderados con correo registrado
+                                  </p>
+                                )}
+                              {canCrearAutoAdmisorio && autoState?.emailError && (
+                                <p className="text-[11px] text-red-600 dark:text-red-400">{autoState.emailError}</p>
+                              )}
+                              {canCrearAutoAdmisorio && autoState?.emailResult && (
+                                <p className="text-[11px] text-green-600 dark:text-green-400">
+                                  Correos enviados: {autoState.emailResult.sent}
+                                  {autoState.emailResult.errors && autoState.emailResult.errors.length > 0 && (
+                                    <span className="text-amber-600 dark:text-amber-400">
+                                      {" "}
+                                      ({autoState.emailResult.errors.length} fallidos)
+                                    </span>
+                                  )}
+                                </p>
+                              )}
+                            </div>
                           )}
                         </div>
                       );
@@ -710,6 +1079,12 @@ function CalendarioContent() {
               ) : (
                 eventosDelDia.map((ev) => {
                   const action = getProgresoActionUrl(ev.procesoId, ev.id);
+                  const iniciandoProceso = ev.procesoId ? Boolean(iniciandoProcesoById[ev.procesoId]) : false;
+                  const iniciarProcesoError = ev.procesoId ? iniciarProcesoErrorById[ev.procesoId] : null;
+                  const autoState = getAutoAdmisorioState(ev.procesoId);
+                  const canCrearAutoAdmisorio =
+                    getProgresoEstado(ev.procesoId) === "no_iniciado" &&
+                    tieneApoderadosRegistrados(ev.procesoId);
                   const eventStyle = getEventoStyle(ev.usuarioId);
                   return (
                     <div
@@ -729,14 +1104,98 @@ function CalendarioContent() {
                         </div>
                         <button type="button" onClick={(e) => { e.stopPropagation(); eliminarEvento(ev.id); }} className="rounded-full px-3 py-1 text-sm text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-white/10 dark:hover:text-white">Eliminar</button>
                       </div>
-                      {action && (
-                        <Link
-                          href={action.url}
-                          onClick={(e) => e.stopPropagation()}
-                          className="mt-2 flex h-9 w-full items-center justify-center rounded-xl bg-zinc-950 text-xs font-medium text-white shadow-sm transition hover:opacity-90 dark:bg-white dark:text-black"
-                        >
-                          {action.label}
-                        </Link>
+                      {(action || canCrearAutoAdmisorio) && (
+                        <div className="mt-2 flex flex-col gap-2">
+                          {action && (
+                            action.requiereIniciar ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void iniciarProcesoYIrLista(ev.procesoId, action.url);
+                                }}
+                                disabled={iniciandoProceso}
+                                className="flex h-9 w-full items-center justify-center rounded-xl bg-zinc-950 text-xs font-medium text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-black"
+                              >
+                                {iniciandoProceso ? "Iniciando..." : action.label}
+                              </button>
+                            ) : (
+                              <Link
+                                href={action.url}
+                                onClick={(e) => e.stopPropagation()}
+                                className="flex h-9 w-full items-center justify-center rounded-xl bg-zinc-950 text-xs font-medium text-white shadow-sm transition hover:opacity-90 dark:bg-white dark:text-black"
+                              >
+                                {action.label}
+                              </Link>
+                            )
+                          )}
+                          {action?.requiereIniciar && iniciarProcesoError && (
+                            <p className="text-[11px] text-red-600 dark:text-red-400">{iniciarProcesoError}</p>
+                          )}
+                          {canCrearAutoAdmisorio && ev.procesoId && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void crearAutoAdmisorioDesdeCalendario(ev.procesoId);
+                              }}
+                              disabled={autoState?.loading}
+                              className="flex h-9 w-full items-center justify-center rounded-xl border border-amber-200 bg-amber-50 text-xs font-semibold text-amber-900 shadow-sm transition hover:border-amber-500 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:border-amber-700 dark:hover:bg-amber-950/60"
+                            >
+                              {autoState?.loading ? "Creando..." : "Crear auto admisorio"}
+                            </button>
+                          )}
+                          {canCrearAutoAdmisorio && autoState?.error && (
+                            <p className="text-[11px] text-red-600 dark:text-red-400">{autoState.error}</p>
+                          )}
+                          {canCrearAutoAdmisorio && autoState?.result?.webViewLink && (
+                            <a
+                              href={autoState.result.webViewLink}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-[11px] font-semibold text-zinc-700 underline underline-offset-2 dark:text-zinc-200"
+                            >
+                              Abrir auto admisorio
+                            </a>
+                          )}
+                          {canCrearAutoAdmisorio &&
+                            autoState?.result?.apoderadoEmails &&
+                            autoState.result.apoderadoEmails.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void enviarAutoAdmisorioApoderadosDesdeCalendario(ev.procesoId);
+                                }}
+                                disabled={autoState.emailSending}
+                                className="flex h-9 w-full items-center justify-center rounded-xl border border-blue-200 bg-blue-50 text-xs font-semibold text-blue-700 shadow-sm transition hover:border-blue-500 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:border-blue-700 dark:hover:bg-blue-950/60"
+                              >
+                                {autoState.emailSending ? "Enviando..." : "Enviar a apoderados"}
+                              </button>
+                            )}
+                          {canCrearAutoAdmisorio &&
+                            autoState?.result?.apoderadoEmails &&
+                            autoState.result.apoderadoEmails.length === 0 && (
+                              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                                No hay apoderados con correo registrado
+                              </p>
+                            )}
+                          {canCrearAutoAdmisorio && autoState?.emailError && (
+                            <p className="text-[11px] text-red-600 dark:text-red-400">{autoState.emailError}</p>
+                          )}
+                          {canCrearAutoAdmisorio && autoState?.emailResult && (
+                            <p className="text-[11px] text-green-600 dark:text-green-400">
+                              Correos enviados: {autoState.emailResult.sent}
+                              {autoState.emailResult.errors && autoState.emailResult.errors.length > 0 && (
+                                <span className="text-amber-600 dark:text-amber-400">
+                                  {" "}
+                                  ({autoState.emailResult.errors.length} fallidos)
+                                </span>
+                              )}
+                            </p>
+                          )}
+                        </div>
                       )}
                     </div>
                   );
@@ -799,6 +1258,16 @@ function CalendarioContent() {
       {eventoSeleccionado && (() => {
         const action = getProgresoActionUrl(eventoSeleccionado.procesoId, eventoSeleccionado.id);
         const estadoProgreso = getProgresoEstado(eventoSeleccionado.procesoId);
+        const iniciandoProceso = eventoSeleccionado.procesoId
+          ? Boolean(iniciandoProcesoById[eventoSeleccionado.procesoId])
+          : false;
+        const iniciarProcesoError = eventoSeleccionado.procesoId
+          ? iniciarProcesoErrorById[eventoSeleccionado.procesoId]
+          : null;
+        const autoState = getAutoAdmisorioState(eventoSeleccionado.procesoId);
+        const canCrearAutoAdmisorio =
+          estadoProgreso === "no_iniciado" &&
+          tieneApoderadosRegistrados(eventoSeleccionado.procesoId);
         return (
           <div className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center">
             <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={cerrarDetalleEvento} />
@@ -850,14 +1319,101 @@ function CalendarioContent() {
               </div>
 
               <div className="mt-5 flex flex-col gap-3">
-                {action && (
-                  <Link
-                    href={action.url}
-                    className="flex h-11 w-full items-center justify-center rounded-2xl bg-zinc-950 text-sm font-medium text-white shadow-sm transition hover:opacity-90 dark:bg-white dark:text-black"
-                    onClick={cerrarDetalleEvento}
+                {canCrearAutoAdmisorio && eventoSeleccionado.procesoId && (
+                  <button
+                    type="button"
+                    onClick={() => void crearAutoAdmisorioDesdeCalendario(eventoSeleccionado.procesoId)}
+                    disabled={autoState?.loading}
+                    className="flex h-11 w-full items-center justify-center rounded-2xl border border-amber-200 bg-amber-50 px-5 text-sm font-semibold text-amber-900 shadow-sm transition hover:border-amber-500 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:border-amber-700 dark:hover:bg-amber-950/60"
                   >
-                    {action.label}
-                  </Link>
+                    {autoState?.loading ? "Creando..." : "Crear auto admisorio"}
+                  </button>
+                )}
+
+                {action && (
+                  action.requiereIniciar ? (
+                    <button
+                      type="button"
+                      onClick={() => void iniciarProcesoYIrLista(eventoSeleccionado.procesoId, action.url)}
+                      disabled={iniciandoProceso}
+                      className="flex h-11 w-full items-center justify-center rounded-2xl bg-zinc-950 text-sm font-medium text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-black"
+                    >
+                      {iniciandoProceso ? "Iniciando..." : action.label}
+                    </button>
+                  ) : (
+                    <Link
+                      href={action.url}
+                      className="flex h-11 w-full items-center justify-center rounded-2xl bg-zinc-950 text-sm font-medium text-white shadow-sm transition hover:opacity-90 dark:bg-white dark:text-black"
+                      onClick={cerrarDetalleEvento}
+                    >
+                      {action.label}
+                    </Link>
+                  )
+                )}
+                {action?.requiereIniciar && iniciarProcesoError && (
+                  <div className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+                    {iniciarProcesoError}
+                  </div>
+                )}
+
+                {canCrearAutoAdmisorio && autoState?.error && (
+                  <div className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+                    {autoState.error}
+                  </div>
+                )}
+
+                {canCrearAutoAdmisorio && autoState?.result?.webViewLink && (
+                  <a
+                    href={autoState.result.webViewLink}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center justify-center rounded-2xl border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:bg-white/10"
+                  >
+                    Abrir auto admisorio
+                  </a>
+                )}
+
+                {canCrearAutoAdmisorio &&
+                  autoState?.result?.apoderadoEmails &&
+                  autoState.result.apoderadoEmails.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void enviarAutoAdmisorioApoderadosDesdeCalendario(
+                          eventoSeleccionado.procesoId,
+                        )
+                      }
+                      disabled={autoState.emailSending}
+                      className="flex h-11 w-full items-center justify-center rounded-2xl border border-blue-200 bg-blue-50 px-5 text-sm font-semibold text-blue-700 shadow-sm transition hover:border-blue-500 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:border-blue-700 dark:hover:bg-blue-950/60"
+                    >
+                      {autoState.emailSending ? "Enviando..." : "Enviar a apoderados"}
+                    </button>
+                  )}
+
+                {canCrearAutoAdmisorio &&
+                  autoState?.result?.apoderadoEmails &&
+                  autoState.result.apoderadoEmails.length === 0 && (
+                    <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
+                      No hay apoderados con correo registrado.
+                    </div>
+                  )}
+
+                {canCrearAutoAdmisorio && autoState?.emailError && (
+                  <div className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+                    {autoState.emailError}
+                  </div>
+                )}
+
+                {canCrearAutoAdmisorio && autoState?.emailResult && (
+                  <div className="rounded-2xl border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-700 dark:border-green-900 dark:bg-green-950/40 dark:text-green-300">
+                    Correos enviados: {autoState.emailResult.sent}
+                    {autoState.emailResult.errors && autoState.emailResult.errors.length > 0 && (
+                      <span className="text-amber-700 dark:text-amber-300">
+                        {" "}
+                        ({autoState.emailResult.errors.length} fallidos)
+                      </span>
+                    )}
+                  </div>
                 )}
 
                 <div className="flex gap-3">

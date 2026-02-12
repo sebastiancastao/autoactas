@@ -1,7 +1,6 @@
 ﻿"use client";
 
 import { useEffect, useMemo, useRef } from "react";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import ProcesoForm from "@/components/proceso-form";
@@ -39,7 +38,11 @@ export default function RegistroForm({ initialProcesoId, focusSection }: Registr
       ? "deudores"
       : undefined;
 
-  const form = useProcesoForm({ initialProcesoId: normalizedProcesoId, focusedMode: normalizedFocusSection });
+  const form = useProcesoForm({
+    initialProcesoId: normalizedProcesoId,
+    focusedMode: normalizedFocusSection,
+    updateProgresoOnSubmit: false,
+  });
   const modalCreationRef = useRef<FocusSection | null>(null);
   const {
     acreedoresForm,
@@ -277,20 +280,6 @@ export default function RegistroForm({ initialProcesoId, focusSection }: Registr
             Puedes alternar entre acreedores o deudores usando <code>?tipo={tipoParamHint ?? normalizedFocusSection}</code> en la URL.
           </p>
         )}
-        <div className="flex flex-wrap gap-2 pt-2">
-          <Link
-            href="/procesos"
-            className="inline-flex items-center justify-center rounded-full border border-zinc-200 bg-white/80 px-4 py-2 text-xs font-semibold text-zinc-700 shadow-sm transition hover:border-zinc-900 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white"
-          >
-            Ver procesos
-          </Link>
-          <Link
-            href="/calendario"
-            className="inline-flex items-center justify-center rounded-full border border-indigo-200 bg-indigo-100/60 px-4 py-2 text-xs font-semibold text-indigo-700 shadow-sm transition hover:bg-indigo-200/70 dark:border-indigo-400/60 dark:bg-indigo-500/10 dark:text-indigo-50 dark:hover:border-indigo-200 dark:hover:bg-indigo-500/20"
-          >
-            Ir al calendario
-          </Link>
-        </div>
       </div>
       <ProcesoForm
         form={form}
