@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth-context'
 
 export default function LoginPage() {
+  const [nombre, setNombre] = useState('')
+  const [cedula, setCedula] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [isSignUp, setIsSignUp] = useState(false)
@@ -23,7 +25,10 @@ export default function LoginPage() {
 
     try {
       if (isSignUp) {
-        await signUp(email, password)
+        await signUp(email, password, {
+          nombre,
+          identificacion: cedula,
+        })
         setMessage('Revisa tu correo para confirmar tu cuenta')
       } else {
         await signIn(email, password)
@@ -71,6 +76,44 @@ export default function LoginPage() {
                 <div className="rounded-2xl border border-green-200 bg-green-50 p-4 text-sm text-green-700 dark:border-green-500/20 dark:bg-green-500/10 dark:text-green-400">
                   {message}
                 </div>
+              )}
+
+              {isSignUp && (
+                <>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                      Nombre
+                    </label>
+                    <input
+                      id="nombre"
+                      name="nombre"
+                      type="text"
+                      autoComplete="name"
+                      required={isSignUp}
+                      value={nombre}
+                      onChange={(e) => setNombre(e.target.value)}
+                      placeholder="Tu nombre completo"
+                      className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                      Numero de cedula
+                    </label>
+                    <input
+                      id="cedula"
+                      name="cedula"
+                      type="text"
+                      autoComplete="off"
+                      required={isSignUp}
+                      value={cedula}
+                      onChange={(e) => setCedula(e.target.value)}
+                      placeholder="Ej: 1234567890"
+                      className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                    />
+                  </div>
+                </>
               )}
 
               <div>

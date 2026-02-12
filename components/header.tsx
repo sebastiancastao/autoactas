@@ -26,6 +26,12 @@ export function Header() {
         </Link>
 
         <div className="flex items-center gap-4">
+          <Link
+            href="/perfil"
+            className="text-sm font-medium text-zinc-600 transition hover:text-zinc-950 dark:text-zinc-300 dark:hover:text-white"
+          >
+            Mi perfil
+          </Link>
           <span className="hidden text-sm text-zinc-600 dark:text-zinc-400 sm:block">
             {user.email}
           </span>

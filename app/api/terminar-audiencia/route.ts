@@ -1,29 +1,112 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { JWT } from "google-auth-library";
 import {
   AlignmentType,
   Document,
+  Header,
   HeadingLevel,
+  ImageRun,
+  type ISectionOptions,
+  type ISectionPropertiesOptions,
   Packer,
   Paragraph,
   PageOrientation,
+  Tab,
+  TabStopType,
   Table,
   TableCell,
   TableLayoutType,
   TableRow,
-  TextRun,
+  TextRun as DocxTextRun,
   WidthType,
   BorderStyle,
   convertInchesToTwip,
 } from "docx";
+import { promises as fs } from "fs";
+import path from "path";
+import * as XLSX from "xlsx";
 
 import { uploadDocxToGoogleDrive } from "@/lib/google-drive";
 import type { Database } from "@/lib/database.types";
 
 export const runtime = "nodejs";
 
-type UsuarioEvento = Pick<Database["public"]["Tables"]["usuarios"]["Row"], "id" | "nombre" | "email">;
+type UsuarioEvento = Pick<
+  Database["public"]["Tables"]["usuarios"]["Row"],
+  "id" | "nombre" | "email" | "identificacion"
+>;
 type EventoContext = { usuario: UsuarioEvento | null; horaHHMM: string | null };
+
+type TextRunCtorArg = ConstructorParameters<typeof DocxTextRun>[0];
+
+const cp1252ToLatin1Map: Record<string, string> = {
+  "€": "\x80",
+  "‚": "\x82",
+  "ƒ": "\x83",
+  "„": "\x84",
+  "…": "\x85",
+  "†": "\x86",
+  "‡": "\x87",
+  "ˆ": "\x88",
+  "‰": "\x89",
+  "Š": "\x8A",
+  "‹": "\x8B",
+  "Œ": "\x8C",
+  "Ž": "\x8E",
+  "‘": "\x91",
+  "’": "\x92",
+  "“": "\x93",
+  "”": "\x94",
+  "•": "\x95",
+  "–": "\x96",
+  "—": "\x97",
+  "˜": "\x98",
+  "™": "\x99",
+  "š": "\x9A",
+  "›": "\x9B",
+  "œ": "\x9C",
+  "ž": "\x9E",
+  "Ÿ": "\x9F",
+};
+
+function cp1252ToLatin1(value: string) {
+  return value.replace(/[€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ]/g, (ch) => cp1252ToLatin1Map[ch] ?? ch);
+}
+
+function normalizeMojibakeText(value: string) {
+  if (!/[ÃÂâ]/.test(value)) return value;
+  let current = value;
+  for (let i = 0; i < 3; i += 1) {
+    const decoded = Buffer.from(cp1252ToLatin1(current), "latin1").toString("utf8");
+    if (!decoded || decoded === current) break;
+    current = decoded;
+    if (!/[ÃÂâ]/.test(current)) break;
+  }
+  return current;
+}
+
+function hasTextField(value: unknown): value is { text: unknown } {
+  return typeof value === "object" && value !== null && "text" in value;
+}
+
+class TextRun extends DocxTextRun {
+  constructor(options?: TextRunCtorArg) {
+    if (options === undefined) {
+      super("");
+      return;
+    }
+    if (typeof options === "string") {
+      super(normalizeMojibakeText(options));
+      return;
+    }
+    if (hasTextField(options) && typeof options.text === "string") {
+      super({ ...options, text: normalizeMojibakeText(options.text) } as TextRunCtorArg);
+      return;
+    }
+    super(options);
+  }
+}
 
 type Asistente = {
   nombre: string;
@@ -104,6 +187,32 @@ type TerminarAudienciaPayload = {
       fecha_fin_pagos?: string;
     };
   };
+  excelArchivo?: ProcesoExcelArchivoRow;
+};
+
+type ProcesoExcelArchivoRow = Pick<
+  Database["public"]["Tables"]["proceso_excel_archivos"]["Row"],
+  | "id"
+  | "proceso_id"
+  | "original_file_name"
+  | "drive_file_id"
+  | "drive_file_name"
+  | "drive_web_view_link"
+  | "drive_web_content_link"
+  | "created_at"
+>;
+
+type ExcelDocTable = {
+  title: string;
+  headers: string[];
+  rows: string[][];
+  metadata?: Array<{ label: string; value: string }>;
+};
+
+type ExcelDocData = {
+  source: ProcesoExcelArchivoRow;
+  projectionTables: ExcelDocTable[];
+  votingTable: ExcelDocTable | null;
 };
 
 function toErrorMessage(e: unknown) {
@@ -119,6 +228,657 @@ function createSupabaseAdmin() {
   return createClient<Database>(url, serviceKey, {
     auth: { persistSession: false, detectSessionInUrl: false },
   });
+}
+
+async function loadFundaseerHeader(): Promise<Header | null> {
+  const leftPath = path.join(process.cwd(), "fundaseer.png");
+  const rightPath = path.join(process.cwd(), "ministeriodelderecho.png");
+
+  let leftLogo: Buffer | null = null;
+  let rightLogo: Buffer | null = null;
+
+  try {
+    leftLogo = await fs.readFile(leftPath);
+  } catch (error) {
+    console.warn(
+      "[terminar-audiencia] Unable to load header image fundaseer.png:",
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+
+  try {
+    rightLogo = await fs.readFile(rightPath);
+  } catch (error) {
+    console.warn(
+      "[terminar-audiencia] Unable to load header image ministeriodelderecho.png:",
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+
+  if (!leftLogo && !rightLogo) return null;
+
+  const leftSize = { width: 250, height: 184 };
+  const rightSize = { width: 210, height: 45 };
+  const leftLogoRun = leftLogo
+    ? new ImageRun({
+        type: "png",
+        data: leftLogo,
+        transformation: leftSize,
+      })
+    : null;
+  const rightLogoRun = rightLogo
+    ? new ImageRun({
+        type: "png",
+        data: rightLogo,
+        transformation: rightSize,
+      })
+    : null;
+
+  if (leftLogo && !rightLogo) {
+    return new Header({
+      children: [
+        new Paragraph({
+          alignment: AlignmentType.LEFT,
+          children: [leftLogoRun!],
+        }),
+      ],
+    });
+  }
+
+  if (!leftLogo && rightLogo) {
+    return new Header({
+      children: [
+        new Paragraph({
+          alignment: AlignmentType.RIGHT,
+          children: [rightLogoRun!],
+        }),
+      ],
+    });
+  }
+
+  return new Header({
+    children: [
+      new Paragraph({
+        // Shift both logos right in a way Google Docs preserves.
+        indent: { left: convertInchesToTwip(0.85) },
+        tabStops: [
+          {
+            type: TabStopType.RIGHT,
+            position: convertInchesToTwip(8.35),
+          },
+        ],
+        children: [
+          leftLogoRun!,
+          new Tab(),
+          rightLogoRun!,
+        ],
+      }),
+    ],
+  });
+}
+
+function buildSection(
+  page: NonNullable<ISectionPropertiesOptions["page"]>,
+  header: Header | null,
+  children: Array<Paragraph | Table>
+): ISectionOptions {
+  return header
+    ? { properties: { page }, headers: { default: header }, children }
+    : { properties: { page }, children };
+}
+
+function getEnv(name: string) {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing env var: ${name}`);
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function parsePrivateKey(raw: string) {
+  return raw.replace(/\\n/g, "\n");
+}
+
+async function getGoogleDriveAccessToken() {
+  const clientEmail = getEnv("GOOGLE_DRIVE_CLIENT_EMAIL");
+  const privateKey = parsePrivateKey(getEnv("GOOGLE_DRIVE_PRIVATE_KEY"));
+  const jwtClient = new JWT({
+    email: clientEmail,
+    key: privateKey,
+    scopes: ["https://www.googleapis.com/auth/drive.readonly"],
+  });
+  const auth = await jwtClient.authorize();
+  const accessToken = auth?.access_token ?? jwtClient.credentials.access_token ?? null;
+  if (!accessToken) throw new Error("Failed to obtain Google access token.");
+  return accessToken;
+}
+
+async function downloadDriveFileBuffer(fileId: string) {
+  const accessToken = await getGoogleDriveAccessToken();
+  const response = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }
+  );
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(
+      `Google Drive file download failed (${response.status}): ${text || response.statusText}`
+    );
+  }
+  const bytes = await response.arrayBuffer();
+  return Buffer.from(bytes);
+}
+
+function normalizeMatchText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, " ")
+    .trim();
+}
+
+function parseMaybeNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const normalized = raw
+    .replace(/\s/g, "")
+    .replace(/\.(?=\d{3}(\D|$))/g, "")
+    .replace(",", ".")
+    .replace(/[^0-9.-]/g, "");
+  const num = Number(normalized);
+  return Number.isFinite(num) ? num : null;
+}
+
+function sanitizeCellText(value: unknown) {
+  const text = String(value ?? "").trim();
+  return text || "—";
+}
+
+function formatExcelMoneyValue(value: unknown) {
+  const num = parseMaybeNumber(value);
+  if (num !== null) return formatCurrency(num);
+  return sanitizeCellText(value);
+}
+
+function getSheetCellValue(sheet: XLSX.WorkSheet, row1: number, col1: number) {
+  const address = XLSX.utils.encode_cell({ r: row1 - 1, c: col1 - 1 });
+  const cell = sheet[address];
+  if (!cell) return "";
+  if (cell.w !== undefined && cell.w !== null && String(cell.w).trim() !== "") return cell.w;
+  if (cell.v !== undefined && cell.v !== null) return cell.v;
+  return "";
+}
+
+const projectionMetadataDefinitions: Array<{ label: string; aliases: string[] }> = [
+  { label: "ENTIDAD", aliases: ["ENTIDAD", "ACREEDOR"] },
+  { label: "CAPITAL INICIAL", aliases: ["CAPITAL INICIAL", "VALOR DEL CREDITO", "VALOR CREDITO"] },
+  { label: "PLAZO DEL CREDITO", aliases: ["PLAZO DEL CREDITO", "PLAZO CREDITO", "TIEMPO MESES"] },
+  { label: "INTERES MENSUAL", aliases: ["INTERES MENSUAL", "TASA MENSUAL"] },
+  { label: "INTERES ANUAL", aliases: ["INTERES ANUAL", "TASA ANUAL"] },
+  { label: "TOTAL DE CUOTAS", aliases: ["TOTAL DE CUOTAS", "NUMERO DE CUOTAS", "NO CUOTAS"] },
+  { label: "VALOR DE LA CUOTA", aliases: ["VALOR DE LA CUOTA", "CUOTA FIJA"] },
+];
+
+function isProjectionMetadataLabel(text: string) {
+  const norm = normalizeMatchText(text);
+  if (!norm) return false;
+  return projectionMetadataDefinitions.some((def) =>
+    def.aliases.some((alias) => norm === alias || norm.includes(alias))
+  );
+}
+
+function extractProjectionMetadataFromSheet(sheet: XLSX.WorkSheet, sheetName: string) {
+  const matrix = XLSX.utils.sheet_to_json(sheet, {
+    header: 1,
+    raw: false,
+    defval: "",
+    blankrows: false,
+  }) as unknown[][];
+
+  const found = new Map<string, string>();
+  const maxRows = Math.min(matrix.length, 45);
+
+  const resolveValue = (rowIndex: number, colIndex: number) => {
+    const row = matrix[rowIndex] ?? [];
+    for (let c = colIndex + 1; c < Math.min(row.length, colIndex + 9); c += 1) {
+      const candidate = String(row[c] ?? "").trim();
+      if (!candidate || isProjectionMetadataLabel(candidate)) continue;
+      return candidate;
+    }
+
+    for (let r = rowIndex + 1; r <= Math.min(maxRows - 1, rowIndex + 4); r += 1) {
+      const nextRow = matrix[r] ?? [];
+      const sameCol = String(nextRow[colIndex] ?? "").trim();
+      if (sameCol && !isProjectionMetadataLabel(sameCol)) return sameCol;
+      for (let c = 0; c < Math.min(nextRow.length, 12); c += 1) {
+        const candidate = String(nextRow[c] ?? "").trim();
+        if (!candidate || isProjectionMetadataLabel(candidate)) continue;
+        return candidate;
+      }
+    }
+
+    return "";
+  };
+
+  for (let r = 0; r < maxRows; r += 1) {
+    const row = matrix[r] ?? [];
+    for (let c = 0; c < Math.min(row.length, 12); c += 1) {
+      const raw = String(row[c] ?? "").trim();
+      if (!raw) continue;
+      const norm = normalizeMatchText(raw);
+      if (!norm) continue;
+
+      projectionMetadataDefinitions.forEach((def) => {
+        if (found.has(def.label)) return;
+        const matches = def.aliases.some((alias) => norm === alias || norm.includes(alias));
+        if (!matches) return;
+        const value = resolveValue(r, c);
+        if (value) found.set(def.label, value);
+      });
+    }
+  }
+
+  if (!found.has("ENTIDAD")) {
+    found.set("ENTIDAD", sheetName);
+  }
+
+  const capitalInicial = String(getSheetCellValue(sheet, 5, 9) ?? "").trim();
+  if (!found.has("CAPITAL INICIAL") && capitalInicial) {
+    found.set("CAPITAL INICIAL", capitalInicial);
+  }
+
+  const interesMensual = String(getSheetCellValue(sheet, 6, 9) ?? "").trim();
+  if (!found.has("INTERES MENSUAL") && interesMensual) {
+    found.set("INTERES MENSUAL", interesMensual);
+  }
+
+  const plazoCredito = String(getSheetCellValue(sheet, 7, 9) ?? "").trim();
+  if (!found.has("PLAZO DEL CREDITO") && plazoCredito) {
+    found.set("PLAZO DEL CREDITO", plazoCredito);
+  }
+  if (!found.has("TOTAL DE CUOTAS") && plazoCredito) {
+    found.set("TOTAL DE CUOTAS", plazoCredito);
+  }
+
+  const valorCuotaActual = String(found.get("VALOR DE LA CUOTA") ?? "").trim();
+  const valorCuotaNormalizado = normalizeMatchText(valorCuotaActual);
+  const valorCuotaInvalido =
+    !valorCuotaActual ||
+    valorCuotaNormalizado.includes("VALOR TOTAL ACUMULADO") ||
+    valorCuotaNormalizado.includes("TABLA DE AMORTIZACION");
+  if (valorCuotaInvalido) {
+    for (let row1 = 19; row1 <= 60; row1 += 1) {
+      const cuota = parseMaybeNumber(getSheetCellValue(sheet, row1, 5));
+      if (cuota === null || cuota <= 0) continue;
+      const cuotaValue = String(getSheetCellValue(sheet, row1, 17) ?? "").trim();
+      if (cuotaValue) {
+        found.set("VALOR DE LA CUOTA", cuotaValue);
+        break;
+      }
+    }
+  }
+
+  const orderedLabels = projectionMetadataDefinitions.map((def) => def.label);
+  return orderedLabels
+    .map((label) => {
+      const value = found.get(label);
+      if (!value) return null;
+      return { label, value: sanitizeCellText(value) };
+    })
+    .filter((entry): entry is { label: string; value: string } => Boolean(entry));
+}
+
+function extractProjectionTableByHeaders(
+  sheet: XLSX.WorkSheet
+): Pick<ExcelDocTable, "headers" | "rows"> | null {
+  const matrix = XLSX.utils.sheet_to_json(sheet, {
+    header: 1,
+    raw: false,
+    defval: "",
+    blankrows: false,
+  }) as unknown[][];
+  if (matrix.length === 0) return null;
+
+  let headerRowIndex = -1;
+  let selectedColumns: number[] = [];
+
+  for (let r = 0; r < matrix.length; r += 1) {
+    const row = matrix[r] ?? [];
+    const nonEmptyColumns: number[] = [];
+    row.forEach((cell, idx) => {
+      if (String(cell ?? "").trim()) nonEmptyColumns.push(idx);
+    });
+    if (nonEmptyColumns.length < 3) continue;
+
+    const normalizedCells = nonEmptyColumns.map((idx) => normalizeMatchText(String(row[idx] ?? "")));
+    const hasCuota = normalizedCells.some((cell) => cell.includes("CUOTA"));
+    const hasFecha = normalizedCells.some(
+      (cell) => cell.includes("FECHA") || cell.includes("VENCIMIENTO")
+    );
+    const hasValor = normalizedCells.some((cell) => cell.includes("VALOR") || cell.includes("TOTAL"));
+    const hasInteres = normalizedCells.some((cell) => cell.includes("INTERES"));
+    const hasAmortizacion = normalizedCells.some((cell) => cell.includes("AMORT"));
+    const hasSaldo = normalizedCells.some((cell) => cell.includes("SALDO"));
+
+    const score = [hasCuota, hasFecha, hasValor, hasInteres, hasAmortizacion, hasSaldo].filter(Boolean).length;
+    if (score < 3) continue;
+
+    headerRowIndex = r;
+    selectedColumns = nonEmptyColumns;
+    break;
+  }
+
+  if (headerRowIndex < 0 || selectedColumns.length === 0) return null;
+
+  const headerSource = matrix[headerRowIndex] ?? [];
+  const headers = selectedColumns.map((idx) => sanitizeCellText(headerSource[idx]));
+  const rows: string[][] = [];
+  let blankStreak = 0;
+
+  for (let r = headerRowIndex + 1; r < matrix.length; r += 1) {
+    const sourceRow = matrix[r] ?? [];
+    const hasAny = selectedColumns.some((idx) => String(sourceRow[idx] ?? "").trim());
+    if (!hasAny) {
+      blankStreak += 1;
+      if (rows.length > 0 && blankStreak >= 10) break;
+      continue;
+    }
+    blankStreak = 0;
+    rows.push(selectedColumns.map((idx) => sanitizeCellText(sourceRow[idx])));
+  }
+
+  return rows.length > 0 ? { headers, rows } : null;
+}
+
+function extractProjectionTableByFixedColumns(
+  sheet: XLSX.WorkSheet
+): Pick<ExcelDocTable, "headers" | "rows"> | null {
+  const headers = ["Cuota", "Vencimiento", "Saldo capital", "Abono capital", "Intereses", "Total cuota"];
+
+  const ref = sheet["!ref"];
+  if (!ref) return null;
+  const range = XLSX.utils.decode_range(ref);
+  const maxRow = range.e.r + 1;
+  const term = Math.max(1, Math.trunc(parseMaybeNumber(getSheetCellValue(sheet, 7, 9)) ?? 120));
+  const upperRow = Math.min(maxRow, 19 + term + 60);
+
+  const rows: string[][] = [];
+  let blankStreak = 0;
+  for (let row1 = 18; row1 <= upperRow; row1 += 1) {
+    const cuotaRaw = getSheetCellValue(sheet, row1, 5);
+    const vencimientoDiaRaw = getSheetCellValue(sheet, row1, 6);
+    const vencimientoMesRaw = getSheetCellValue(sheet, row1, 7);
+    const vencimientoAnioRaw = getSheetCellValue(sheet, row1, 8);
+    const saldoCapitalRaw = getSheetCellValue(sheet, row1, 9);
+    const abonoCapitalRaw = getSheetCellValue(sheet, row1, 14);
+    const interesesRaw = getSheetCellValue(sheet, row1, 16);
+    const totalCuotaRaw = getSheetCellValue(sheet, row1, 17);
+
+    const cuota = parseMaybeNumber(cuotaRaw);
+    const vencimientoDia = sanitizeCellText(vencimientoDiaRaw);
+    const vencimientoMes = sanitizeCellText(vencimientoMesRaw);
+    const vencimientoAnio = sanitizeCellText(vencimientoAnioRaw);
+    const hasAny =
+      String(cuotaRaw ?? "").trim() ||
+      String(vencimientoDiaRaw ?? "").trim() ||
+      String(saldoCapitalRaw ?? "").trim() ||
+      String(abonoCapitalRaw ?? "").trim() ||
+      String(interesesRaw ?? "").trim() ||
+      String(totalCuotaRaw ?? "").trim();
+
+    if (!hasAny) {
+      blankStreak += 1;
+      if (rows.length > 0 && blankStreak >= 12) break;
+      continue;
+    }
+    blankStreak = 0;
+
+    if (cuota === null || cuota < 0) continue;
+
+    rows.push([
+      cuota === 0 ? "" : String(Math.trunc(cuota)),
+      `${vencimientoDia} ${vencimientoMes} ${vencimientoAnio}`.trim(),
+      formatExcelMoneyValue(saldoCapitalRaw),
+      formatExcelMoneyValue(abonoCapitalRaw),
+      formatExcelMoneyValue(interesesRaw),
+      formatExcelMoneyValue(totalCuotaRaw),
+    ]);
+
+    if (rows.length >= term + 1) break;
+  }
+
+  return rows.length > 0 ? { headers, rows } : null;
+}
+
+function extractProjectionTablesFromWorkbook(workbook: XLSX.WorkBook) {
+  const tables: ExcelDocTable[] = [];
+
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName];
+    if (!sheet) continue;
+
+    const metadata = extractProjectionMetadataFromSheet(sheet, sheetName);
+    const headerTable = extractProjectionTableByHeaders(sheet);
+    const fixedTable = extractProjectionTableByFixedColumns(sheet);
+    const selectedTable =
+      headerTable && headerTable.headers.length >= 5 ? headerTable : fixedTable ?? headerTable;
+
+    if (!selectedTable || selectedTable.rows.length === 0) continue;
+
+    tables.push({
+      title: `Proyeccion ${sheetName}`,
+      headers: selectedTable.headers,
+      rows: selectedTable.rows,
+      metadata,
+    });
+  }
+
+  return tables;
+}
+function extractVotingTableFromWorkbook(workbook: XLSX.WorkBook): ExcelDocTable | null {
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName];
+    if (!sheet) continue;
+    const matrix = XLSX.utils.sheet_to_json(sheet, {
+      header: 1,
+      raw: false,
+      defval: "",
+      blankrows: false,
+    }) as unknown[][];
+    if (matrix.length === 0) continue;
+
+    let headerRowIndex = -1;
+    let selectedColumns: number[] = [];
+
+    for (let i = 0; i < matrix.length; i += 1) {
+      const row = matrix[i] ?? [];
+      const normalizedRow = row.map((cell) => normalizeMatchText(String(cell ?? "")));
+      const hasVote = normalizedRow.some((cell) => cell.includes("VOTO") || cell.includes("VOTACION"));
+      const hasCreditor = normalizedRow.some(
+        (cell) => cell.includes("ACREEDOR") || cell.includes("APODERADO")
+      );
+      const hasPercent = normalizedRow.some(
+        (cell) => cell === "%" || cell.includes("PORCENT")
+      );
+      if (!hasVote || !hasCreditor || !hasPercent) continue;
+
+      const cols: number[] = [];
+      row.forEach((cell, idx) => {
+        if (String(cell ?? "").trim()) cols.push(idx);
+      });
+      if (cols.length < 3) continue;
+
+      headerRowIndex = i;
+      selectedColumns = cols;
+      break;
+    }
+
+    if (headerRowIndex < 0 || selectedColumns.length === 0) continue;
+
+    const headerSource = matrix[headerRowIndex] ?? [];
+    const headers = selectedColumns.map((idx) => sanitizeCellText(headerSource[idx]));
+    const rows: string[][] = [];
+    let blankStreak = 0;
+    for (let i = headerRowIndex + 1; i < matrix.length; i += 1) {
+      const sourceRow = matrix[i] ?? [];
+      const row = selectedColumns.map((idx) => sanitizeCellText(sourceRow[idx]));
+      const hasAny = row.some((cell) => cell !== "—");
+      if (!hasAny) {
+        blankStreak += 1;
+        if (rows.length > 0 && blankStreak >= 3) break;
+        continue;
+      }
+      blankStreak = 0;
+      rows.push(row);
+    }
+
+    if (rows.length > 0) {
+      return {
+        title: `VotaciÃ³n ${sheetName}`,
+        headers,
+        rows,
+      };
+    }
+  }
+
+  return null;
+}
+
+function filterProjectionTablesByAcreedores(
+  tables: ExcelDocTable[],
+  acreencias: AcreenciaRow[]
+) {
+  if (tables.length === 0 || acreencias.length === 0) return tables;
+
+  const acreedorTokens = acreencias
+    .map((a) => normalizeMatchText(String(a.acreedor ?? "")))
+    .filter(Boolean)
+    .flatMap((name) => name.split(" ").filter((token) => token.length >= 4));
+
+  if (acreedorTokens.length === 0) return tables;
+
+  const matched = tables.filter((table) => {
+    const normTitle = normalizeMatchText(table.title);
+    const compactTitle = normTitle.replace(/\s+/g, "");
+    return acreedorTokens.some(
+      (token) =>
+        normTitle.includes(token) ||
+        compactTitle.includes(token) ||
+        token.includes(compactTitle)
+    );
+  });
+
+  return matched.length > 0 ? matched : tables;
+}
+
+async function loadExcelDocData(
+  procesoId: string,
+  acreencias: AcreenciaRow[],
+  excelArchivo?: ProcesoExcelArchivoRow,
+  debug = false
+): Promise<ExcelDocData | null> {
+  const parseExcelFromSource = async (
+    source: ProcesoExcelArchivoRow,
+    sourceLabel: "payload" | "database"
+  ): Promise<ExcelDocData> => {
+    const fileBuffer = await downloadDriveFileBuffer(source.drive_file_id);
+    const workbook = XLSX.read(fileBuffer, {
+      type: "buffer",
+      raw: false,
+      cellFormula: false,
+      cellDates: true,
+    });
+    const projectionTables = extractProjectionTablesFromWorkbook(workbook);
+    const votingTable = extractVotingTableFromWorkbook(workbook);
+    if (debug) {
+      console.log("[terminar-audiencia] Excel parsed", {
+        source: sourceLabel,
+        driveFileId: source.drive_file_id,
+        driveFileName: source.drive_file_name,
+        projectionTables: projectionTables.length,
+        projectionRows: projectionTables.reduce((acc, table) => acc + table.rows.length, 0),
+        votingRows: votingTable?.rows.length ?? 0,
+      });
+    }
+
+    return {
+      source,
+      projectionTables,
+      votingTable,
+    };
+  };
+
+  const payloadSource =
+    excelArchivo?.proceso_id === procesoId && String(excelArchivo.drive_file_id ?? "").trim()
+      ? excelArchivo
+      : null;
+
+  if (debug) {
+    console.log("[terminar-audiencia] Excel payload source", {
+      hasPayloadSource: Boolean(payloadSource),
+      payloadProcesoId: excelArchivo?.proceso_id ?? null,
+      payloadDriveFileId: excelArchivo?.drive_file_id ?? null,
+    });
+  }
+
+  if (payloadSource) {
+    try {
+      return await parseExcelFromSource(payloadSource, "payload");
+    } catch (err) {
+      console.warn(
+        "[terminar-audiencia] Unable to parse excel from payload source:",
+        err instanceof Error ? err.message : String(err)
+      );
+    }
+  }
+
+  const supabase = createSupabaseAdmin();
+  if (!supabase) {
+    if (debug) {
+      console.warn("[terminar-audiencia] Supabase admin client unavailable while loading excel.");
+    }
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from("proceso_excel_archivos")
+    .select(
+      "id, proceso_id, original_file_name, drive_file_id, drive_file_name, drive_web_view_link, drive_web_content_link, created_at"
+    )
+    .eq("proceso_id", procesoId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("[terminar-audiencia] Unable to load excel metadata:", error.message);
+    return null;
+  }
+  if (!data) {
+    if (debug) {
+      console.warn("[terminar-audiencia] No excel metadata row found for proceso:", procesoId);
+    }
+    return null;
+  }
+
+  try {
+    return await parseExcelFromSource(data as ProcesoExcelArchivoRow, "database");
+  } catch (err) {
+    console.warn(
+      "[terminar-audiencia] Unable to parse excel from Drive:",
+      err instanceof Error ? err.message : String(err)
+    );
+    return null;
+  }
 }
 
 function normalizeHoraHHMM(value: string | null | undefined) {
@@ -160,7 +920,7 @@ async function loadEventoUsuario(params: {
     if (evt?.usuario_id) {
       const { data: usuario, error: userErr } = await supabase
         .from("usuarios")
-        .select("id, nombre, email")
+        .select("id, nombre, email, identificacion")
         .eq("id", evt.usuario_id)
         .maybeSingle();
       if (userErr) {
@@ -197,7 +957,7 @@ async function loadEventoUsuario(params: {
 
   const { data: usuario, error: userErr } = await supabase
     .from("usuarios")
-    .select("id, nombre, email")
+    .select("id, nombre, email, identificacion")
     .eq("id", usuarioId)
     .maybeSingle();
 
@@ -233,7 +993,28 @@ function parseCuotas(value: string | null | undefined) {
   return Number.isFinite(n) ? Math.trunc(n) : null;
 }
 
+function hasPropuestaPagoData(payload: TerminarAudienciaPayload) {
+  type PropuestaClase = NonNullable<TerminarAudienciaPayload["propuestaPago"]>["primera_clase"];
+  const p = payload.propuestaPago ?? {};
+  const blocks: Array<keyof NonNullable<TerminarAudienciaPayload["propuestaPago"]>> = [
+    "primera_clase",
+    "tercera_clase",
+    "quinta_clase",
+  ];
+  return blocks.some((key) => {
+    const b = p[key] as PropuestaClase | undefined;
+    if (!b) return false;
+    return Boolean(
+      String(b.numero_cuotas ?? "").trim() ||
+      String(b.interes_reconocido ?? "").trim() ||
+      String(b.inicio_pagos ?? "").trim() ||
+      String(b.fecha_fin_pagos ?? "").trim()
+    );
+  });
+}
+
 function buildPropuestaPagoParagraphs(payload: TerminarAudienciaPayload): Paragraph[] {
+  type PropuestaClase = NonNullable<TerminarAudienciaPayload["propuestaPago"]>["primera_clase"];
   const p = payload.propuestaPago ?? {};
 
   const blocks: Array<{
@@ -246,7 +1027,7 @@ function buildPropuestaPagoParagraphs(payload: TerminarAudienciaPayload): Paragr
   ];
 
   const hasAny = blocks.some(({ key }) => {
-    const b = (p as any)?.[key] as any;
+    const b = p[key] as PropuestaClase | undefined;
     if (!b) return false;
     return Boolean(
       String(b.numero_cuotas ?? "").trim() ||
@@ -269,7 +1050,7 @@ function buildPropuestaPagoParagraphs(payload: TerminarAudienciaPayload): Paragr
   const out: Paragraph[] = [];
 
   blocks.forEach(({ key, title }) => {
-    const b = (p as any)?.[key] as any;
+    const b = p[key] as PropuestaClase | undefined;
     if (!b) return;
 
     const cuotas = parseCuotas(b.numero_cuotas);
@@ -292,28 +1073,28 @@ function buildPropuestaPagoParagraphs(payload: TerminarAudienciaPayload): Paragr
     if (cuotas !== null) {
       const label = cuotas === 1 ? "1 cuota mensual" : `${cuotas} cuotas mensuales`;
       out.push(new Paragraph({
-        children: [new TextRun({ text: `• Número de cuotas: ${label}.` })],
+        children: [new TextRun({ text: `â€¢ NÃºmero de cuotas: ${label}.` })],
         spacing: { after: 80 },
         indent: { left: convertInchesToTwip(0.3) },
       }));
     }
     if (interes) {
       out.push(new Paragraph({
-        children: [new TextRun({ text: `• Interés reconocido: ${interes.replace(/\.$/, "")}.` })],
+        children: [new TextRun({ text: `â€¢ InterÃ©s reconocido: ${interes.replace(/\.$/, "")}.` })],
         spacing: { after: 80 },
         indent: { left: convertInchesToTwip(0.3) },
       }));
     }
     if (inicioKey) {
       out.push(new Paragraph({
-        children: [new TextRun({ text: `• Inicio de pagos: ${formatDateLong(inicioKey)}.` })],
+        children: [new TextRun({ text: `â€¢ Inicio de pagos: ${formatDateLong(inicioKey)}.` })],
         spacing: { after: 80 },
         indent: { left: convertInchesToTwip(0.3) },
       }));
     }
     if (finKey) {
       out.push(new Paragraph({
-        children: [new TextRun({ text: `• Fecha fin pagos: ${formatDateLong(finKey)}.` })],
+        children: [new TextRun({ text: `â€¢ Fecha fin pagos: ${formatDateLong(finKey)}.` })],
         spacing: { after: 80 },
         indent: { left: convertInchesToTwip(0.3) },
       }));
@@ -399,7 +1180,7 @@ async function saveActaAudienciaSnapshot(params: {
 
 function formatDateParts(value: string) {
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return { day: "—", month: "—", year: "—" };
+  if (Number.isNaN(parsed.getTime())) return { day: "â€”", month: "â€”", year: "â€”" };
   return {
     day: parsed.getDate().toString(),
     month: parsed.toLocaleDateString("es-CO", { month: "long" }),
@@ -436,17 +1217,17 @@ function numberToSpanish0to99(n: number): string {
     13: "trece",
     14: "catorce",
     15: "quince",
-    16: "dieciséis",
+    16: "diecisÃ©is",
     17: "diecisiete",
     18: "dieciocho",
     19: "diecinueve",
     20: "veinte",
     21: "veintiuno",
-    22: "veintidós",
-    23: "veintitrés",
+    22: "veintidÃ³s",
+    23: "veintitrÃ©s",
     24: "veinticuatro",
     25: "veinticinco",
-    26: "veintiséis",
+    26: "veintisÃ©is",
     27: "veintisiete",
     28: "veintiocho",
     29: "veintinueve",
@@ -483,7 +1264,7 @@ function yearToSpanishWords(year: number): string {
 
 function formatAutoNulidadFechaLinea(ciudad: string, fechaKey: string) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(fechaKey).trim());
-  if (!m) return `${ciudad}, a los [DIA] días del mes de [MES] del año [AÑO].`;
+  if (!m) return `${ciudad}, a los [DIA] dÃ­as del mes de [MES] del aÃ±o [AÃ‘O].`;
 
   const year = Number(m[1]);
   const month = Number(m[2]);
@@ -508,7 +1289,7 @@ function formatAutoNulidadFechaLinea(ciudad: string, fechaKey: string) {
   const dayWord = capitalizeFirst(numberToSpanish0to99(day));
   const yearWords = yearToSpanishWords(year);
 
-  return `${ciudad}, a los ${dayWord} (${day}) días del mes de ${monthName} del año ${yearWords} (${year}).`;
+  return `${ciudad}, a los ${dayWord} (${day}) dÃ­as del mes de ${monthName} del aÃ±o ${yearWords} (${year}).`;
 }
 
 type HoraActa = {
@@ -673,6 +1454,105 @@ const tableBorders = {
   insideVertical: { style: BorderStyle.SINGLE, size: 1, color: "000000" },
 };
 
+function isNumericLikeText(value: string) {
+  return /^[\d\s.,$%()-]+$/.test(value.trim());
+}
+
+function createExcelMetadataTable(metadata: Array<{ label: string; value: string }>) {
+  const tableWidth = convertInchesToTwip(8.5 - 1.2);
+  const columnWidths = [62, 38].map((pct) => Math.round((tableWidth * pct) / 100));
+  const currentTotal = columnWidths.reduce((sum, width) => sum + width, 0);
+  if (currentTotal !== tableWidth) {
+    columnWidths[columnWidths.length - 1] += tableWidth - currentTotal;
+  }
+
+  return new Table({
+    rows: metadata.map(
+      (item) =>
+        new TableRow({
+          children: [
+            new TableCell({
+              children: [
+                new Paragraph({
+                  children: [new TextRun({ text: item.label, bold: true, size: 20 })],
+                }),
+              ],
+              borders: tableBorders,
+            }),
+            new TableCell({
+              children: [
+                new Paragraph({
+                  children: [new TextRun({ text: item.value, size: 20 })],
+                  alignment: isNumericLikeText(item.value) ? AlignmentType.RIGHT : AlignmentType.LEFT,
+                }),
+              ],
+              borders: tableBorders,
+            }),
+          ],
+        })
+    ),
+    width: { size: tableWidth, type: WidthType.DXA },
+    columnWidths,
+    margins: { top: 40, bottom: 40, left: 40, right: 40 },
+    layout: TableLayoutType.FIXED,
+    alignment: AlignmentType.CENTER,
+  });
+}
+
+function createExcelDocTable(table: ExcelDocTable) {
+  const tableWidth = convertInchesToTwip(8.5 - 1.2);
+  const colCount = Math.max(1, table.headers.length);
+  const baseWidth = Math.floor(tableWidth / colCount);
+  const columnWidths = Array.from({ length: colCount }, () => baseWidth);
+  const currentTotal = columnWidths.reduce((sum, width) => sum + width, 0);
+  if (currentTotal !== tableWidth) {
+    columnWidths[columnWidths.length - 1] += tableWidth - currentTotal;
+  }
+
+  const headerRow = new TableRow({
+    children: table.headers.map(
+      (header) =>
+        new TableCell({
+          children: [
+            new Paragraph({
+              children: [new TextRun({ text: header, bold: true, size: 20 })],
+              alignment: AlignmentType.CENTER,
+            }),
+          ],
+          borders: tableBorders,
+          shading: { fill: "E0E0E0" },
+        })
+    ),
+  });
+
+  const bodyRows = table.rows.map(
+    (row) =>
+      new TableRow({
+        children: table.headers.map((_, idx) => {
+          const value = sanitizeCellText(row[idx]);
+          return new TableCell({
+            children: [
+              new Paragraph({
+                children: [new TextRun({ text: value, size: 18 })],
+                alignment: isNumericLikeText(value) ? AlignmentType.RIGHT : AlignmentType.LEFT,
+              }),
+            ],
+            borders: tableBorders,
+          });
+        }),
+      })
+  );
+
+  return new Table({
+    rows: [headerRow, ...bodyRows],
+    width: { size: tableWidth, type: WidthType.DXA },
+    columnWidths,
+    margins: { top: 40, bottom: 40, left: 40, right: 40 },
+    layout: TableLayoutType.FIXED,
+    alignment: AlignmentType.CENTER,
+  });
+}
+
 function createAcreenciasTable(acreencias: AcreenciaRow[]) {
   const headers = ["ACREEDOR", "NATURALEZA", "PRELACION", "CAPITAL", "INT. CTE.", "INT. MORA", "OTROS COBROS/ SEGUROS", "TOTAL", "%"];
   const columnWidths = [18, 10, 8, 11, 9, 9, 14, 13, 8];
@@ -717,15 +1597,15 @@ function createAcreenciasTable(acreencias: AcreenciaRow[]) {
       new TableRow({
         children: [
           new TableCell({
-            children: [new Paragraph({ children: [new TextRun({ text: a.acreedor?.trim() || "—", size: 18 })] })],
+            children: [new Paragraph({ children: [new TextRun({ text: a.acreedor?.trim() || "â€”", size: 18 })] })],
             borders: tableBorders,
           }),
           new TableCell({
-            children: [new Paragraph({ children: [new TextRun({ text: a.naturaleza?.trim() || "—", size: 18 })] })],
+            children: [new Paragraph({ children: [new TextRun({ text: a.naturaleza?.trim() || "â€”", size: 18 })] })],
             borders: tableBorders,
           }),
           new TableCell({
-            children: [new Paragraph({ children: [new TextRun({ text: a.prelacion?.trim() || "—", size: 18 })], alignment: AlignmentType.CENTER })],
+            children: [new Paragraph({ children: [new TextRun({ text: a.prelacion?.trim() || "â€”", size: 18 })], alignment: AlignmentType.CENTER })],
             borders: tableBorders,
           }),
           new TableCell({
@@ -809,7 +1689,7 @@ function createAcreenciasTable(acreencias: AcreenciaRow[]) {
   });
 }
 
-function buildAsistentesParagraphs(asistentes: Asistente[], deudorNombre?: string): Paragraph[] {
+function buildAsistentesParagraphs(asistentes: Asistente[]): Paragraph[] {
   const paragraphs: Paragraph[] = [];
 
   // Filter only present attendees (Presentes)
@@ -819,12 +1699,16 @@ function buildAsistentesParagraphs(asistentes: Asistente[], deudorNombre?: strin
     const parts: TextRun[] = [];
 
     if (asistente.categoria === "Apoderado") {
-      // Format: NAME, ciudadano mayor de edad, e identificado con cedula de ciudadanía número X,
-      // portador de la tarjeta profesional No. X del CSJ, con correo electrónico X,
+      const calidad = String(asistente.calidadApoderadoDe ?? "").trim();
+      const calidadLower = calidad.toLowerCase();
+      if (!calidadLower.includes("acreedor")) return;
+
+      // Format: NAME, ciudadano mayor de edad, e identificado con cedula de ciudadanÃ­a nÃºmero X,
+      // portador de la tarjeta profesional No. X del CSJ, con correo electrÃ³nico X,
       // en calidad de apoderado de [DEUDOR/ACREEDOR]
       parts.push(new TextRun({ text: asistente.nombre.toUpperCase(), bold: true }));
-      parts.push(new TextRun({ text: ", ciudadana mayor de edad, e identificada con cedula de ciudadanía número " }));
-      parts.push(new TextRun({ text: asistente.identificacion || "[IDENTIFICACIÓN]" }));
+      parts.push(new TextRun({ text: ", ciudadana mayor de edad, e identificada con cedula de ciudadanÃ­a nÃºmero " }));
+      parts.push(new TextRun({ text: asistente.identificacion || "[IDENTIFICACIÃ“N]" }));
 
       if (asistente.tarjetaProfesional) {
         parts.push(new TextRun({ text: ", portadora de la tarjeta profesional No. " }));
@@ -833,16 +1717,13 @@ function buildAsistentesParagraphs(asistentes: Asistente[], deudorNombre?: strin
       }
 
       if (asistente.email) {
-        parts.push(new TextRun({ text: ", con correo electrónico " }));
+        parts.push(new TextRun({ text: ", con correo electrÃ³nico " }));
         parts.push(new TextRun({ text: asistente.email }));
       }
 
-      if (asistente.calidadApoderadoDe) {
+      if (calidad) {
         parts.push(new TextRun({ text: ", en calidad de apoderada de " }));
-        parts.push(new TextRun({ text: asistente.calidadApoderadoDe }));
-      } else if (deudorNombre) {
-        parts.push(new TextRun({ text: ", en calidad de apoderada del deudor insolvente el señor " }));
-        parts.push(new TextRun({ text: deudorNombre.toUpperCase() }));
+        parts.push(new TextRun({ text: calidad }));
       }
       parts.push(new TextRun({ text: "." }));
     } else if (asistente.categoria === "Acreedor") {
@@ -855,7 +1736,7 @@ function buildAsistentesParagraphs(asistentes: Asistente[], deudorNombre?: strin
       } else {
         parts.push(new TextRun({ text: asistente.nombre.toUpperCase(), bold: true }));
         if (asistente.identificacion) {
-          parts.push(new TextRun({ text: ", identificado con cédula de ciudadanía No. " }));
+          parts.push(new TextRun({ text: ", identificado con cÃ©dula de ciudadanÃ­a No. " }));
           parts.push(new TextRun({ text: asistente.identificacion }));
         }
         parts.push(new TextRun({ text: "." }));
@@ -882,10 +1763,10 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
   const deudorId =
     payload.deudor?.identificacion != null && String(payload.deudor.identificacion).trim()
       ? String(payload.deudor.identificacion).trim()
-      : "[IDENTIFICACIÓN]";
+      : "[IDENTIFICACIÃ“N]";
 
   let operadorNombre = payload.operador?.nombre || "JOSE ALEJANDRO PARDO MARTINEZ";
-  const operadorId = payload.operador?.identificacion || "1.154.967.376";
+  let operadorId = payload.operador?.identificacion || "1.154.967.376";
   const operadorTp = payload.operador?.tarjetaProfesional || "429.496";
   let operadorEmail = payload.operador?.email || "fundaseer@gmail.com";
 
@@ -893,19 +1774,31 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
   // Respect operador explicitly provided by the client; only fall back to evento owner if missing.
   const defaultOperadorNombre = "JOSE ALEJANDRO PARDO MARTINEZ";
   const defaultOperadorEmail = "fundaseer@gmail.com";
+  const defaultOperadorIdentificacion = "1.154.967.376";
   const payloadOperadorNombre = payload.operador?.nombre?.trim() ?? "";
   const payloadOperadorEmail = payload.operador?.email?.trim() ?? "";
+  const payloadOperadorIdentificacion = payload.operador?.identificacion?.trim() ?? "";
   const shouldUseEventoNombre =
     !payloadOperadorNombre || payloadOperadorNombre.toUpperCase() === defaultOperadorNombre;
   const shouldUseEventoEmail =
     !payloadOperadorEmail || payloadOperadorEmail.toLowerCase() === defaultOperadorEmail;
+  const shouldUseEventoIdentificacion =
+    !payloadOperadorIdentificacion ||
+    payloadOperadorIdentificacion === defaultOperadorIdentificacion;
 
   if (shouldUseEventoNombre && eventoContext?.usuario?.nombre) operadorNombre = eventoContext.usuario.nombre;
   if (shouldUseEventoEmail && eventoContext?.usuario?.email) operadorEmail = eventoContext.usuario.email;
+  if (
+    shouldUseEventoIdentificacion &&
+    eventoContext?.usuario?.identificacion &&
+    String(eventoContext.usuario.identificacion).trim()
+  ) {
+    operadorId = String(eventoContext.usuario.identificacion).trim();
+  }
 
   const proximaFecha = payload.proximaAudiencia?.fecha
     ? formatDateLong(payload.proximaAudiencia.fecha)
-    : "[FECHA PRÓXIMA AUDIENCIA]";
+    : "[FECHA PRÃ“XIMA AUDIENCIA]";
   const proximaHora = payload.proximaAudiencia?.hora || "9:30 AM";
 
   const portraitBefore: (Paragraph | Table)[] = [];
@@ -928,6 +1821,23 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
   // Title
   const tipoDoc = (payload.tipoDocumento || "ACTA AUDIENCIA").trim().toUpperCase();
   const isBilateralFracaso = tipoDoc === "ACUERDO DE PAGO BILATERAL Y FRACASO DEL TRAMITE";
+  const excelDocData = await loadExcelDocData(
+    payload.procesoId,
+    payload.acreencias,
+    payload.excelArchivo,
+    payload.debug === true
+  );
+  const docHeader = await loadFundaseerHeader();
+  if (payload.debug) {
+    console.log("[buildDocx] Document type / excel summary", {
+      tipoDoc,
+      hasExcelDocData: Boolean(excelDocData),
+      projectionTables: excelDocData?.projectionTables.length ?? 0,
+      votingRows: excelDocData?.votingTable?.rows.length ?? 0,
+      excelDriveFileId: excelDocData?.source.drive_file_id ?? null,
+      excelDriveFileName: excelDocData?.source.drive_file_name ?? null,
+    });
+  }
   const docTitle = isBilateralFracaso
     ? "ACTA DE ACUERDO DE PAGO BILATERAL Y FRACASO DEL TRAMITE"
     : tipoDoc;
@@ -946,7 +1856,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
     }));
 
     portraitBefore.push(new Paragraph({
-      children: [new TextRun({ text: "PROCESO DE NEGOCIACIÓN DE DEUDAS", bold: true, size: 24 })],
+      children: [new TextRun({ text: "PROCESO DE NEGOCIACIÃ“N DE DEUDAS", bold: true, size: 24 })],
       alignment: AlignmentType.CENTER,
       spacing: { after: 260 },
     }));
@@ -975,7 +1885,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
       children: [
         new TextRun({
           text:
-            "Se informa a las partes que realizando un control de legalidad posterior, se avizora que la deudora insolvente manifiesta que el poder aportado no fue suscrito por ella, razón por la cual en cumplimiento con el parágrafo 1 del articulo 539 de la ley 1564 de 2012, modificada por el articulo 10 de la ley 2445 de 2025 se procederá con lo correspondiente.",
+            "Se informa a las partes que realizando un control de legalidad posterior, se avizora que la deudora insolvente manifiesta que el poder aportado no fue suscrito por ella, razÃ³n por la cual en cumplimiento con el parÃ¡grafo 1 del articulo 539 de la ley 1564 de 2012, modificada por el articulo 10 de la ley 2445 de 2025 se procederÃ¡ con lo correspondiente.",
         }),
       ],
       spacing: { after: 200 },
@@ -990,7 +1900,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
       children: [
         new TextRun({
           text:
-            "El operador de insolvencia, investido de facultades jurisdiccionales establecidas en el numeral 4 del Artículo 116 de la C.P, numeral 3 del Artículo 13 de la Ley Estatutaria de Justicia y el Parágrafo del Artículo 537 del Código General del Proceso, de conformidad a lo establecido en el Artículo 132 del Código General del Proceso, realiza Control de Legalidad con el objeto de sanear los vicios y errores que se hayan podido causar en el Auto de Admisión y, en este sentido tenemos que se genera una nulidad en virtud a la falta de firma y soporte de remisión de poder especial por parte de la deudora el cual fue aportado por parte de la firma jurídica que radicó su solicitud de insolvencia.",
+            "El operador de insolvencia, investido de facultades jurisdiccionales establecidas en el numeral 4 del ArtÃ­culo 116 de la C.P, numeral 3 del ArtÃ­culo 13 de la Ley Estatutaria de Justicia y el ParÃ¡grafo del ArtÃ­culo 537 del CÃ³digo General del Proceso, de conformidad a lo establecido en el ArtÃ­culo 132 del CÃ³digo General del Proceso, realiza Control de Legalidad con el objeto de sanear los vicios y errores que se hayan podido causar en el Auto de AdmisiÃ³n y, en este sentido tenemos que se genera una nulidad en virtud a la falta de firma y soporte de remisiÃ³n de poder especial por parte de la deudora el cual fue aportado por parte de la firma jurÃ­dica que radicÃ³ su solicitud de insolvencia.",
         }),
       ],
       spacing: { after: 200 },
@@ -1000,7 +1910,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
       children: [
         new TextRun({
           text:
-            "Por lo que, en consecuencia, se acoge la petición como nulidad absoluta que no pueda sanearse en este estado del proceso por lo que habrá de declararse la nulidad de todo lo actuado dentro del presente tramite de insolvencia, debiendo notificar a las partes de lo correspondiente.",
+            "Por lo que, en consecuencia, se acoge la peticiÃ³n como nulidad absoluta que no pueda sanearse en este estado del proceso por lo que habrÃ¡ de declararse la nulidad de todo lo actuado dentro del presente tramite de insolvencia, debiendo notificar a las partes de lo correspondiente.",
         }),
       ],
       spacing: { after: 200 },
@@ -1008,10 +1918,11 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
 
     const portraitPage = {
       margin: {
-        top: convertInchesToTwip(0.6),
+        top: convertInchesToTwip(1.15),
         right: convertInchesToTwip(0.6),
         bottom: convertInchesToTwip(0.6),
         left: convertInchesToTwip(0.6),
+        header: convertInchesToTwip(0.2),
       },
       size: {
         width: convertInchesToTwip(8.5),
@@ -1035,14 +1946,14 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
           },
         },
       },
-      sections: [{ properties: { page: portraitPage }, children: portraitBefore }],
+      sections: [buildSection(portraitPage, docHeader, portraitBefore)],
     });
 
     return Packer.toBuffer(doc);
   }
 
   // Custom document for "ACTA RECHAZO DEL TRAMITE" (requested template).
-  if (tipoDoc === "ACTA RECHAZO DEL TRAMITE" || tipoDoc === "ACTA RECHAZO DEL TRÁMITE") {
+  if (tipoDoc === "ACTA RECHAZO DEL TRAMITE" || tipoDoc === "ACTA RECHAZO DEL TRÃMITE") {
     portraitBefore.push(new Paragraph({
       children: [new TextRun({ text: "ACTA DE RECHAZO:", bold: true, size: 28 })],
       alignment: AlignmentType.LEFT,
@@ -1052,7 +1963,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
     portraitBefore.push(new Paragraph({
       children: [
         new TextRun({
-          text: `${operadorNombre.toUpperCase()}, mayor de edad, identificado con cedula ${operadorId} actuando en calidad OPERADOR EN INSOLVENCIA designado para el proceso de insolvencia de persona natural no comerciante del señor ${deudorNombre.toUpperCase()}, con cedula de ciudadanía No. ${deudorId}, Por medio del presente, el suscrito conciliador resuelve:`,
+          text: `${operadorNombre.toUpperCase()}, mayor de edad, identificado con cedula ${operadorId} actuando en calidad OPERADOR EN INSOLVENCIA designado para el proceso de insolvencia de persona natural no comerciante del seÃ±or ${deudorNombre.toUpperCase()}, con cedula de ciudadanÃ­a No. ${deudorId}, Por medio del presente, el suscrito conciliador resuelve:`,
         }),
       ],
       spacing: { after: 260 },
@@ -1062,7 +1973,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
       children: [
         new TextRun({
           text:
-            `PRIMERO: RECHAZAR el trámite del señor ${deudorNombre.toUpperCase()}, identificado con la cedula de ciudadanía No. ${deudorId}, con fundamento en las observaciones presentadas por la acreedora de SCOTIABANK COLPATRIA, quien manifestó las siguientes inconsistencias y omisiones frente al escrito de insolvencia radicado:`,
+            `PRIMERO: RECHAZAR el trÃ¡mite del seÃ±or ${deudorNombre.toUpperCase()}, identificado con la cedula de ciudadanÃ­a No. ${deudorId}, con fundamento en las observaciones presentadas por la acreedora de SCOTIABANK COLPATRIA, quien manifestÃ³ las siguientes inconsistencias y omisiones frente al escrito de insolvencia radicado:`,
         }),
       ],
       spacing: { after: 200 },
@@ -1072,7 +1983,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
       children: [
         new TextRun({
           text:
-            "SEGUNDO: RESPECTO A LA RELACICON DE ACREENCIAS. La acreedora de SCCOTIABANK COLPATRIA manifestó que en el escrito de insolvencia presentado por el apoderado de la parte deudora no se incluyó al acreedor AJOVER DARNEL S.A.S., a pesar de que este cuenta con una obligación vigente frente al deudor.",
+            "SEGUNDO: RESPECTO A LA RELACICON DE ACREENCIAS. La acreedora de SCCOTIABANK COLPATRIA manifestÃ³ que en el escrito de insolvencia presentado por el apoderado de la parte deudora no se incluyÃ³ al acreedor AJOVER DARNEL S.A.S., a pesar de que este cuenta con una obligaciÃ³n vigente frente al deudor.",
         }),
       ],
       spacing: { after: 200 },
@@ -1082,7 +1993,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
       children: [
         new TextRun({
           text:
-            "TERCERO: OMISION DEL ACREEDDOR POR IMPUESTO PREDIAL. Se evidenció que el deudor no mencionó en la relación de acreencias al acreedor ALCALDÍA DE PALMIRA, correspondiente al impuesto predial del inmueble objeto de la solicitud, omitiendo así información relevante y obligatoria dentro del trámite.",
+            "TERCERO: OMISION DEL ACREEDDOR POR IMPUESTO PREDIAL. Se evidenciÃ³ que el deudor no mencionÃ³ en la relaciÃ³n de acreencias al acreedor ALCALDÃA DE PALMIRA, correspondiente al impuesto predial del inmueble objeto de la solicitud, omitiendo asÃ­ informaciÃ³n relevante y obligatoria dentro del trÃ¡mite.",
         }),
       ],
       spacing: { after: 200 },
@@ -1092,7 +2003,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
       children: [
         new TextRun({
           text:
-            "CUARTO: INCONSISTENCIAS EN LA CALIDAD DEL DEUDOR. De acuerdo con la información allegada, el deudor aparece como accionista y codeudor de la sociedad IMEXCYAN TRADING S.A.S., situación que contradice su manifestación de ser persona natural no comerciante, generando duda sobre la procedencia del trámite.",
+            "CUARTO: INCONSISTENCIAS EN LA CALIDAD DEL DEUDOR. De acuerdo con la informaciÃ³n allegada, el deudor aparece como accionista y codeudor de la sociedad IMEXCYAN TRADING S.A.S., situaciÃ³n que contradice su manifestaciÃ³n de ser persona natural no comerciante, generando duda sobre la procedencia del trÃ¡mite.",
         }),
       ],
       spacing: { after: 200 },
@@ -1102,7 +2013,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
       children: [
         new TextRun({
           text:
-            "QUINTO: INCONSISTENCIAS EN LA RELACICON DE ACREEDORES. Se observa además que al relacionar al acreedor RENTAL INMOBILIARIA, el deudor indica que se trata de un crédito de libranza, situación que resulta incongruente, por cuanto una inmobiliaria no es una entidad autorizada para el otorgamiento de créditos de dicha naturaleza. Esto evidencia falta de claridad en la información presentada.",
+            "QUINTO: INCONSISTENCIAS EN LA RELACICON DE ACREEDORES. Se observa ademÃ¡s que al relacionar al acreedor RENTAL INMOBILIARIA, el deudor indica que se trata de un crÃ©dito de libranza, situaciÃ³n que resulta incongruente, por cuanto una inmobiliaria no es una entidad autorizada para el otorgamiento de crÃ©ditos de dicha naturaleza. Esto evidencia falta de claridad en la informaciÃ³n presentada.",
         }),
       ],
       spacing: { after: 260 },
@@ -1140,10 +2051,11 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
 
     const portraitPage = {
       margin: {
-        top: convertInchesToTwip(0.6),
+        top: convertInchesToTwip(1.15),
         right: convertInchesToTwip(0.6),
         bottom: convertInchesToTwip(0.6),
         left: convertInchesToTwip(0.6),
+        header: convertInchesToTwip(0.2),
       },
       size: {
         width: convertInchesToTwip(8.5),
@@ -1167,7 +2079,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
           },
         },
       },
-      sections: [{ properties: { page: portraitPage }, children: portraitBefore }],
+      sections: [buildSection(portraitPage, docHeader, portraitBefore)],
     });
 
     return Packer.toBuffer(doc);
@@ -1234,79 +2146,20 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
   // Introduction paragraph
   sections.push(new Paragraph({
     children: [
-      new TextRun({ text: `En ${ciudad}, a los ${dateParts.day} días del mes de ${dateParts.month} de ${dateParts.year}, siendo las ${horaActa.fullLower}, se reunieron en Audiencia en el Centro de Conciliación Fundaseer, las siguientes personas:` }),
+      new TextRun({ text: `En ${ciudad}, a los ${dateParts.day} dÃ­as del mes de ${dateParts.month} de ${dateParts.year}, siendo las ${horaActa.fullLower}, se reunieron en Audiencia en el Centro de ConciliaciÃ³n Fundaseer, las siguientes personas:` }),
     ],
     spacing: { after: 300 },
   }));
 
   // First: Apoderado del Deudor (if present)
-  // Priority: look for apoderado explicitly marked as "deudor", otherwise take first present apoderado not marked as "acreedor"
-  console.log("[buildDocx] === ASISTENTES DEBUG ===");
-  console.log("[buildDocx] Total asistentes:", payload.asistentes.length);
-  payload.asistentes.forEach((a, i) => {
-    console.log(`[buildDocx] Asistente ${i}:`, {
-      nombre: a.nombre,
-      categoria: a.categoria,
-      estado: a.estado,
-      calidadApoderadoDe: a.calidadApoderadoDe,
-    });
+  // Asistentes section: include only acreedores and apoderados de acreedores.
+  const asistentesAcreedores = payload.asistentes.filter((a) => {
+    if (a.estado !== "Presente") return false;
+    if (a.categoria === "Acreedor") return true;
+    if (a.categoria !== "Apoderado") return false;
+    return String(a.calidadApoderadoDe ?? "").toLowerCase().includes("acreedor");
   });
-
-  // 1. First priority: Apoderado marked explicitly for "deudor"
-  // 2. Second priority: Apoderado NOT marked for "acreedor"
-  // 3. Final fallback: Any present Apoderado
-  const apoderadoDeudor = payload.asistentes.find(
-    (a) => a.categoria === "Apoderado" &&
-           a.estado === "Presente" &&
-           a.calidadApoderadoDe?.toLowerCase()?.includes("deudor")
-  ) || payload.asistentes.find(
-    (a) => a.categoria === "Apoderado" &&
-           a.estado === "Presente" &&
-           !a.calidadApoderadoDe?.toLowerCase()?.includes("acreedor")
-  ) || payload.asistentes.find(
-    (a) => a.categoria === "Apoderado" && a.estado === "Presente"
-  );
-
-  console.log("[buildDocx] apoderadoDeudor found:", apoderadoDeudor ? apoderadoDeudor.nombre : "NONE");
-  if (!apoderadoDeudor) {
-    const apoderados = payload.asistentes.filter((a) => a.categoria === "Apoderado");
-    console.log("[buildDocx] WARNING: No apoderado found. Apoderados in list:", apoderados.length);
-    apoderados.forEach((a) => console.log(`  - ${a.nombre}: estado=${a.estado}, calidadDe=${a.calidadApoderadoDe}`));
-  }
-
-  if (apoderadoDeudor) {
-    const partsApoderadoDeudor: TextRun[] = [];
-    partsApoderadoDeudor.push(new TextRun({ text: apoderadoDeudor.nombre.toUpperCase(), bold: true }));
-    partsApoderadoDeudor.push(new TextRun({ text: ", ciudadana mayor de edad, e identificada con cedula de ciudadanía número " }));
-    partsApoderadoDeudor.push(new TextRun({ text: apoderadoDeudor.identificacion || "[IDENTIFICACIÓN]" }));
-
-    if (apoderadoDeudor.tarjetaProfesional) {
-      partsApoderadoDeudor.push(new TextRun({ text: ", portadora de la tarjeta profesional No. " }));
-      partsApoderadoDeudor.push(new TextRun({ text: apoderadoDeudor.tarjetaProfesional }));
-      partsApoderadoDeudor.push(new TextRun({ text: " del CSJ" }));
-    }
-
-    if (apoderadoDeudor.email) {
-      partsApoderadoDeudor.push(new TextRun({ text: ", con correo electrónico " }));
-      partsApoderadoDeudor.push(new TextRun({ text: apoderadoDeudor.email }));
-    }
-
-    partsApoderadoDeudor.push(new TextRun({ text: ", en calidad de apoderada del deudor insolvente el señor " }));
-    partsApoderadoDeudor.push(new TextRun({ text: deudorNombre.toUpperCase(), bold: true }));
-    partsApoderadoDeudor.push(new TextRun({ text: "." }));
-
-    sections.push(new Paragraph({
-      children: partsApoderadoDeudor,
-      spacing: { after: 200 },
-      indent: { left: convertInchesToTwip(0.5) },
-    }));
-  }
-
-  // Other Attendees (Acreedores and their apoderados)
-  const otrosAsistentes = payload.asistentes.filter(
-    (a) => a.estado === "Presente" && a !== apoderadoDeudor
-  );
-  const asistentesParagraphs = buildAsistentesParagraphs(otrosAsistentes, deudorNombre);
+  const asistentesParagraphs = buildAsistentesParagraphs(asistentesAcreedores);
   sections.push(...asistentesParagraphs);
 
   // OBJETO DE LA AUDIENCIA
@@ -1319,7 +2172,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
   sections.push(new Paragraph({
     children: [
       new TextRun({
-        text: "Conforme al título IV la ley 1564 de 2012 se adelanta la presente audiencia de Conciliación dentro del trámite de insolvencia de persona natural no comerciante solicitada por el señor ",
+        text: "Conforme al tÃ­tulo IV la ley 1564 de 2012 se adelanta la presente audiencia de ConciliaciÃ³n dentro del trÃ¡mite de insolvencia de persona natural no comerciante solicitada por el seÃ±or ",
       }),
       new TextRun({ text: deudorNombre.toUpperCase(), bold: true }),
       new TextRun({ text: " en calidad de insolvente." }),
@@ -1345,7 +2198,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
     sections.push(new Paragraph({
       children: [
         new TextRun({
-          text: `Siendo las ${horaActa.fullUpper} el conciliador designado, le da inicio a la diligencia programada para el día de Hoy, verificando la asistencia de las partes, `,
+          text: `Siendo las ${horaActa.fullUpper} el conciliador designado, le da inicio a la diligencia programada para el dÃ­a de Hoy, verificando la asistencia de las partes, `,
         }),
         new TextRun({ text: "INSOLVENTE", bold: true }),
         new TextRun({ text: ", y " }),
@@ -1358,7 +2211,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
     sections.push(new Paragraph({
       children: [
         new TextRun({
-          text: "Siguiendo los parámetros del artículo 550 del Código General del Proceso (Desarrollo de la audiencia de Negociación de Deudas 1.- El conciliador pondrá en conocimiento de los acreedores la relación detallada de las acreencias y les preguntará si están de acuerdo con la existencia, naturaleza y cuantía de las obligaciones relacionadas por parte del deudor y si tienen dudas o discrepancias con relación a las propias o respecto de otras acreencias.",
+          text: "Siguiendo los parÃ¡metros del artÃ­culo 550 del CÃ³digo General del Proceso (Desarrollo de la audiencia de NegociaciÃ³n de Deudas 1.- El conciliador pondrÃ¡ en conocimiento de los acreedores la relaciÃ³n detallada de las acreencias y les preguntarÃ¡ si estÃ¡n de acuerdo con la existencia, naturaleza y cuantÃ­a de las obligaciones relacionadas por parte del deudor y si tienen dudas o discrepancias con relaciÃ³n a las propias o respecto de otras acreencias.",
         }),
       ],
       spacing: { after: 300 },
@@ -1421,7 +2274,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
     sections.push(new Paragraph({
       children: [
         new TextRun({
-          text: "Acto seguido el/la suscrito(a) conciliador(a) continua con el desarrollo del numeral 5 y 6 del art. 550 del CGP, que estipula que el deudor haga una exposición de la propuesta de pago, para lo cual le concede el uso de la palabra al apoderado del deudor quien indica:",
+          text: "Acto seguido el/la suscrito(a) conciliador(a) continua con el desarrollo del numeral 5 y 6 del art. 550 del CGP, que estipula que el deudor haga una exposiciÃ³n de la propuesta de pago, para lo cual le concede el uso de la palabra al apoderado del deudor quien indica:",
         }),
       ],
       spacing: { after: 200 },
@@ -1429,9 +2282,9 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
 
     sections.push(...buildPropuestaPagoParagraphs(payload));
 
-    // --- VOTACIÓN DEL ACUERDO ---
+    // --- VOTACIÃ“N DEL ACUERDO ---
     sections.push(new Paragraph({
-      children: [new TextRun({ text: "VOTACIÓN DEL ACUERDO", bold: true, size: 24 })],
+      children: [new TextRun({ text: "VOTACIÃ“N DEL ACUERDO", bold: true, size: 24 })],
       heading: HeadingLevel.HEADING_2,
       spacing: { before: 200, after: 200 },
     }));
@@ -1439,14 +2292,26 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
     sections.push(new Paragraph({
       children: [
         new TextRun({
-          text: "Indicando a los acreedores que la propuesta de pago y proyección de este fue socializado a los correos electrónicos. Se corre traslado de la propuesta de pago a los acreedores, los cuales proceden a votar de la siguiente manera:",
+          text: "Indicando a los acreedores que la propuesta de pago y proyecciÃ³n de este fue socializado a los correos electrÃ³nicos. Se corre traslado de la propuesta de pago a los acreedores, los cuales proceden a votar de la siguiente manera:",
         }),
       ],
       spacing: { after: 200 },
     }));
 
-    // Voting table from acreencias data
-    if (payload.acreencias.length > 0) {
+    if (excelDocData?.votingTable && excelDocData.votingTable.rows.length > 0) {
+      sections.push(new Paragraph({
+        children: [
+          new TextRun({
+            text: `Tabla de votaciÃ³n tomada del archivo Excel: ${excelDocData.source.drive_file_name}`,
+            italics: true,
+            size: 18,
+          }),
+        ],
+        spacing: { after: 120 },
+      }));
+      sections.push(createExcelDocTable(excelDocData.votingTable));
+    } else if (payload.acreencias.length > 0) {
+      // Voting table from acreencias data
       const votingHeaders = ["ACREEDORES", "CAPITAL", "%", "VOTO"];
       const votingColWidths = [40, 25, 15, 20];
       const votingTableWidth = convertInchesToTwip(8.5 - 1.2);
@@ -1475,7 +2340,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
           new TableRow({
             children: [
               new TableCell({
-                children: [new Paragraph({ children: [new TextRun({ text: a.acreedor?.trim() || "—", size: 20 })] })],
+                children: [new Paragraph({ children: [new TextRun({ text: a.acreedor?.trim() || "â€”", size: 20 })] })],
                 borders: tableBorders,
               }),
               new TableCell({
@@ -1539,14 +2404,14 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
       }));
     }
 
-    // --- RELACIÓN FINAL DE LOS VOTOS ---
+    // --- RELACIÃ“N FINAL DE LOS VOTOS ---
     sections.push(new Paragraph({
-      children: [new TextRun({ text: "RELACIÓN FINAL DE LOS VOTOS", bold: true, size: 24 })],
+      children: [new TextRun({ text: "RELACIÃ“N FINAL DE LOS VOTOS", bold: true, size: 24 })],
       heading: HeadingLevel.HEADING_2,
       spacing: { before: 300, after: 200 },
     }));
 
-    const voteHeaders = ["VOTOS POSITIVOS", "VOTOS NEGATIVOS", "VOTOS AUSENTES", "ABSTENCIÓN DE VOTO"];
+    const voteHeaders = ["VOTOS POSITIVOS", "VOTOS NEGATIVOS", "VOTOS AUSENTES", "ABSTENCIÃ“N DE VOTO"];
     const voteColWidth = convertInchesToTwip(8.5 - 1.2);
     const voteColTwip = [25, 25, 25, 25].map((pct) => Math.round((voteColWidth * pct) / 100));
     const vtSum = voteColTwip.reduce((a, v) => a + v, 0);
@@ -1596,11 +2461,11 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
     if (tipoDoc === "ACUERDO DE PAGO BILATERAL Y FRACASO DEL TRAMITE") {
       sections.push(new Paragraph({
         children: [
-          new TextRun({ text: "A partir de la votación realizada, se determina que entre el señor " }),
+          new TextRun({ text: "A partir de la votaciÃ³n realizada, se determina que entre el seÃ±or " }),
           new TextRun({ text: deudorNombre.toUpperCase(), bold: true }),
           new TextRun({
             text:
-              " y sus acreedores no alcanza el coeficiente exigido para la aprobación del acuerdo de pago general. Ante la ausencia de los acreedores requeridos y considerando que el artículo 553 del Código General del Proceso exige la participación de dos o más acreedores que representen más del cincuenta por ciento (50%) del monto total del capital adeudado para que se configure un acuerdo de pago general. Sin embargo, en atención a lo previsto en el numeral 3 del artículo 21 de la Ley 2445 de 2025, que modificó el numeral 3 del artículo 553 del Código General del Proceso, y en virtud del voto favorable emitido por parte del acreedor hipotecario, se celebra un acuerdo de pago bilateral con el mismo. En consecuencia, se declara el fracaso de la negociación con los demás acreedores.",
+              " y sus acreedores no alcanza el coeficiente exigido para la aprobaciÃ³n del acuerdo de pago general. Ante la ausencia de los acreedores requeridos y considerando que el artÃ­culo 553 del CÃ³digo General del Proceso exige la participaciÃ³n de dos o mÃ¡s acreedores que representen mÃ¡s del cincuenta por ciento (50%) del monto total del capital adeudado para que se configure un acuerdo de pago general. Sin embargo, en atenciÃ³n a lo previsto en el numeral 3 del artÃ­culo 21 de la Ley 2445 de 2025, que modificÃ³ el numeral 3 del artÃ­culo 553 del CÃ³digo General del Proceso, y en virtud del voto favorable emitido por parte del acreedor hipotecario, se celebra un acuerdo de pago bilateral con el mismo. En consecuencia, se declara el fracaso de la negociaciÃ³n con los demÃ¡s acreedores.",
           }),
         ],
         spacing: { before: 300, after: 300 },
@@ -1608,7 +2473,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
     } else {
       sections.push(new Paragraph({
         children: [
-          new TextRun({ text: `A partir de la votación se establece que entre el señor ` }),
+          new TextRun({ text: `A partir de la votaciÃ³n se establece que entre el seÃ±or ` }),
           new TextRun({ text: deudorNombre.toUpperCase(), bold: true }),
           new TextRun({ text: `, y sus acreedores, ` }),
           new TextRun({ text: "HAY ACUERDO DE PAGO", bold: true }),
@@ -1636,7 +2501,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
 
       sections.push(new Paragraph({
         children: [
-          new TextRun({ text: "Se deja constancia de que se celebró un acuerdo bilateral con el acreedor hipotecario " }),
+          new TextRun({ text: "Se deja constancia de que se celebrÃ³ un acuerdo bilateral con el acreedor hipotecario " }),
           new TextRun({ text: acreedorBilateral.toUpperCase(), bold: true }),
           new TextRun({ text: "." }),
         ],
@@ -1666,25 +2531,37 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
         spacing: { after: 200 },
       }));
     } else {
-      // One placeholder line per acreedor
-      if (payload.acreencias.length > 0) {
-        const uniqueAcreedoresAcuerdo = [...new Set(
-          payload.acreencias.map((a) => a.acreedor?.trim() ?? "").filter(Boolean)
-        )];
-        uniqueAcreedoresAcuerdo.forEach((acreedor) => {
-          sections.push(new Paragraph({
-            children: [
-              new TextRun({ text: acreedor.toUpperCase(), bold: true }),
-              new TextRun({ text: ": [CONDICIONES DE PAGO]" }),
-            ],
-            spacing: { after: 150 },
-          }));
-        });
-      } else {
+      if (hasPropuestaPagoData(payload)) {
         sections.push(new Paragraph({
-          children: [new TextRun({ text: "[DETALLES DEL ACUERDO CON CADA ACREEDOR]" })],
-          spacing: { after: 200 },
+          children: [
+            new TextRun({
+              text: "Conforme a la propuesta de pago aprobada, se pactan las siguientes condiciones:",
+            }),
+          ],
+          spacing: { after: 180 },
         }));
+        sections.push(...buildPropuestaPagoParagraphs(payload));
+      } else {
+        // One placeholder line per acreedor
+        if (payload.acreencias.length > 0) {
+          const uniqueAcreedoresAcuerdo = [...new Set(
+            payload.acreencias.map((a) => a.acreedor?.trim() ?? "").filter(Boolean)
+          )];
+          uniqueAcreedoresAcuerdo.forEach((acreedor) => {
+            sections.push(new Paragraph({
+              children: [
+                new TextRun({ text: acreedor.toUpperCase(), bold: true }),
+                new TextRun({ text: ": [CONDICIONES DE PAGO]" }),
+              ],
+              spacing: { after: 150 },
+            }));
+          });
+        } else {
+          sections.push(new Paragraph({
+            children: [new TextRun({ text: "[DETALLES DEL ACUERDO CON CADA ACREEDOR]" })],
+            spacing: { after: 200 },
+          }));
+        }
       }
     }
 
@@ -1695,14 +2572,40 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
       spacing: { before: 200, after: 200 },
     }));
 
-    sections.push(new Paragraph({
-      children: [new TextRun({
-        text: tipoDoc === "ACUERDO DE PAGO BILATERAL Y FRACASO DEL TRAMITE"
-          ? "[PROYECCIÓN DE PAGOS]"
-          : "[PROYECCIÓN DE PAGOS ENVIADA POR LA PARTE DEUDORA]",
-      })],
-      spacing: { after: 300 },
-    }));
+    if (excelDocData?.projectionTables && excelDocData.projectionTables.length > 0) {
+      sections.push(new Paragraph({
+        children: [
+          new TextRun({
+            text: `Tablas extraÃ­das del archivo Excel: ${excelDocData.source.drive_file_name}`,
+            italics: true,
+            size: 18,
+          }),
+        ],
+        spacing: { after: 150 },
+      }));
+
+      excelDocData.projectionTables.forEach((table, index) => {
+        sections.push(new Paragraph({
+          children: [new TextRun({ text: table.title, bold: true, size: 20 })],
+          spacing: { before: index === 0 ? 0 : 180, after: 100 },
+        }));
+        if (table.metadata && table.metadata.length > 0) {
+          sections.push(createExcelMetadataTable(table.metadata));
+          sections.push(new Paragraph({ children: [new TextRun({ text: "" })], spacing: { after: 100 } }));
+        }
+        sections.push(createExcelDocTable(table));
+      });
+      sections.push(new Paragraph({ children: [new TextRun({ text: "" })], spacing: { after: 220 } }));
+    } else {
+      sections.push(new Paragraph({
+        children: [new TextRun({
+          text: tipoDoc === "ACUERDO DE PAGO BILATERAL Y FRACASO DEL TRAMITE"
+            ? "[PROYECCIÃ“N DE PAGOS]"
+            : "[PROYECCIÃ“N DE PAGOS ENVIADA POR LA PARTE DEUDORA]",
+        })],
+        spacing: { after: 300 },
+      }));
+    }
 
     // --- OBSERVACIONES FINALES (Acuerdo de pago version) ---
     sections.push(new Paragraph({
@@ -1712,16 +2615,16 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
     }));
 
     sections.push(new Paragraph({
-      children: [new TextRun({ text: "Conforme al artículo 553 de la Ley 1564 de 2012, el conciliador y los acreedores abajo firmantes dejan constancia en la presente acta que:" })],
+      children: [new TextRun({ text: "Conforme al artÃ­culo 553 de la Ley 1564 de 2012, el conciliador y los acreedores abajo firmantes dejan constancia en la presente acta que:" })],
       spacing: { after: 200 },
     }));
 
     const observacionesAcuerdo = (tipoDoc === "ACUERDO DE PAGO BILATERAL Y FRACASO DEL TRAMITE")
       ? [
-          "Se deja constancia que los acreedores han sido debidamente comunicados del inicio del trámite de negociación de deudas y que se les dieron las garantías procesales que la ley les otorga para esta clase de procedimientos. Cualquier decisión adversa a sus intereses obedece a omisiones propias o decisiones tomadas por los jueces de conocimiento de las objeciones y/o controversias.",
-          "El acuerdo bilateral ha sido celebrado dentro del término previsto en la Ley, para la negociación de deudas.",
-          "Conforme a lo dispuesto en el numeral 3 del art 554 del C G del P. se deja constancia que los acreedores condonaron el 100% de los intereses adeudados a la fecha de inicio del presente trámite.",
-          "El término máximo para el cumplimiento general del acuerdo de pago bilateral será de ochenta (80) meses para crédito de tercera clase, sin perjuicio que el deudor pueda hacer pagos anticipados por oferta del acreedor.",
+          "Se deja constancia que los acreedores han sido debidamente comunicados del inicio del trÃ¡mite de negociaciÃ³n de deudas y que se les dieron las garantÃ­as procesales que la ley les otorga para esta clase de procedimientos. Cualquier decisiÃ³n adversa a sus intereses obedece a omisiones propias o decisiones tomadas por los jueces de conocimiento de las objeciones y/o controversias.",
+          "El acuerdo bilateral ha sido celebrado dentro del tÃ©rmino previsto en la Ley, para la negociaciÃ³n de deudas.",
+          "Conforme a lo dispuesto en el numeral 3 del art 554 del C G del P. se deja constancia que los acreedores condonaron el 100% de los intereses adeudados a la fecha de inicio del presente trÃ¡mite.",
+          "El tÃ©rmino mÃ¡ximo para el cumplimiento general del acuerdo de pago bilateral serÃ¡ de ochenta (80) meses para crÃ©dito de tercera clase, sin perjuicio que el deudor pueda hacer pagos anticipados por oferta del acreedor.",
           votosAcuerdo.hasVotes
             ? `El acuerdo fue votado positivamente por el ${formatPercentage(votosAcuerdo.totals.POSITIVO)}.`
             : "[El acuerdo fue votado positivamente por el ___%.]",
@@ -1734,36 +2637,36 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
           votosAcuerdo.hasVotes
             ? `El acuerdo tuvo votos por se abstuvo del ${formatPercentage(votosAcuerdo.totals.ABSTENCION)}.`
             : "[El acuerdo tuvo votos por se abstuvo del ___%.]",
-          "El presente acuerdo de pago no implica novación de las obligaciones, las cuales se mantendrán incólumes frente a los títulos de deuda primigenios.",
+          "El presente acuerdo de pago no implica novaciÃ³n de las obligaciones, las cuales se mantendrÃ¡n incÃ³lumes frente a los tÃ­tulos de deuda primigenios.",
           "Se ha dado igual trato a los acreedores de una misma clase o grado.",
-          `Se le advierte al deudor insolvente ${deudorNombre.toUpperCase()} de la obligación que ha adquirido con todos los acreedores que la apoyaron y sacaron adelante su propuesta, por ello debe cumplir en las condiciones en que hizo su propuesta de pago.`,
-          "Los acreedores, podrán ceder en cualquier momento y a cualquier título los créditos y se pondrá al cesionario como sustituto del cedente. En todo caso, el acreedor cedente deberá advertir al cesionario interesado sobre la existencia del presente acuerdo de pago y, por su parte, el cesionario deberá aceptar expresamente las condiciones del presente acuerdo de pago y del crédito que adquiera. Para tal efecto, el cedente notificara al deudor para lo pertinente respecto de los pagos.",
-          "El deudor puede hacer pagos anticipados o acogerse a rebajas o amnistías por oferta del acreedor, respetando la prelación legal o apartándose de ella con aceptación expresa del acreedor de prelación superior que no se le haya efectuado el pago total de la obligación.",
-          "Se oficiará a los Juzgados si es el caso, informando el acuerdo de pago y a su vez se solicitará que los procesos ejecutivos deberán continuar suspendidos, de conformidad con el art. 555 del C.G.P.",
-          "Una vez se finalice los pagos a cada acreedor, el mismo acreedor se comprometen a entregar los respectivos paz y salvos y oficiar a los juzgados solicitando la terminación de los procesos por pago total.",
-          "Se deja constancia que la audiencia se realizó de forma virtual y fue grabada.",
+          `Se le advierte al deudor insolvente ${deudorNombre.toUpperCase()} de la obligaciÃ³n que ha adquirido con todos los acreedores que la apoyaron y sacaron adelante su propuesta, por ello debe cumplir en las condiciones en que hizo su propuesta de pago.`,
+          "Los acreedores, podrÃ¡n ceder en cualquier momento y a cualquier tÃ­tulo los crÃ©ditos y se pondrÃ¡ al cesionario como sustituto del cedente. En todo caso, el acreedor cedente deberÃ¡ advertir al cesionario interesado sobre la existencia del presente acuerdo de pago y, por su parte, el cesionario deberÃ¡ aceptar expresamente las condiciones del presente acuerdo de pago y del crÃ©dito que adquiera. Para tal efecto, el cedente notificara al deudor para lo pertinente respecto de los pagos.",
+          "El deudor puede hacer pagos anticipados o acogerse a rebajas o amnistÃ­as por oferta del acreedor, respetando la prelaciÃ³n legal o apartÃ¡ndose de ella con aceptaciÃ³n expresa del acreedor de prelaciÃ³n superior que no se le haya efectuado el pago total de la obligaciÃ³n.",
+          "Se oficiarÃ¡ a los Juzgados si es el caso, informando el acuerdo de pago y a su vez se solicitarÃ¡ que los procesos ejecutivos deberÃ¡n continuar suspendidos, de conformidad con el art. 555 del C.G.P.",
+          "Una vez se finalice los pagos a cada acreedor, el mismo acreedor se comprometen a entregar los respectivos paz y salvos y oficiar a los juzgados solicitando la terminaciÃ³n de los procesos por pago total.",
+          "Se deja constancia que la audiencia se realizÃ³ de forma virtual y fue grabada.",
         ]
       : [
-          "Se deja constancia que los acreedores han sido debidamente comunicados del inicio del trámite de negociación de deudas y que se les dieron las garantías procesales que la ley les otorga para esta clase de procedimientos. Cualquier decisión adversa a sus intereses obedece a omisiones propias o decisiones tomadas por los jueces de conocimiento de las objeciones y/o controversias.",
-          "El acuerdo ha sido celebrado dentro del término previsto en la Ley, para la negociación de deudas.",
+          "Se deja constancia que los acreedores han sido debidamente comunicados del inicio del trÃ¡mite de negociaciÃ³n de deudas y que se les dieron las garantÃ­as procesales que la ley les otorga para esta clase de procedimientos. Cualquier decisiÃ³n adversa a sus intereses obedece a omisiones propias o decisiones tomadas por los jueces de conocimiento de las objeciones y/o controversias.",
+          "El acuerdo ha sido celebrado dentro del tÃ©rmino previsto en la Ley, para la negociaciÃ³n de deudas.",
           "Conforme a lo dispuesto en el numeral 3 del art 554 del C G del P. se deja constancia que los acreedores condonaron el 100% de los intereses adeudados a la fecha de inicio del presente tramite.",
-          "El término máximo para el cumplimiento general del acuerdo de pago será de sesenta 60 meses, sin perjuicio que el deudor pueda hacer pagos anticipados por oferta del acreedor.",
+          "El tÃ©rmino mÃ¡ximo para el cumplimiento general del acuerdo de pago serÃ¡ de sesenta 60 meses, sin perjuicio que el deudor pueda hacer pagos anticipados por oferta del acreedor.",
           votosAcuerdo.hasVotes
             ? `El acuerdo fue votado positivamente por el ${formatPercentage(votosAcuerdo.totals.POSITIVO)}.`
             : "[El acuerdo fue votado positivamente por el ___%.]",
           votosAcuerdo.hasVotes
             ? `El acuerdo tuvo votos por ausencia de acreedores en un ${formatPercentage(votosAcuerdo.totals.AUSENTE)}.`
             : "[El acuerdo tuvo votos por ausencia de acreedores en un ___%.]",
-          "El acuerdo comprende la totalidad de los acreedores objeto de la negociación, conforme a la relación de acreedores y acreencias presentada por el deudor para efectos de la admisión del trámite de negociación de deudas.",
-          "El presente acuerdo de pago no implica novación de las obligaciones, las cuales se mantendrán incólumes frente a los títulos de deuda primigenios.",
+          "El acuerdo comprende la totalidad de los acreedores objeto de la negociaciÃ³n, conforme a la relaciÃ³n de acreedores y acreencias presentada por el deudor para efectos de la admisiÃ³n del trÃ¡mite de negociaciÃ³n de deudas.",
+          "El presente acuerdo de pago no implica novaciÃ³n de las obligaciones, las cuales se mantendrÃ¡n incÃ³lumes frente a los tÃ­tulos de deuda primigenios.",
           "Se ha dado igual trato a los acreedores de una misma clase o grado.",
-          `Se le advierte al deudor insolvente ${deudorNombre.toUpperCase()} de la obligación que ha adquirido con todos los acreedores que la apoyaron y sacaron adelante su propuesta, por ello debe cumplir en las condiciones en que hizo su propuesta de pago.`,
-          "Los acreedores, podrán ceder en cualquier momento y a cualquier título los créditos y se pondrá al cesionario como sustituto del cedente. En todo caso, el acreedor cedente deberá advertir al cesionario interesado sobre la existencia del presente acuerdo de pago y, por su parte, el cesionario deberá aceptar expresamente las condiciones del presente acuerdo de pago y del crédito que adquiera. Para tal efecto, el cedente notificara al deudor para lo pertinente respecto de los pagos.",
-          "El deudor puede hacer pagos anticipados o acogerse a rebajas o amnistías por oferta de los acreedores, respetando la prelación legal o apartándose de ella con aceptación expresa del acreedor de prelación superior que no se le haya efectuado el pago total de la obligación.",
-          "Se oficiará a los Juzgados si es el caso, informando el acuerdo de pago y a su vez se solicitará que los procesos ejecutivos deberán continuar suspendidos, de conformidad con el art. 555 del C.G.P.",
-          "Se advierte al deudor que no podrá disponer y/o enajenar los activos, hasta el cumplimiento total del acuerdo de pago.",
-          "Una vez se finalice los pagos a cada acreedor, los mismos acreedores se comprometen a entregar los respectivos paz y salvos y oficiar a los juzgados solicitando la terminación de los procesos por pago total.",
-          "Se deja constancia que la audiencia se realizó de forma virtual y fue grabada.",
+          `Se le advierte al deudor insolvente ${deudorNombre.toUpperCase()} de la obligaciÃ³n que ha adquirido con todos los acreedores que la apoyaron y sacaron adelante su propuesta, por ello debe cumplir en las condiciones en que hizo su propuesta de pago.`,
+          "Los acreedores, podrÃ¡n ceder en cualquier momento y a cualquier tÃ­tulo los crÃ©ditos y se pondrÃ¡ al cesionario como sustituto del cedente. En todo caso, el acreedor cedente deberÃ¡ advertir al cesionario interesado sobre la existencia del presente acuerdo de pago y, por su parte, el cesionario deberÃ¡ aceptar expresamente las condiciones del presente acuerdo de pago y del crÃ©dito que adquiera. Para tal efecto, el cedente notificara al deudor para lo pertinente respecto de los pagos.",
+          "El deudor puede hacer pagos anticipados o acogerse a rebajas o amnistÃ­as por oferta de los acreedores, respetando la prelaciÃ³n legal o apartÃ¡ndose de ella con aceptaciÃ³n expresa del acreedor de prelaciÃ³n superior que no se le haya efectuado el pago total de la obligaciÃ³n.",
+          "Se oficiarÃ¡ a los Juzgados si es el caso, informando el acuerdo de pago y a su vez se solicitarÃ¡ que los procesos ejecutivos deberÃ¡n continuar suspendidos, de conformidad con el art. 555 del C.G.P.",
+          "Se advierte al deudor que no podrÃ¡ disponer y/o enajenar los activos, hasta el cumplimiento total del acuerdo de pago.",
+          "Una vez se finalice los pagos a cada acreedor, los mismos acreedores se comprometen a entregar los respectivos paz y salvos y oficiar a los juzgados solicitando la terminaciÃ³n de los procesos por pago total.",
+          "Se deja constancia que la audiencia se realizÃ³ de forma virtual y fue grabada.",
         ];
 
     observacionesAcuerdo.forEach((item, idx) => {
@@ -1778,18 +2681,18 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
     sections.push(new Paragraph({
       children: [
         new TextRun({
-          text: `Por lo expuesto al cumplir el presente acuerdo de pago con las exigencias de la Ley 1564 de 2012 en lo relacionado con la negociación de deudas del deudor `,
+          text: `Por lo expuesto al cumplir el presente acuerdo de pago con las exigencias de la Ley 1564 de 2012 en lo relacionado con la negociaciÃ³n de deudas del deudor `,
         }),
         new TextRun({ text: deudorNombre.toUpperCase(), bold: true }),
         new TextRun({
-          text: ` Teniendo en cuenta esta audiencia se llevó a cabo virtualmente; el conciliador actuando con el PRINCIPIO DE LA BUENA FE, previa grabación de toda la audiencia; donde constan las actuaciones y el acuerdo realizado, con la asistencia de la mayoría de los acreedores que votaron la fórmula de pago del deudor, se suscribe en señal de aceptación de lo acordado.`,
+          text: ` Teniendo en cuenta esta audiencia se llevÃ³ a cabo virtualmente; el conciliador actuando con el PRINCIPIO DE LA BUENA FE, previa grabaciÃ³n de toda la audiencia; donde constan las actuaciones y el acuerdo realizado, con la asistencia de la mayorÃ­a de los acreedores que votaron la fÃ³rmula de pago del deudor, se suscribe en seÃ±al de aceptaciÃ³n de lo acordado.`,
         }),
       ],
       spacing: { before: 200, after: 200 },
     }));
 
     sections.push(new Paragraph({
-      children: [new TextRun({ text: "No siendo más el objeto de la presente, se suspende la presente diligencia" })],
+      children: [new TextRun({ text: "No siendo mÃ¡s el objeto de la presente, se suspende la presente diligencia" })],
       spacing: { after: 200 },
     }));
 
@@ -1798,7 +2701,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
       children: [
         new TextRun({ text: "NOTA: ", bold: true }),
         new TextRun({
-          text: `"AVISO DE CONFIDENCIALIDAD: Se les informa a las partes que les corresponde mantener reserva en general sobre la información que reposa en este documento, a no ser que exista una autorización explícita. De usar su contenido sin autorización, podría tener consecuencias legales como las contenidas en la Ley 1273 del 5 de enero de 2009 y todas las que le apliquen".`,
+          text: `"AVISO DE CONFIDENCIALIDAD: Se les informa a las partes que les corresponde mantener reserva en general sobre la informaciÃ³n que reposa en este documento, a no ser que exista una autorizaciÃ³n explÃ­cita. De usar su contenido sin autorizaciÃ³n, podrÃ­a tener consecuencias legales como las contenidas en la Ley 1273 del 5 de enero de 2009 y todas las que le apliquen".`,
           italics: true,
         }),
       ],
@@ -1818,7 +2721,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
     sections.push(new Paragraph({
       children: [
         new TextRun({
-          text: "Acto seguido el/la suscrito(a) conciliador(a) continua con el desarrollo del numeral 5 y 6 del art. 550 del CGP, que estipula que el deudor haga una exposición de la propuesta de pago, para lo cual le concede el uso de la palabra el apoderado de la parte deudora quien indica:",
+          text: "Acto seguido el/la suscrito(a) conciliador(a) continua con el desarrollo del numeral 5 y 6 del art. 550 del CGP, que estipula que el deudor haga una exposiciÃ³n de la propuesta de pago, para lo cual le concede el uso de la palabra el apoderado de la parte deudora quien indica:",
         }),
       ],
       spacing: { after: 200 },
@@ -1826,9 +2729,9 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
 
     sections.push(...buildPropuestaPagoParagraphs(payload));
 
-    // --- VOTACIÓN DEL ACUERDO ---
+    // --- VOTACIÃ“N DEL ACUERDO ---
     sections.push(new Paragraph({
-      children: [new TextRun({ text: "VOTACIÓN DEL ACUERDO", bold: true, size: 24 })],
+      children: [new TextRun({ text: "VOTACIÃ“N DEL ACUERDO", bold: true, size: 24 })],
       heading: HeadingLevel.HEADING_2,
       spacing: { before: 200, after: 200 },
     }));
@@ -1836,13 +2739,25 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
     sections.push(new Paragraph({
       children: [
         new TextRun({
-          text: "Teniendo en cuenta que es la segunda citación sin hacerse presente ningún acreedor, se considera que no hay animo conciliatorio para un posible acuerdo de pago:",
+          text: "Teniendo en cuenta que es la segunda citaciÃ³n sin hacerse presente ningÃºn acreedor, se considera que no hay animo conciliatorio para un posible acuerdo de pago:",
         }),
       ],
       spacing: { after: 200 },
     }));
 
-    if (payload.acreencias.length > 0) {
+    if (excelDocData?.votingTable && excelDocData.votingTable.rows.length > 0) {
+      sections.push(new Paragraph({
+        children: [
+          new TextRun({
+            text: `Tabla de votaciÃ³n tomada del archivo Excel: ${excelDocData.source.drive_file_name}`,
+            italics: true,
+            size: 18,
+          }),
+        ],
+        spacing: { after: 120 },
+      }));
+      sections.push(createExcelDocTable(excelDocData.votingTable));
+    } else if (payload.acreencias.length > 0) {
       const votingHeaders = ["ACREEDOR", "CAPITAL", "%", "VOTACION"];
       const votingColWidths = [40, 25, 15, 20];
       const votingTableWidth = convertInchesToTwip(8.5 - 1.2);
@@ -1871,7 +2786,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
           new TableRow({
             children: [
               new TableCell({
-                children: [new Paragraph({ children: [new TextRun({ text: a.acreedor?.trim() || "—", size: 20 })] })],
+                children: [new Paragraph({ children: [new TextRun({ text: a.acreedor?.trim() || "â€”", size: 20 })] })],
                 borders: tableBorders,
               }),
               new TableCell({
@@ -1935,14 +2850,14 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
       }));
     }
 
-    // --- RELACIÓN FINAL DE LOS VOTOS ---
+    // --- RELACIÃ“N FINAL DE LOS VOTOS ---
     sections.push(new Paragraph({
-      children: [new TextRun({ text: "RELACIÓN FINAL DE LOS VOTOS", bold: true, size: 24 })],
+      children: [new TextRun({ text: "RELACIÃ“N FINAL DE LOS VOTOS", bold: true, size: 24 })],
       heading: HeadingLevel.HEADING_2,
       spacing: { before: 300, after: 200 },
     }));
 
-    const voteHeaders = ["VOTOS POSITIVOS", "VOTOS NEGATIVOS", "VOTOS AUSENTES", "ABSTENCIÓN DE VOTO"];
+    const voteHeaders = ["VOTOS POSITIVOS", "VOTOS NEGATIVOS", "VOTOS AUSENTES", "ABSTENCIÃ“N DE VOTO"];
     const voteColWidth = convertInchesToTwip(8.5 - 1.2);
     const voteColTwip = [25, 25, 25, 25].map((pct) => Math.round((voteColWidth * pct) / 100));
     const vtSum = voteColTwip.reduce((a, v) => a + v, 0);
@@ -1993,7 +2908,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
 
     sections.push(new Paragraph({
       children: [
-        new TextRun({ text: "A partir de la votación se establece que entre " }),
+        new TextRun({ text: "A partir de la votaciÃ³n se establece que entre " }),
         new TextRun({ text: deudorNombre.toUpperCase(), bold: true }),
         new TextRun({ text: " y sus acreedores, " }),
         new TextRun({ text: "NO HAY ACUERDO DE PAGO", bold: true }),
@@ -2012,7 +2927,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
     sections.push(new Paragraph({
       children: [
         new TextRun({
-          text: "Conforme al artículo 553 de la Ley 1564 de 2012, el conciliador y los acreedores abajo firmantes dejan constancia en la presente acta que:",
+          text: "Conforme al artÃ­culo 553 de la Ley 1564 de 2012, el conciliador y los acreedores abajo firmantes dejan constancia en la presente acta que:",
         }),
       ],
       spacing: { after: 200 },
@@ -2021,20 +2936,20 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
     sections.push(new Paragraph({
       children: [
         new TextRun({
-          text: `Por porcentaje de votación positiva fue del ${formatPercentage(totals.POSITIVO)} por lo tanto se declara fracasado el trámite de insolvencia de persona natural no comerciante de `,
+          text: `Por porcentaje de votaciÃ³n positiva fue del ${formatPercentage(totals.POSITIVO)} por lo tanto se declara fracasado el trÃ¡mite de insolvencia de persona natural no comerciante de `,
         }),
         new TextRun({ text: deudorNombre.toUpperCase(), bold: true }),
         new TextRun({
-          text: ". Se remitirá a liquidación patrimonial teniendo en cuenta lo que establece el Código General del Proceso.",
+          text: ". Se remitirÃ¡ a liquidaciÃ³n patrimonial teniendo en cuenta lo que establece el CÃ³digo General del Proceso.",
         }),
       ],
       spacing: { after: 200 },
     }));
 
   } else {
-    // Default content for ACTA AUDIENCIA, ACTA SUSPENSIÓN, etc.
+    // Default content for ACTA AUDIENCIA, ACTA SUSPENSIÃ“N, etc.
     const observaciones = payload.observacionesFinales ||
-      `Se deja constancia de que la apoderada del deudor procedió a verbalizar la propuesta de pago, frente a lo cual los acreedores asistentes expusieron las políticas aplicables de cada una de sus entidades. En razón de lo anterior, la apoderada del deudor solicitó la suspensión de la presente diligencia, con el fin de informar a su representado las observaciones efectuadas a la propuesta y evaluar la posibilidad de modificarla. En caso de realizarse ajustes, la nueva propuesta actualizada deberá ser remitida a este centro de conciliación, con copia a todos los acreedores. Finalmente se deja constancia de que se encuentra precluida la etapa de relación de acreencias.`;
+      `Se deja constancia de que la apoderada del deudor procediÃ³ a verbalizar la propuesta de pago, frente a lo cual los acreedores asistentes expusieron las polÃ­ticas aplicables de cada una de sus entidades. En razÃ³n de lo anterior, la apoderada del deudor solicitÃ³ la suspensiÃ³n de la presente diligencia, con el fin de informar a su representado las observaciones efectuadas a la propuesta y evaluar la posibilidad de modificarla. En caso de realizarse ajustes, la nueva propuesta actualizada deberÃ¡ ser remitida a este centro de conciliaciÃ³n, con copia a todos los acreedores. Finalmente se deja constancia de que se encuentra precluida la etapa de relaciÃ³n de acreencias.`;
 
     sections.push(new Paragraph({
       children: [new TextRun({ text: observaciones })],
@@ -2043,7 +2958,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
 
     sections.push(new Paragraph({
       children: [
-        new TextRun({ text: `Teniendo en cuenta lo anterior y que no se han presentes los demás acreedores. El suscrito conciliador informa que se hace necesario suspender la presente audiencia. Fijando nueva fecha para el día ` }),
+        new TextRun({ text: `Teniendo en cuenta lo anterior y que no se han presentes los demÃ¡s acreedores. El suscrito conciliador informa que se hace necesario suspender la presente audiencia. Fijando nueva fecha para el dÃ­a ` }),
         new TextRun({ text: proximaFecha, bold: true }),
         new TextRun({ text: ` a las ` }),
         new TextRun({ text: proximaHora, bold: true }),
@@ -2069,7 +2984,10 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
   }));
 
   sections.push(new Paragraph({
-    children: [new TextRun({ text: `Conciliador Extrajudicial en Derecho y Operador en Insolvencias C. C. No. ${operadorId}` })],
+    children: [
+      new TextRun({ text: "Conciliador Extrajudicial en Derecho y Operador en Insolvencias" }),
+      new TextRun({ text: `C. C. No. ${operadorId}`, break: 1 }),
+    ],
   }));
 
   sections.push(new Paragraph({
@@ -2083,10 +3001,11 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
 
   const portraitPage = {
     margin: {
-      top: convertInchesToTwip(0.6),
+      top: convertInchesToTwip(1.15),
       right: convertInchesToTwip(0.6),
       bottom: convertInchesToTwip(0.6),
       left: convertInchesToTwip(0.6),
+      header: convertInchesToTwip(0.2),
     },
     size: {
       width: convertInchesToTwip(8.5),
@@ -2097,10 +3016,11 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
 
   const landscapePage = {
     margin: {
-      top: convertInchesToTwip(0.6),
+      top: convertInchesToTwip(1.15),
       right: convertInchesToTwip(0.6),
       bottom: convertInchesToTwip(0.6),
       left: convertInchesToTwip(0.6),
+      header: convertInchesToTwip(0.2),
     },
     size: {
       width: convertInchesToTwip(11),
@@ -2109,13 +3029,13 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
     },
   };
 
-  const docSections: { properties: Record<string, unknown>; children: (Paragraph | Table)[] }[] = [];
-  docSections.push({ properties: { page: portraitPage }, children: portraitBefore });
+  const docSections: ISectionOptions[] = [];
+  docSections.push(buildSection(portraitPage, docHeader, portraitBefore));
   if (landscapeAcreencias.length > 0) {
-    docSections.push({ properties: { page: landscapePage }, children: landscapeAcreencias });
+    docSections.push(buildSection(landscapePage, docHeader, landscapeAcreencias));
   }
   if (portraitAfter.length > 0) {
-    docSections.push({ properties: { page: portraitPage }, children: portraitAfter });
+    docSections.push(buildSection(portraitPage, docHeader, portraitAfter));
   }
 
   const doc = new Document({

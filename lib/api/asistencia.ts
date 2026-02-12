@@ -1,6 +1,18 @@
 import { supabase } from '../supabase'
 import type { AsistenciaInsert, AsistenciaUpdate } from '../database.types'
 
+function toSupabaseErrorMessage(error: unknown) {
+  if (error && typeof error === 'object') {
+    const rec = error as Record<string, unknown>
+    const parts = [rec.message, rec.details, rec.hint, rec.code]
+      .map((v) => (v === undefined || v === null ? '' : String(v).trim()))
+      .filter(Boolean)
+    if (parts.length > 0) return parts.join(' | ')
+  }
+  if (error instanceof Error) return error.message
+  return String(error)
+}
+
 export async function getAsistenciasByProceso(procesoId: string) {
   const { data, error } = await supabase
     .from('asistencia')
@@ -64,7 +76,7 @@ export async function createAsistenciasBulk(asistencias: AsistenciaInsert[]) {
     .insert(asistencias)
     .select()
 
-  if (error) throw error
+  if (error) throw new Error(toSupabaseErrorMessage(error))
   return data
 }
 

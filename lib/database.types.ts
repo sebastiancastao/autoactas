@@ -68,6 +68,7 @@ export interface Database {
           activo: boolean
           identificacion: string | null
           tarjeta_profesional: string | null
+          firma_data_url: string | null
           created_at: string
           updated_at: string
         }
@@ -82,6 +83,7 @@ export interface Database {
           activo?: boolean
           identificacion?: string | null
           tarjeta_profesional?: string | null
+          firma_data_url?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -96,6 +98,7 @@ export interface Database {
           activo?: boolean
           identificacion?: string | null
           tarjeta_profesional?: string | null
+          firma_data_url?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -586,6 +589,53 @@ export interface Database {
           }
         ]
       }
+      proceso_excel_archivos: {
+        Row: {
+          id: string
+          proceso_id: string
+          original_file_name: string
+          drive_file_id: string
+          drive_file_name: string
+          drive_web_view_link: string | null
+          drive_web_content_link: string | null
+          mime_type: string
+          uploaded_by_auth_id: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          proceso_id: string
+          original_file_name: string
+          drive_file_id: string
+          drive_file_name: string
+          drive_web_view_link?: string | null
+          drive_web_content_link?: string | null
+          mime_type: string
+          uploaded_by_auth_id?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          proceso_id?: string
+          original_file_name?: string
+          drive_file_id?: string
+          drive_file_name?: string
+          drive_web_view_link?: string | null
+          drive_web_content_link?: string | null
+          mime_type?: string
+          uploaded_by_auth_id?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "proceso_excel_archivos_proceso_id_fkey"
+            columns: ["proceso_id"]
+            isOneToOne: false
+            referencedRelation: "proceso"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -707,3 +757,7 @@ export type ProgresoUpdate = Database['public']['Tables']['progreso']['Update']
 export type Asistencia = Database['public']['Tables']['asistencia']['Row']
 export type AsistenciaInsert = Database['public']['Tables']['asistencia']['Insert']
 export type AsistenciaUpdate = Database['public']['Tables']['asistencia']['Update']
+
+export type ProcesoExcelArchivo = Database['public']['Tables']['proceso_excel_archivos']['Row']
+export type ProcesoExcelArchivoInsert = Database['public']['Tables']['proceso_excel_archivos']['Insert']
+export type ProcesoExcelArchivoUpdate = Database['public']['Tables']['proceso_excel_archivos']['Update']

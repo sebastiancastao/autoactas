@@ -127,6 +127,15 @@ type EnviarRegistroResult = {
   errorMessage?: string;
 };
 
+type ExcelUploadResult = {
+  id?: string;
+  fileId: string;
+  fileName: string;
+  webViewLink: string | null;
+  webContentLink: string | null;
+  createdAt?: string;
+};
+
 
 export default function ProcesosPage() {
 
@@ -246,6 +255,16 @@ export default function ProcesosPage() {
   const [creandoProceso, setCreandoProceso] = useState(false);
   const [mensajeProceso, setMensajeProceso] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [excelUploadModal, setExcelUploadModal] = useState<{
+    procesoId: string;
+    procesoNumero: string;
+  } | null>(null);
+  const [excelFile, setExcelFile] = useState<File | null>(null);
+  const [excelUploadLoading, setExcelUploadLoading] = useState(false);
+  const [excelUploadError, setExcelUploadError] = useState<string | null>(null);
+  const [excelUploadByProcesoId, setExcelUploadByProcesoId] = useState<
+    Record<string, ExcelUploadResult>
+  >({});
 
 
 
@@ -314,6 +333,83 @@ export default function ProcesosPage() {
     }
 
   }, []);
+
+  const abrirModalExcel = (proceso: Proceso) => {
+    setExcelUploadModal({
+      procesoId: proceso.id,
+      procesoNumero: proceso.numero_proceso || proceso.id,
+    });
+    setExcelFile(null);
+    setExcelUploadError(null);
+  };
+
+  const cerrarModalExcel = () => {
+    if (excelUploadLoading) return;
+    setExcelUploadModal(null);
+    setExcelFile(null);
+    setExcelUploadError(null);
+  };
+
+  const subirExcelProceso = async () => {
+    if (!excelUploadModal || !excelFile) return;
+
+    setExcelUploadLoading(true);
+    setExcelUploadError(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", excelFile);
+      formData.append("procesoId", excelUploadModal.procesoId);
+      formData.append("procesoNumero", excelUploadModal.procesoNumero);
+      if (user?.id) {
+        formData.append("authUserId", user.id);
+      }
+
+      const response = await fetch("/api/upload-excel", {
+        method: "POST",
+        body: formData,
+      });
+
+      const payload = (await response.json().catch(() => null)) as
+        | ({
+            id: string;
+            procesoId: string;
+            fileId: string;
+            fileName: string;
+            webViewLink: string | null;
+            webContentLink: string | null;
+            createdAt: string;
+            error?: string;
+            detail?: string;
+          })
+        | null;
+
+      if (!response.ok || !payload?.fileId) {
+        throw new Error(
+          payload?.detail || payload?.error || "No se pudo subir el archivo de Excel."
+        );
+      }
+
+      setExcelUploadByProcesoId((prev) => ({
+        ...prev,
+        [excelUploadModal.procesoId]: {
+          id: payload.id,
+          fileId: payload.fileId,
+          fileName: payload.fileName,
+          webViewLink: payload.webViewLink ?? null,
+          webContentLink: payload.webContentLink ?? null,
+          createdAt: payload.createdAt,
+        },
+      }));
+      setExcelUploadModal(null);
+      setExcelFile(null);
+    } catch (error) {
+      setExcelUploadError(
+        error instanceof Error ? error.message : "No se pudo subir el archivo de Excel."
+      );
+    } finally {
+      setExcelUploadLoading(false);
+    }
+  };
 
 
 
@@ -449,6 +545,68 @@ export default function ProcesosPage() {
         if (!canceled) setApoderadoSubmissionByProcesoId({});
       } finally {
         if (!canceled) setApoderadoSubmissionLoading(false);
+      }
+    })();
+
+    return () => {
+      canceled = true;
+    };
+  }, [procesos]);
+
+  useEffect(() => {
+    const procesoIds = (procesos ?? []).map((p) => p.id).filter(Boolean);
+    if (procesoIds.length === 0) {
+      setExcelUploadByProcesoId({});
+      return;
+    }
+
+    let canceled = false;
+    (async () => {
+      try {
+        const params = new URLSearchParams({
+          procesoIds: procesoIds.join(","),
+        });
+        const response = await fetch(`/api/upload-excel?${params.toString()}`);
+        const payload = (await response.json().catch(() => null)) as
+          | {
+              files?: Array<{
+                id: string;
+                proceso_id: string;
+                drive_file_id: string;
+                drive_file_name: string;
+                drive_web_view_link: string | null;
+                drive_web_content_link: string | null;
+                created_at: string;
+              }>;
+              error?: string;
+              detail?: string;
+            }
+          | null;
+
+        if (!response.ok) {
+          throw new Error(payload?.detail || payload?.error || "No se pudieron cargar los Excel.");
+        }
+
+        const nextByProcesoId: Record<string, ExcelUploadResult> = {};
+        (payload?.files ?? []).forEach((row) => {
+          nextByProcesoId[row.proceso_id] = {
+            id: row.id,
+            fileId: row.drive_file_id,
+            fileName: row.drive_file_name,
+            webViewLink: row.drive_web_view_link ?? null,
+            webContentLink: row.drive_web_content_link ?? null,
+            createdAt: row.created_at,
+          };
+        });
+
+        if (!canceled) {
+          setExcelUploadByProcesoId(nextByProcesoId);
+        }
+      } catch (error) {
+        console.error("Error loading persisted Excel files:", error);
+        if (!canceled) {
+          setExcelUploadByProcesoId({});
+        }
       }
     })();
 
@@ -1156,6 +1314,7 @@ export default function ProcesosPage() {
                   const acreedorSet = new Set(submission.acreedorIds);
                   const submittedAnyCount = apoderadosDelProceso.filter((ap) => deudorSet.has(ap.id) || acreedorSet.has(ap.id)).length;
                   const autoState = autoAdmisorioStateByProcesoId[proceso.id] ?? { loading: false, error: null, result: null };
+                  const excelUpload = excelUploadByProcesoId[proceso.id] ?? null;
 
                   return (
 
@@ -1362,6 +1521,23 @@ export default function ProcesosPage() {
                             )}
                           </div>
                         )}
+
+                        {excelUpload && (
+                          <div className="mr-3 flex flex-col gap-1 text-xs text-zinc-600 dark:text-zinc-300">
+                            <span className="font-medium">Excel: {excelUpload.fileName}</span>
+                            {excelUpload.webViewLink && (
+                              <a
+                                href={excelUpload.webViewLink}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="font-semibold underline underline-offset-2"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                Abrir en Drive
+                              </a>
+                            )}
+                          </div>
+                        )}
  
                         <p className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">
  
@@ -1394,6 +1570,16 @@ export default function ProcesosPage() {
                             className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-900 transition hover:border-amber-500 hover:bg-amber-100 disabled:opacity-50 disabled:cursor-not-allowed dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:border-amber-700 dark:hover:bg-amber-950/60"
                           >
                             {autoState.loading ? "Creando..." : "Crear auto admisorio"}
+                          </button>
+
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              abrirModalExcel(proceso);
+                            }}
+                            className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800 transition hover:border-emerald-500 hover:bg-emerald-100 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200 dark:hover:border-emerald-700 dark:hover:bg-emerald-950/60"
+                          >
+                            {excelUpload ? "Reemplazar Excel" : "Subir Excel"}
                           </button>
 
                           <button
@@ -1433,6 +1619,79 @@ export default function ProcesosPage() {
           </section>
 
         </div>
+
+        {excelUploadModal && (
+          <div className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center">
+            <div
+              className="absolute inset-0 bg-black/30 backdrop-blur-sm"
+              onClick={cerrarModalExcel}
+            />
+            <div className="relative z-10 w-full max-w-lg rounded-3xl border border-zinc-200 bg-white p-5 shadow-2xl dark:border-white/10 dark:bg-zinc-900 sm:p-6">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+                    Subir Excel
+                  </h3>
+                  <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                    Proceso: {excelUploadModal.procesoNumero}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={cerrarModalExcel}
+                  disabled={excelUploadLoading}
+                  className="rounded-full px-3 py-1 text-sm text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 disabled:opacity-50 dark:text-zinc-300 dark:hover:bg-white/10 dark:hover:text-white"
+                >
+                  Cerrar
+                </button>
+              </div>
+
+              <div className="mt-5 space-y-4">
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                    Archivo Excel (.xlsx o .xls)
+                  </label>
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                    onChange={(e) => setExcelFile(e.target.files?.[0] ?? null)}
+                    className="block w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 file:mr-3 file:rounded-lg file:border-0 file:bg-zinc-900 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white hover:file:bg-zinc-800 dark:border-white/10 dark:bg-black/20 dark:text-zinc-100 dark:file:bg-zinc-100 dark:file:text-zinc-900 dark:hover:file:bg-white"
+                  />
+                  {excelFile && (
+                    <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+                      Seleccionado: {excelFile.name}
+                    </p>
+                  )}
+                </div>
+
+                {excelUploadError && (
+                  <div className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+                    {excelUploadError}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={cerrarModalExcel}
+                    disabled={excelUploadLoading}
+                    className="h-10 rounded-xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 disabled:opacity-50 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:bg-white/10"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void subirExcelProceso()}
+                    disabled={!excelFile || excelUploadLoading}
+                    className="h-10 rounded-xl bg-emerald-600 px-4 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-emerald-400 dark:text-black dark:hover:bg-emerald-300"
+                  >
+                    {excelUploadLoading ? "Subiendo..." : "Subir Excel"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
       </main>
 

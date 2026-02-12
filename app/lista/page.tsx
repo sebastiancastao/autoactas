@@ -51,6 +51,51 @@ function esEmailValido(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
 
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value
+  );
+}
+
+function extractUuidFromParam(value: string | null | undefined) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const match = raw.match(
+    /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i
+  );
+  return match ? match[0] : null;
+}
+
+function hasEmbeddedDebugParam(value: string | null | undefined) {
+  const raw = String(value ?? "").toLowerCase();
+  return raw.includes("debug=1") || raw.includes("debug=true");
+}
+
+function toErrorMessage(error: unknown) {
+  if (error instanceof Error && error.message) return error.message;
+  if (error && typeof error === "object") {
+    const rec = error as Record<string, unknown>;
+    const parts = [
+      rec.message,
+      rec.details,
+      rec.hint,
+      rec.code,
+      rec.error_description,
+      rec.status,
+      rec.statusText,
+    ]
+      .map((v) => (v === undefined || v === null ? "" : String(v).trim()))
+      .filter(Boolean);
+    if (parts.length > 0) return parts.join(" | ");
+    try {
+      return JSON.stringify(error, Object.getOwnPropertyNames(error));
+    } catch {
+      return String(error);
+    }
+  }
+  return String(error);
+}
+
 function getBogotaTimeHHMMNow(fallback = "11:30") {
   try {
     const parts = new Intl.DateTimeFormat("en-GB", {
@@ -145,36 +190,33 @@ function mapApoderadosFromProceso(
 
   const listaApoderados = apoderados ?? detalle.apoderados ?? [];
   const filas: Asistente[] = [];
+  const apoderadoById = new Map(listaApoderados.map((apoderado) => [apoderado.id, apoderado]));
 
-  // Get apoderados directly from proceso or participants
-  listaApoderados.forEach((apoderado) => {
-    // Find if this apoderado represents an acreedor
-    const acreedor = detalle.acreedores?.find(
-      (a) => a.apoderado_id === apoderado.id
-    );
-    // Find if this apoderado represents a deudor
-    const deudor = detalle.deudores?.find(
-      (d) => d.apoderado_id === apoderado.id
-    );
-
-    let calidadDe = "";
-    if (acreedor) {
-      calidadDe = `Acreedor: ${acreedor.nombre ?? "Sin nombre"}`;
-    } else if (deudor) {
-      calidadDe = `Deudor: ${deudor.nombre ?? "Sin nombre"}`;
-    }
-
+  const agregarFila = (apoderadoId: string, calidadDe: string) => {
+    const apoderado = apoderadoById.get(apoderadoId);
     filas.push({
       id: uid(),
-      apoderadoId: apoderado.id,
-      nombre: apoderado.nombre,
-      email: apoderado.email ?? "",
-      identificacion: apoderado.identificacion ?? "",
+      apoderadoId,
+      nombre: apoderado?.nombre ?? "Apoderado sin registro",
+      email: apoderado?.email ?? "",
+      identificacion: apoderado?.identificacion ?? "",
       categoria: "Apoderado",
       estado: "Ausente",
-      tarjetaProfesional: apoderado.tarjeta_profesional ?? "",
+      tarjetaProfesional: apoderado?.tarjeta_profesional ?? "",
       calidadApoderadoDe: calidadDe,
     });
+  };
+
+  (detalle.acreedores ?? []).forEach((acreedor) => {
+    const apoderadoId = acreedor.apoderado_id;
+    if (!apoderadoId) return;
+    agregarFila(apoderadoId, `Acreedor: ${acreedor.nombre ?? "Sin nombre"}`);
+  });
+
+  (detalle.deudores ?? []).forEach((deudor) => {
+    const apoderadoId = deudor.apoderado_id;
+    if (!apoderadoId) return;
+    agregarFila(apoderadoId, `Deudor: ${deudor.nombre ?? "Sin nombre"}`);
   });
 
   return filas;
@@ -190,6 +232,33 @@ function mergeApoderadosById(primary: Apoderado[], fallback: Apoderado[]): Apode
 type AcreenciaDetalle = Acreencia & {
   acreedores?: Acreedor | null;
   apoderados?: Apoderado | null;
+};
+
+type ProcesoExcelArchivoPayload = {
+  id: string;
+  proceso_id: string;
+  original_file_name: string;
+  drive_file_id: string;
+  drive_file_name: string;
+  drive_web_view_link: string | null;
+  drive_web_content_link: string | null;
+  created_at: string;
+};
+
+type UploadExcelGetItem = {
+  id: string;
+  proceso_id: string;
+  drive_file_id: string;
+  drive_file_name: string;
+  drive_web_view_link: string | null;
+  drive_web_content_link: string | null;
+  created_at: string;
+};
+
+type UploadExcelGetResponse = {
+  files?: UploadExcelGetItem[];
+  error?: string;
+  detail?: string;
 };
 
 type AcreenciaHistorialRow = {
@@ -390,10 +459,16 @@ function snapshotFromHistorialData(data: Record<string, unknown> | null): Acreen
 
 function AttendanceContent() {
   const searchParams = useSearchParams();
-  const procesoId = searchParams.get("procesoId");
-  const eventoId = searchParams.get("eventoId");
+  const procesoIdRaw = searchParams.get("procesoId");
+  const eventoIdRaw = searchParams.get("eventoId");
+  const procesoId = extractUuidFromParam(procesoIdRaw) ?? procesoIdRaw;
+  const eventoId = extractUuidFromParam(eventoIdRaw) ?? eventoIdRaw;
   const debugRaw = searchParams.get("debug");
-  const debugLista = debugRaw === "1" || debugRaw?.toLowerCase() === "true";
+  const debugLista =
+    debugRaw === "1" ||
+    debugRaw?.toLowerCase() === "true" ||
+    hasEmbeddedDebugParam(procesoIdRaw) ||
+    hasEmbeddedDebugParam(eventoIdRaw);
 
   const { user } = useAuth();
 
@@ -421,20 +496,23 @@ function AttendanceContent() {
 
     const defaultNombre = "JOSE ALEJANDRO PARDO MARTINEZ";
     const defaultEmail = "fundaseer@gmail.com";
+    const defaultIdentificacion = "1.154.967.376";
 
     const shouldSetNombre =
       !operadorNombre.trim() || operadorNombre.trim().toUpperCase() === defaultNombre;
     const shouldSetEmail =
       !operadorEmail.trim() || operadorEmail.trim().toLowerCase() === defaultEmail;
+    const shouldSetIdentificacion =
+      !operadorIdentificacion.trim() || operadorIdentificacion.trim() === defaultIdentificacion;
 
-    if (!shouldSetNombre && !shouldSetEmail) return;
+    if (!shouldSetNombre && !shouldSetEmail && !shouldSetIdentificacion) return;
 
     let canceled = false;
     (async () => {
       try {
         const { data: usuario, error: usuarioError } = await supabase
           .from("usuarios")
-          .select("nombre, email")
+          .select("nombre, email, identificacion")
           .eq("auth_id", authId)
           .maybeSingle();
 
@@ -443,6 +521,9 @@ function AttendanceContent() {
 
         if (shouldSetNombre && usuario?.nombre) setOperadorNombre(usuario.nombre);
         if (shouldSetEmail && usuario?.email) setOperadorEmail(usuario.email);
+        if (shouldSetIdentificacion && usuario?.identificacion) {
+          setOperadorIdentificacion(usuario.identificacion);
+        }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         console.warn("[/lista] Unable to resolve operador from usuarios(auth_id):", msg);
@@ -452,7 +533,7 @@ function AttendanceContent() {
     return () => {
       canceled = true;
     };
-    // Intentionally do not include operadorNombre/operadorEmail in deps: we only want to run when auth user changes.
+    // Intentionally do not include operador fields in deps: we only want to run when auth user changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
@@ -476,7 +557,7 @@ function AttendanceContent() {
 
         const { data: usuario, error: usuarioError } = await supabase
           .from("usuarios")
-          .select("nombre, email")
+          .select("nombre, email, identificacion")
           .eq("id", usuarioId)
           .maybeSingle();
 
@@ -485,6 +566,7 @@ function AttendanceContent() {
 
         if (usuario?.nombre) setOperadorNombre(usuario.nombre);
         if (usuario?.email) setOperadorEmail(usuario.email);
+        if (usuario?.identificacion) setOperadorIdentificacion(usuario.identificacion);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         console.warn("[/lista] Unable to resolve event creator user:", msg);
@@ -604,11 +686,10 @@ function AttendanceContent() {
   const tipoDocumentoOpciones = useMemo(() => {
     const base = [
       { value: "ACTA AUDIENCIA", label: "Acta Audiencia" },
-      { value: "ACTA SUSPENSIÃ“N", label: "Acta SuspensiÃ³n" },
       { value: "ACUERDO DE PAGO", label: "Acuerdo de Pago" },
-      { value: "ACUERDO DE PAGO BILATERAL Y FRACASO DEL TRAMITE", label: "Acuerdo de Pago Bilateral y Fracaso del TrÃ¡mite" },
-      { value: "ACTA FRACASO DEL TRAMITE", label: "Acta Fracaso del TrÃ¡mite" },
-      { value: "ACTA RECHAZO DEL TRAMITE", label: "Acta Rechazo del TrÃ¡mite" },
+      { value: "ACUERDO DE PAGO BILATERAL Y FRACASO DEL TRAMITE", label: "Acuerdo de Pago Bilateral y Fracaso del Tr\u00E1mite" },
+      { value: "ACTA FRACASO DEL TRAMITE", label: "Acta Fracaso del Tr\u00E1mite" },
+      { value: "ACTA RECHAZO DEL TRAMITE", label: "Acta Rechazo del Tr\u00E1mite" },
       { value: "AUTO DECLARA NULIDAD", label: "Auto Declara Nulidad" },
     ];
 
@@ -1104,10 +1185,23 @@ function AttendanceContent() {
     setGuardadoError(null);
 
     try {
+      const procesoIdSafe = procesoId?.trim() || null;
+      const eventoIdSafe = eventoId?.trim() || null;
+
+      if (!procesoIdSafe && !eventoIdSafe) {
+        throw new Error("Falta procesoId en la URL. Abre /lista?procesoId=...");
+      }
+      if (procesoIdSafe && !isUuid(procesoIdSafe)) {
+        throw new Error(`procesoId no es UUID válido: ${procesoIdSafe}`);
+      }
+      if (eventoIdSafe && !isUuid(eventoIdSafe)) {
+        throw new Error(`eventoId no es UUID válido: ${eventoIdSafe}`);
+      }
+
       const registros: AsistenciaInsert[] = asistentes.map((a) => ({
-        proceso_id: procesoId || undefined,
-        evento_id: eventoId || undefined,
-        apoderado_id: a.apoderadoId || undefined,
+        proceso_id: procesoIdSafe,
+        evento_id: eventoIdSafe,
+        apoderado_id: a.apoderadoId || null,
         nombre: a.nombre.trim(),
         email: a.email ? limpiarEmail(a.email) : null,
         categoria: a.categoria,
@@ -1122,8 +1216,9 @@ function AttendanceContent() {
       setGuardado(buildAsistenciaPayload());
       return true;
     } catch (error) {
-      console.error("Error guardando asistencia:", error);
-      setGuardadoError("No se pudo guardar la asistencia. Intenta de nuevo.");
+      const detail = toErrorMessage(error);
+      console.error("Error guardando asistencia:", { detail, error });
+      setGuardadoError(`No se pudo guardar la asistencia. ${detail}`);
       return false;
     } finally {
       setGuardando(false);
@@ -1146,12 +1241,12 @@ function AttendanceContent() {
       !acreenciasError &&
       (acreencias?.length ?? 0) === 0;
     if (acreenciasVacias) {
-      advertencias.push("Acreencias del proceso: estÃ¡ vacÃ­o.");
+      advertencias.push("Acreencias del proceso: est\u00E1 vac\u00EDo.");
     }
 
     const agendarVacio = !proximaFecha || !eventoSiguienteId;
     if (agendarVacio) {
-      advertencias.push("Agendar prÃ³xima audiencia: estÃ¡ vacÃ­o (no hay evento prÃ³ximo guardado).");
+      advertencias.push("Agendar pr\u00F3xima audiencia: est\u00E1 vac\u00EDo (no hay evento pr\u00F3ximo guardado).");
     }
 
     if (!force && advertencias.length > 0) {
@@ -1194,6 +1289,61 @@ function AttendanceContent() {
         voto: mostrarVotacionAcuerdo ? (votosAcuerdoByAcreenciaId[a.id] || null) : null,
       }));
 
+      let excelArchivoPayload: ProcesoExcelArchivoPayload | null = null;
+      if (procesoId) {
+        try {
+          const params = new URLSearchParams({ procesoIds: procesoId });
+          const excelRes = await fetch(`/api/upload-excel?${params.toString()}`);
+          const excelJson = (await excelRes.json().catch(() => null)) as UploadExcelGetResponse | null;
+
+          if (excelRes.ok) {
+            const latest = excelJson?.files?.[0] ?? null;
+            if (latest) {
+              excelArchivoPayload = {
+                ...latest,
+                original_file_name: latest.drive_file_name,
+              };
+            }
+          } else if (debugLista) {
+            console.warn("[/lista debug] /api/upload-excel lookup failed", {
+              status: excelRes.status,
+              payload: excelJson,
+            });
+          }
+        } catch (apiError) {
+          if (debugLista) {
+            console.warn("[/lista debug] /api/upload-excel lookup exception", apiError);
+          }
+        }
+
+        if (!excelArchivoPayload) {
+          const { data: excelArchivo, error: excelArchivoError } = await supabase
+            .from("proceso_excel_archivos")
+            .select(
+              "id, proceso_id, original_file_name, drive_file_id, drive_file_name, drive_web_view_link, drive_web_content_link, created_at"
+            )
+            .eq("proceso_id", procesoId)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (excelArchivoError) {
+            if (debugLista) {
+              console.warn("[/lista debug] unable to load excel metadata for payload", excelArchivoError);
+            }
+          } else if (excelArchivo) {
+            excelArchivoPayload = excelArchivo as ProcesoExcelArchivoPayload;
+          }
+        }
+      }
+
+      const requiereExcelAcuerdo = tipoDocumento.trim().toUpperCase().startsWith("ACUERDO DE PAGO");
+      if (requiereExcelAcuerdo && !excelArchivoPayload) {
+        throw new Error(
+          "No hay archivo Excel asociado a este proceso para generar la proyeccion de pagos. Sube el Excel en /procesos para este mismo proceso y vuelve a generar el acta."
+        );
+      }
+
       const terminarAudienciaPayload = {
         procesoId,
         numeroProceso,
@@ -1204,6 +1354,7 @@ function AttendanceContent() {
         ciudad,
         tipoDocumento,
         propuestaPago,
+        excelArchivo: excelArchivoPayload ?? undefined,
         resumen: asistenciaPayload.resumen,
         asistentes: asistenciaPayload.asistentes,
         acreencias: acreenciasPayload,
@@ -1598,7 +1749,7 @@ function AttendanceContent() {
                 Faltan secciones antes de terminar
               </h3>
               <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
-                EstÃ¡s a punto de terminar la audiencia, pero estas secciones estÃ¡n vacÃ­as:
+                Est\u00E1s a punto de terminar la audiencia, pero estas secciones est\u00E1n vac\u00EDas:
               </p>
 
               <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-zinc-700 dark:text-zinc-200">

@@ -9,6 +9,9 @@ export type Usuario = {
   rol: string
   avatar_url: string | null
   activo: boolean
+  identificacion: string | null
+  tarjeta_profesional: string | null
+  firma_data_url: string | null
   created_at: string
   updated_at: string
 }
