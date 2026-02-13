@@ -741,11 +741,21 @@ function CalendarioContent() {
     router.replace("/calendario");
   }, [procesoIdDesdeQuery, fechaDesdeQuery, hoyISO, router]);
 
+  const totalEventosVista = eventosFiltrados.length;
+  const eventosHoy = eventosPorDia[hoyISO]?.length ?? 0;
+  const procesosConEvento = new Set(
+    eventosFiltrados
+      .map((evento) => evento.procesoId)
+      .filter((procesoId): procesoId is string => Boolean(procesoId)),
+  ).size;
+  const filtroActivoLabel =
+    usuarioColorChips.find((chip) => chip.id === usuarioFiltro)?.label ?? "Global (Todos)";
+
   return (
-    <div className="min-h-screen bg-zinc-50 text-zinc-950 dark:bg-black dark:text-zinc-50">
-      <div className="pointer-events-none fixed inset-x-0 top-0 h-40 bg-gradient-to-b from-white/70 to-transparent dark:from-zinc-900/60" />
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,rgba(226,232,240,0.65),transparent_55%),linear-gradient(to_bottom,#fafafa,#f4f4f5)] text-zinc-950 dark:bg-[radial-gradient(circle_at_top,rgba(39,39,42,0.45),transparent_50%),linear-gradient(to_bottom,#000,#09090b)] dark:text-zinc-50">
+      <div className="pointer-events-none fixed inset-x-0 top-0 h-56 bg-gradient-to-b from-white/80 to-transparent dark:from-zinc-900/70" />
       <main className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8">
-        <header className="mb-8">
+        <header className="mb-8 space-y-4">
           <div className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/70 px-3 py-1 text-xs text-zinc-600 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
             <span className="h-2 w-2 rounded-full bg-zinc-950 dark:bg-zinc-50" />
             Calendario
@@ -814,14 +824,37 @@ function CalendarioContent() {
               <button onClick={irHoy} className="h-11 rounded-2xl bg-zinc-950 px-4 text-sm font-medium text-white shadow-sm transition hover:opacity-90 dark:bg-white dark:text-black">Hoy</button>
             </div>
           </div>
+          <div className="rounded-3xl border border-zinc-200/80 bg-white/80 p-4 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/5">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-zinc-500 dark:text-zinc-400">
+                  Resumen de agenda
+                </p>
+                <p className="mt-1 text-xl font-semibold text-zinc-900 dark:text-zinc-50">
+                  {etiquetaPeriodo}
+                </p>
+                <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
+                  Filtro activo: {filtroActivoLabel}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <CalendarStatChip label="Eventos vista" value={totalEventosVista} tone="neutral" />
+                <CalendarStatChip label="Eventos hoy" value={eventosHoy} tone="positive" />
+                <CalendarStatChip label="Procesos" value={procesosConEvento} tone="neutral" />
+                <CalendarStatChip label="Dia seleccionado" value={diaSeleccionadoISO} tone="neutral" />
+              </div>
+            </div>
+          </div>
         </header>
 
-        <nav className="mb-8 flex flex-wrap gap-2">
-          <Link href="/procesos" className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white">← procesos</Link>
+        <nav className="mb-8 flex flex-wrap items-center gap-2">
+          <Link href="/procesos" className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white">Procesos</Link>
+          <a href="#calendar-grid" className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white">Calendario</a>
+          <a href="#day-agenda" className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white">Agenda dia</a>
         </nav>
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-          <section className="lg:col-span-2 rounded-3xl border border-zinc-200 bg-white/80 p-5 shadow-[0_12px_40px_-20px_rgba(0,0,0,0.35)] backdrop-blur dark:border-white/10 dark:bg-white/5 sm:p-6">
+          <section id="calendar-grid" className="scroll-mt-24 lg:col-span-2 rounded-[30px] border border-zinc-200/90 bg-white/85 p-5 shadow-[0_18px_60px_-30px_rgba(15,23,42,0.35)] backdrop-blur dark:border-white/10 dark:bg-white/[0.04] sm:p-6">
             {viewType === "month" && (
               <>
                 <div className="grid grid-cols-7 gap-2 pb-3 text-xs font-medium text-zinc-500 dark:text-zinc-400">
@@ -1065,7 +1098,7 @@ function CalendarioContent() {
             )}
           </section>
 
-          <aside className="rounded-3xl border border-zinc-200 bg-white/80 p-5 shadow-[0_12px_40px_-20px_rgba(0,0,0,0.35)] backdrop-blur dark:border-white/10 dark:bg-white/5 sm:p-6">
+          <aside id="day-agenda" className="scroll-mt-24 rounded-[30px] border border-zinc-200/90 bg-white/85 p-5 shadow-[0_18px_60px_-30px_rgba(15,23,42,0.35)] backdrop-blur dark:border-white/10 dark:bg-white/[0.04] sm:p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs text-zinc-500 dark:text-zinc-400">Día seleccionado</p>
@@ -1436,6 +1469,30 @@ function CalendarioContent() {
         );
       })()}
     </div>
+  );
+}
+
+function CalendarStatChip({
+  label,
+  value,
+  tone = "neutral",
+}: {
+  label: string;
+  value: number | string;
+  tone?: "neutral" | "positive";
+}) {
+  const toneClassName =
+    tone === "positive"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100"
+      : "border-zinc-200 bg-white text-zinc-700 dark:border-white/10 dark:bg-white/10 dark:text-zinc-200";
+  const labelClassName =
+    tone === "positive" ? "text-current/70" : "text-zinc-500 dark:text-zinc-300";
+
+  return (
+    <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium shadow-sm ${toneClassName}`}>
+      <span className={labelClassName}>{label}</span>
+      <span>{value}</span>
+    </span>
   );
 }
 

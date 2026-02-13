@@ -20,7 +20,7 @@ import {
 } from "@/lib/api/proceso";
 import { updateProgresoByProcesoId } from "@/lib/api/progreso";
 import type { Proceso, ProcesoInsert, Apoderado } from "@/lib/database.types";
-import { getApoderados } from "@/lib/api/apoderados";
+import { getApoderados, updateApoderado } from "@/lib/api/apoderados";
 import ProcesoForm from "@/components/proceso-form";
 import { useProcesoForm } from "@/lib/hooks/useProcesoForm";
 import { useRouter } from "next/navigation";
@@ -92,13 +92,20 @@ const generateId = () =>
     ? crypto.randomUUID()
     : Math.random().toString(36).slice(2);
 
-const createPanelApoderadoRow = (): PanelApoderadoRow => ({
+const createPanelApoderadoRow = (
+  categoria: PanelApoderadoRow["categoria"] = "acreedor",
+): PanelApoderadoRow => ({
   id: generateId(),
-  categoria: "acreedor",
+  categoria,
   apoderadoId: "",
   nombre: "",
   email: "",
 });
+
+const createDefaultPanelApoderados = (): PanelApoderadoRow[] => [
+  createPanelApoderadoRow("acreedor"),
+  createPanelApoderadoRow("deudor"),
+];
 
 type RegistroEmailHtmlProps = {
   recipientName: string;
@@ -183,6 +190,17 @@ type ExcelUploadResult = {
   createdAt?: string;
 };
 
+type UsuarioCreatorMeta = {
+  nombre: string;
+  email: string;
+};
+
+type CreatorFilterOption = {
+  authId: string;
+  label: string;
+  count: number;
+};
+
 
 export default function ProcesosPage() {
 
@@ -240,9 +258,9 @@ export default function ProcesosPage() {
     >
   >({});
 
-  const [panelApoderados, setPanelApoderados] = useState<PanelApoderadoRow[]>([
-    createPanelApoderadoRow(),
-  ]);
+  const [panelApoderados, setPanelApoderados] = useState<PanelApoderadoRow[]>(
+    () => createDefaultPanelApoderados(),
+  );
   const updatePanelApoderadoRow = (
     id: string,
     patch: Partial<PanelApoderadoRow>,
@@ -302,6 +320,10 @@ export default function ProcesosPage() {
   const [creandoProceso, setCreandoProceso] = useState(false);
   const [mensajeProceso, setMensajeProceso] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [creatorFilter, setCreatorFilter] = useState<string>("all");
+  const [usuariosByAuthId, setUsuariosByAuthId] = useState<Record<string, UsuarioCreatorMeta>>(
+    {},
+  );
   const [excelUploadModal, setExcelUploadModal] = useState<{
     procesoId: string;
     procesoNumero: string;
@@ -509,6 +531,37 @@ export default function ProcesosPage() {
 
     loadProcesos();
 
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("usuarios")
+          .select("auth_id, nombre, email")
+          .not("auth_id", "is", null);
+        if (error) throw error;
+        if (!active) return;
+
+        const map: Record<string, UsuarioCreatorMeta> = {};
+        (data ?? []).forEach((row) => {
+          const authId = row.auth_id?.trim();
+          if (!authId) return;
+          map[authId] = {
+            nombre: row.nombre?.trim() || row.email?.trim() || authId,
+            email: row.email?.trim() || "",
+          };
+        });
+        setUsuariosByAuthId(map);
+      } catch (error) {
+        console.error("Error loading usuarios for creator filter:", error);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -759,6 +812,21 @@ export default function ProcesosPage() {
     setCreandoProceso(true);
     setMensajeProceso(null);
     try {
+      let currentUsuarioId: string | null = null;
+      if (user?.id) {
+        try {
+          const { data: usuarioPerfil } = await supabase
+            .from("usuarios")
+            .select("id")
+            .eq("auth_id", user.id)
+            .maybeSingle();
+          currentUsuarioId = usuarioPerfil?.id ?? null;
+        } catch (lookupError) {
+          console.warn("No se pudo resolver usuario_id para proceso:", lookupError);
+        }
+      }
+
+      let apoderadoSyncWarning: string | null = null;
       const payload: ProcesoInsert = {
         numero_proceso: nuevoProceso.numero.trim(),
         fecha_procesos: nuevoProceso.fecha || new Date().toISOString().slice(0, 10),
@@ -766,8 +834,47 @@ export default function ProcesosPage() {
         tipo_proceso: nuevoProceso.tipo || null,
         juzgado: nuevoProceso.juzgado || null,
         descripcion: nuevoProceso.descripcion || null,
+        created_by_auth_id: user?.id ?? null,
+        usuario_id: currentUsuarioId,
       };
       const nuevo = await createProceso(payload);
+      const panelApoderadoIds = Array.from(
+        new Set(
+          panelApoderados
+            .map((row) => row.apoderadoId.trim())
+            .filter((id) => id.length > 0),
+        ),
+      );
+      if (panelApoderadoIds.length > 0) {
+        const updateResults = await Promise.allSettled(
+          panelApoderadoIds.map((apoderadoId) =>
+            updateApoderado(apoderadoId, { proceso_id: nuevo.id }),
+          ),
+        );
+        const updatedIds: string[] = [];
+        const failedCount = updateResults.reduce((count, result, index) => {
+          if (result.status === "fulfilled") {
+            updatedIds.push(panelApoderadoIds[index]);
+            return count;
+          }
+          return count + 1;
+        }, 0);
+        if (updatedIds.length > 0) {
+          const panelApoderadoIdSet = new Set(updatedIds);
+          setApoderadoOptions((prev) =>
+            prev.map((apoderado) =>
+              panelApoderadoIdSet.has(apoderado.id)
+                ? { ...apoderado, proceso_id: nuevo.id }
+                : apoderado,
+            ),
+          );
+        }
+        if (failedCount > 0) {
+          apoderadoSyncWarning = `No se pudo actualizar el proceso de ${failedCount} apoderado${
+            failedCount === 1 ? "" : "s"
+          }.`;
+        }
+      }
       // Ensure progreso exists for the new proceso and starts as "no_iniciado".
       try {
         await updateProgresoByProcesoId(nuevo.id, { estado: "no_iniciado" });
@@ -796,6 +903,9 @@ export default function ProcesosPage() {
         }.`;
       } else if (envioResultado.errorMessage) {
         mensaje += ` No se pudo notificar a los apoderados: ${envioResultado.errorMessage}`;
+      }
+      if (apoderadoSyncWarning) {
+        mensaje += ` ${apoderadoSyncWarning}`;
       }
       setMensajeProceso(mensaje);
     } catch (error) {
@@ -833,6 +943,67 @@ export default function ProcesosPage() {
       return haystack.includes(normalizedSearchQuery);
     });
   }, [procesos, normalizedSearchQuery]);
+
+  const creatorStats = useMemo(() => {
+    const countByAuthId = new Map<string, number>();
+    let unassignedCount = 0;
+
+    for (const proceso of procesos) {
+      const authId = proceso.created_by_auth_id?.trim();
+      if (!authId) {
+        unassignedCount += 1;
+        continue;
+      }
+      countByAuthId.set(authId, (countByAuthId.get(authId) ?? 0) + 1);
+    }
+
+    const options: CreatorFilterOption[] = Array.from(countByAuthId.entries())
+      .map(([authId, count]) => {
+        const usuario = usuariosByAuthId[authId];
+        return {
+          authId,
+          label: usuario?.nombre || usuario?.email || authId,
+          count,
+        };
+      })
+      .sort((a, b) => a.label.localeCompare(b.label, "es", { sensitivity: "base" }));
+
+    const myCount = user?.id ? countByAuthId.get(user.id) ?? 0 : 0;
+
+    return {
+      options,
+      myCount,
+      unassignedCount,
+    };
+  }, [procesos, usuariosByAuthId, user?.id]);
+
+  useEffect(() => {
+    if (creatorFilter === "all" || creatorFilter === "mine" || creatorFilter === "none") return;
+    const exists = creatorStats.options.some((option) => option.authId === creatorFilter);
+    if (!exists) {
+      setCreatorFilter("all");
+    }
+  }, [creatorFilter, creatorStats.options]);
+
+  const creatorFilterLabel = useMemo(() => {
+    if (creatorFilter === "all") return "todos los usuarios";
+    if (creatorFilter === "mine") return "tu usuario";
+    if (creatorFilter === "none") return "sin usuario creador";
+    const option = creatorStats.options.find((item) => item.authId === creatorFilter);
+    return option?.label ?? "el usuario seleccionado";
+  }, [creatorFilter, creatorStats.options]);
+
+  const visibleProcesos = useMemo(() => {
+    if (creatorFilter === "all") return filteredProcesos;
+    if (creatorFilter === "mine") {
+      if (!user?.id) return [];
+      return filteredProcesos.filter((proceso) => proceso.created_by_auth_id === user.id);
+    }
+    if (creatorFilter === "none") {
+      return filteredProcesos.filter((proceso) => !proceso.created_by_auth_id);
+    }
+    return filteredProcesos.filter((proceso) => proceso.created_by_auth_id === creatorFilter);
+  }, [creatorFilter, filteredProcesos, user?.id]);
 
   const selectedProceso = useMemo(
     () => procesos.find((proceso) => proceso.id === editingProcesoId),
@@ -1281,6 +1452,30 @@ export default function ProcesosPage() {
                   />
                 </div>
               </div>
+              <div className="w-full max-w-sm flex-1 sm:flex-none">
+                <label htmlFor="procesos-creator-filter" className="sr-only">
+                  Filtrar por usuario creador
+                </label>
+                <select
+                  id="procesos-creator-filter"
+                  value={creatorFilter}
+                  onChange={(e) => setCreatorFilter(e.target.value)}
+                  className="h-10 w-full cursor-pointer rounded-2xl border border-zinc-200 bg-white px-3 text-xs text-zinc-950 outline-none transition focus:border-zinc-950/30 focus:ring-2 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:text-zinc-50 dark:focus:border-white/30 dark:focus:ring-white/20"
+                >
+                  <option value="all">Todos los usuarios ({procesos.length})</option>
+                  {user?.id && <option value="mine">Mis procesos ({creatorStats.myCount})</option>}
+                  {creatorStats.options.map((option) => (
+                    <option key={option.authId} value={option.authId}>
+                      {option.label} ({option.count})
+                    </option>
+                  ))}
+                  {creatorStats.unassignedCount > 0 && (
+                    <option value="none">
+                      Sin usuario creador ({creatorStats.unassignedCount})
+                    </option>
+                  )}
+                </select>
+              </div>
             </div>
 
             {listError && (
@@ -1307,11 +1502,11 @@ export default function ProcesosPage() {
 
               </div>
 
-            ) : filteredProcesos.length === 0 ? (
+            ) : visibleProcesos.length === 0 ? (
 
               <div className="rounded-2xl border border-zinc-200 bg-white/60 p-4 text-sm text-zinc-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
 
-                No se encontraron procesos que coincidan con {searchLabel}.
+                No se encontraron procesos que coincidan con {searchLabel} para {creatorFilterLabel}.
 
               </div>
 
@@ -1319,7 +1514,7 @@ export default function ProcesosPage() {
 
               <div className="space-y-3 max-h-[600px] overflow-y-auto">
 
-                {filteredProcesos.map((proceso) => {
+                {visibleProcesos.map((proceso) => {
 
                   const isSelected = editingProcesoId === proceso.id;
                   const submission = apoderadoSubmissionByProcesoId[proceso.id] ?? { deudorIds: [], acreedorIds: [] };
@@ -1734,4 +1929,5 @@ export default function ProcesosPage() {
   );
 
 }
+
 

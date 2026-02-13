@@ -2,85 +2,134 @@ import Link from "next/link";
 
 const workflowSteps = [
   {
-    step: "01",
+    id: "01",
     title: "Crear o seleccionar proceso",
-    description:
-      "Inicia en Procesos para registrar un caso nuevo o continuar uno existente.",
+    description: "Define el expediente y prepara los participantes antes de programar audiencias.",
     href: "/procesos",
-    cta: "Ir a Procesos",
+    cta: "Abrir Procesos",
+    badge: "Inicio",
   },
   {
-    step: "02",
-    title: "Programar y revisar agenda",
-    description:
-      "Consulta eventos y fechas clave para el seguimiento del proceso.",
+    id: "02",
+    title: "Programar agenda",
+    description: "Organiza reuniones, audiencias y fechas limite desde una sola vista.",
     href: "/calendario",
-    cta: "Ir a Calendario",
+    cta: "Abrir Calendario",
+    badge: "Planeacion",
   },
   {
-    step: "03",
-    title: "Gestionar audiencia en Lista",
-    description:
-      "Registra asistencia, define el tipo de acta y genera el documento final.",
+    id: "03",
+    title: "Inicializar documentos",
+    description: "Genera el auto admisorio y deja listo el arranque documental del caso.",
+    href: "/inicializacion",
+    cta: "Abrir Inicializacion",
+    badge: "Inicializacion",
+  },
+  {
+    id: "04",
+    title: "Registrar asistencia",
+    description: "Controla asistencia, documentos y decisiones para la audiencia activa.",
     href: "/lista",
-    cta: "Ir a Lista",
+    cta: "Abrir Lista",
+    badge: "Operacion",
   },
   {
-    step: "04",
-    title: "Cerrar el proceso",
-    description:
-      "Finaliza actuaciones y deja constancia del estado definitivo.",
+    id: "05",
+    title: "Cerrar proceso",
+    description: "Consolida el resultado final y deja trazabilidad del cierre.",
     href: "/finalizacion",
-    cta: "Ir a Finalizacion",
+    cta: "Abrir Finalizacion",
+    badge: "Cierre",
   },
 ] as const;
 
-const secondaryLinks = [
+const supportModules = [
   {
     href: "/perfil",
-    title: "Perfil",
-    description: "Actualiza datos del conciliador y firma.",
+    title: "Perfil del conciliador",
+    description: "Actualiza datos personales y firma digital.",
   },
   {
     href: "/consulta-publica",
     title: "Consulta publica",
-    description: "Consulta procesos disponibles para visualizacion.",
+    description: "Visualiza la informacion publicada de apoderados y acreedores.",
   },
+  {
+    href: "/procesos/export",
+    title: "Exportar Word",
+    description: "Genera resumen documental para procesos seleccionados.",
+  },
+  {
+    href: "/onboarding",
+    title: "Onboarding PDF",
+    description: "Carga documentos iniciales en Drive.",
+  },
+] as const;
+
+const quickTips = [
+  "Empieza siempre desde Procesos para mantener el flujo sincronizado.",
+  "Si retomas un caso, valida primero su etapa en la barra superior.",
+  "En Lista, deja agendada la proxima audiencia antes de cerrar.",
 ] as const;
 
 export default function HomePage() {
   return (
     <main className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8">
-      <section className="rounded-3xl border border-zinc-200 bg-white/80 p-6 shadow-sm dark:border-white/10 dark:bg-white/5 sm:p-8">
-        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-zinc-500 dark:text-zinc-400">
-          AutoActas
-        </p>
-        <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">
-          Navegacion del proceso
-        </h1>
-        <p className="mt-3 max-w-3xl text-sm text-zinc-600 dark:text-zinc-300 sm:text-base">
-          Esta pagina es el punto de entrada del flujo. Sigue los pasos en
-          orden para crear el proceso, gestionar la audiencia, programar
-          actividades y finalizar las actas correctamente.
-        </p>
+      <section className="rounded-3xl border border-zinc-200 bg-white/85 p-6 shadow-[0_12px_45px_-24px_rgba(15,23,42,0.35)] backdrop-blur dark:border-white/10 dark:bg-white/5 sm:p-8">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="max-w-3xl">
+            <p className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/70 px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-zinc-500 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
+              <span className="h-2 w-2 rounded-full bg-emerald-500" />
+              Centro de control
+            </p>
+            <h1 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">
+              Gestiona el proceso sin perder contexto
+            </h1>
+            <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-300 sm:text-base">
+              Usa esta vista como entrada principal. Cada tarjeta te lleva al siguiente paso operativo
+              para reducir cambios de contexto y tiempos muertos.
+            </p>
+          </div>
+
+          <div className="grid min-w-[220px] gap-2 rounded-2xl border border-zinc-200 bg-white/75 p-4 text-sm shadow-sm dark:border-white/10 dark:bg-white/5">
+            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-zinc-500 dark:text-zinc-400">
+              Atajos
+            </p>
+            <Link
+              href="/procesos"
+              className="rounded-xl border border-zinc-200 bg-white px-3 py-2 font-medium text-zinc-700 transition hover:border-zinc-900 hover:text-zinc-900 dark:border-white/10 dark:bg-black/20 dark:text-zinc-100 dark:hover:border-white"
+            >
+              Crear proceso nuevo
+            </Link>
+            <Link
+              href="/calendario"
+              className="rounded-xl border border-zinc-200 bg-white px-3 py-2 font-medium text-zinc-700 transition hover:border-zinc-900 hover:text-zinc-900 dark:border-white/10 dark:bg-black/20 dark:text-zinc-100 dark:hover:border-white"
+            >
+              Revisar agenda de hoy
+            </Link>
+          </div>
+        </div>
       </section>
 
       <section className="mt-6 grid gap-4 md:grid-cols-2">
         {workflowSteps.map((item) => (
           <article
-            key={item.step}
-            className="rounded-3xl border border-zinc-200 bg-white/80 p-5 shadow-sm dark:border-white/10 dark:bg-white/5"
+            key={item.id}
+            className="group rounded-3xl border border-zinc-200 bg-white/85 p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:border-white/10 dark:bg-white/5"
           >
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500 dark:text-zinc-400">
-              Paso {item.step}
-            </p>
-            <h2 className="mt-2 text-xl font-semibold">{item.title}</h2>
-            <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
-              {item.description}
-            </p>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500 dark:text-zinc-400">
+                Paso {item.id}
+              </p>
+              <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-[11px] font-medium text-zinc-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
+                {item.badge}
+              </span>
+            </div>
+            <h2 className="mt-3 text-xl font-semibold tracking-tight">{item.title}</h2>
+            <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">{item.description}</p>
             <Link
               href={item.href}
-              className="mt-4 inline-flex rounded-full border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-800 transition hover:border-zinc-900 hover:text-zinc-950 dark:border-white/20 dark:text-zinc-100 dark:hover:border-white"
+              className="mt-5 inline-flex rounded-full border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-800 transition hover:border-zinc-900 hover:text-zinc-950 dark:border-white/20 dark:bg-white/5 dark:text-zinc-100 dark:hover:border-white"
             >
               {item.cta}
             </Link>
@@ -88,22 +137,34 @@ export default function HomePage() {
         ))}
       </section>
 
-      <section className="mt-6 rounded-3xl border border-zinc-200 bg-white/80 p-5 shadow-sm dark:border-white/10 dark:bg-white/5">
-        <h3 className="text-lg font-semibold">Modulos complementarios</h3>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          {secondaryLinks.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="rounded-2xl border border-zinc-200 bg-white/70 px-4 py-3 text-sm transition hover:border-zinc-900 dark:border-white/10 dark:bg-white/5 dark:hover:border-white"
-            >
-              <p className="font-semibold">{item.title}</p>
-              <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-300">
-                {item.description}
-              </p>
-            </Link>
-          ))}
+      <section className="mt-6 grid gap-4 lg:grid-cols-[1.3fr_1fr]">
+        <div className="rounded-3xl border border-zinc-200 bg-white/85 p-5 shadow-sm dark:border-white/10 dark:bg-white/5">
+          <h3 className="text-lg font-semibold">Modulos complementarios</h3>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {supportModules.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className="rounded-2xl border border-zinc-200 bg-white/75 px-4 py-3 text-sm transition hover:border-zinc-900 dark:border-white/10 dark:bg-white/5 dark:hover:border-white"
+              >
+                <p className="font-semibold">{item.title}</p>
+                <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-300">{item.description}</p>
+              </Link>
+            ))}
+          </div>
         </div>
+
+        <aside className="rounded-3xl border border-zinc-200 bg-white/85 p-5 shadow-sm dark:border-white/10 dark:bg-white/5">
+          <h3 className="text-lg font-semibold">Recomendaciones rapidas</h3>
+          <ul className="mt-4 space-y-3 text-sm text-zinc-600 dark:text-zinc-300">
+            {quickTips.map((tip) => (
+              <li key={tip} className="flex gap-2">
+                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                <span>{tip}</span>
+              </li>
+            ))}
+          </ul>
+        </aside>
       </section>
     </main>
   );

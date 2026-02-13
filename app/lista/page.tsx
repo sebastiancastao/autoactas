@@ -1248,6 +1248,10 @@ function AttendanceContent() {
   const total = asistentes.length;
   const presentes = asistentes.filter((a) => a.estado === "Presente").length;
   const ausentes = total - presentes;
+  const asistenciaCompletitud = total > 0 ? Math.round((presentes / total) * 100) : 0;
+  const procesoLabel = numeroProceso?.trim() || "Sin proceso seleccionado";
+  const procesoIdCompact = procesoId ? `${procesoId.slice(0, 8)}...${procesoId.slice(-4)}` : null;
+  const eventoIdCompact = eventoId ? `${eventoId.slice(0, 8)}...${eventoId.slice(-4)}` : null;
 
   const mensajeApoderado = procesoApoderadosCargando
     ? "Cargando apoderados del proceso..."
@@ -1888,11 +1892,11 @@ function AttendanceContent() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-50 text-zinc-950 dark:bg-black dark:text-zinc-50">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,rgba(226,232,240,0.65),transparent_55%),linear-gradient(to_bottom,#fafafa,#f4f4f5)] text-zinc-950 dark:bg-[radial-gradient(circle_at_top,rgba(39,39,42,0.45),transparent_50%),linear-gradient(to_bottom,#000,#09090b)] dark:text-zinc-50">
       {/* Gradient top */}
-      <div className="pointer-events-none fixed inset-x-0 top-0 h-40 bg-gradient-to-b from-white/70 to-transparent dark:from-zinc-900/60" />
+      <div className="pointer-events-none fixed inset-x-0 top-0 h-56 bg-gradient-to-b from-white/80 to-transparent dark:from-zinc-900/70" />
 
-      <main className="mx-auto w-full max-w-4xl px-5 py-10 sm:px-8">
+      <main className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8">
         {mostrarModalTerminarAudiencia && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <button
@@ -1982,7 +1986,7 @@ function AttendanceContent() {
         )}
 
         {/* Header */}
-        <header className="mb-8">
+        <header className="mb-8 space-y-4">
           <div className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/70 px-3 py-1 text-xs text-zinc-600 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
             <span className="h-2 w-2 rounded-full bg-zinc-950 dark:bg-zinc-50" />
             Asistencia
@@ -1995,10 +1999,38 @@ function AttendanceContent() {
           <p className="mt-2 max-w-2xl text-zinc-600 dark:text-zinc-300">
             Marca quién está presente o ausente en segundos. Diseño limpio y rápido, estilo Apple.
           </p>
+          <div className="rounded-3xl border border-zinc-200/80 bg-white/80 p-4 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/5">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-zinc-500 dark:text-zinc-400">
+                  Proceso
+                </p>
+                <p className="mt-1 text-xl font-semibold text-zinc-900 dark:text-zinc-50">
+                  {procesoLabel}
+                </p>
+                <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
+                  {presentes} presentes de {total} asistentes ({asistenciaCompletitud}%).
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Pill label="Total" value={total} tone="neutral" />
+                <Pill label="Presentes" value={presentes} tone="positive" />
+                <Pill label="Ausentes" value={ausentes} tone="negative" />
+                {procesoIdCompact ? <Pill label="ID proceso" value="" compactLabel={procesoIdCompact} tone="neutral" /> : null}
+                {eventoIdCompact ? <Pill label="ID evento" value="" compactLabel={eventoIdCompact} tone="neutral" /> : null}
+              </div>
+            </div>
+            <div className="mt-4 h-2 rounded-full bg-zinc-200/80 dark:bg-white/10">
+              <div
+                className="h-full rounded-full bg-zinc-900 transition-[width] duration-300 dark:bg-zinc-100"
+                style={{ width: `${asistenciaCompletitud}%` }}
+              />
+            </div>
+          </div>
         </header>
 
         {/* Navigation */}
-        <nav className="mb-8 flex flex-wrap gap-2">
+        <nav className="mb-8 flex flex-wrap items-center gap-2">
           <Link
             href="/procesos"
             className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white"
@@ -2018,12 +2050,30 @@ function AttendanceContent() {
             Finalización
           </Link>
           <a
+            href="#asistencia"
+            className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white"
+          >
+            Asistencia
+          </a>
+          <a
+            href="#acreencias"
+            className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white"
+          >
+            Acreencias
+          </a>
+          <a
             href="#agendar"
             className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white"
           >
             Agendar proxima
           </a>
         </nav>
+
+        {!procesoId && (
+          <div className="mb-8 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+            Esta vista funciona mejor con proceso vinculado. Abre <code>/lista?procesoId=&lt;uuid&gt;</code> desde Procesos o Calendario.
+          </div>
+        )}
 
         {procesoId && mensajeApoderado && (
           <p className="mb-8 text-sm text-zinc-500 dark:text-zinc-400">
@@ -2038,7 +2088,7 @@ function AttendanceContent() {
         )}
 
         {/* Main Card */}
-        <section className="rounded-3xl border border-zinc-200 bg-white/80 p-5 shadow-[0_12px_40px_-20px_rgba(0,0,0,0.35)] backdrop-blur dark:border-white/10 dark:bg-white/5 sm:p-6">
+        <section id="asistencia" className="scroll-mt-24 rounded-[30px] border border-zinc-200/90 bg-white/85 p-5 shadow-[0_18px_60px_-30px_rgba(15,23,42,0.35)] backdrop-blur dark:border-white/10 dark:bg-white/[0.04] sm:p-7">
           <form onSubmit={guardarAsistencia} className="space-y-6">
             {/* Top Controls */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
@@ -2227,18 +2277,18 @@ function AttendanceContent() {
             </div>
 
             {/* Stats + Bulk Actions */}
-            <div className="flex flex-col gap-3 rounded-2xl border border-zinc-200 bg-white/60 p-4 dark:border-white/10 dark:bg-white/5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-3 rounded-3xl border border-zinc-200 bg-gradient-to-br from-white to-zinc-50 p-4 shadow-sm dark:border-white/10 dark:bg-gradient-to-br dark:from-white/10 dark:to-white/5 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-wrap items-center gap-2">
-                <Pill label="Total" value={total} />
-                <Pill label="Presentes" value={presentes} />
-                <Pill label="Ausentes" value={ausentes} />
+                <Pill label="Total" value={total} tone="neutral" />
+                <Pill label="Presentes" value={presentes} tone="positive" />
+                <Pill label="Ausentes" value={ausentes} tone="negative" />
               </div>
 
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
                   onClick={() => marcarTodos("Presente")}
-                  className="h-10 rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-medium shadow-sm transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
+                  className="h-10 rounded-2xl border border-emerald-300 bg-emerald-50 px-4 text-sm font-medium text-emerald-900 shadow-sm transition hover:bg-emerald-100 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100 dark:hover:bg-emerald-500/20"
                 >
                   Marcar todos presentes
                 </button>
@@ -2246,7 +2296,7 @@ function AttendanceContent() {
                 <button
                   type="button"
                   onClick={() => marcarTodos("Ausente")}
-                  className="h-10 rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-medium shadow-sm transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
+                  className="h-10 rounded-2xl border border-amber-300 bg-amber-50 px-4 text-sm font-medium text-amber-900 shadow-sm transition hover:bg-amber-100 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100 dark:hover:bg-amber-500/20"
                 >
                   Marcar todos ausentes
                 </button>
@@ -2668,20 +2718,20 @@ function AttendanceContent() {
             )}
 
             {/* Footer Actions */}
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="grid gap-3 rounded-3xl border border-zinc-200 bg-white/60 p-4 shadow-sm dark:border-white/10 dark:bg-white/5 lg:grid-cols-[auto_1fr] lg:items-center">
               <button
                 type="button"
                 onClick={agregarFila}
-                className="h-12 rounded-2xl border border-zinc-200 bg-white px-5 text-sm font-medium shadow-sm transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
+                className="h-12 w-full rounded-2xl border border-zinc-200 bg-white px-5 text-sm font-medium shadow-sm transition hover:bg-zinc-100 lg:w-auto dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
               >
                 + Agregar asistente
               </button>
 
-              <div className="flex gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:flex xl:flex-wrap">
                 <button
                   type="button"
                   onClick={reiniciar}
-                  className="h-12 rounded-2xl border border-zinc-200 bg-white px-5 text-sm font-medium shadow-sm transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
+                  className="h-12 w-full rounded-2xl border border-zinc-200 bg-white px-5 text-sm font-medium shadow-sm transition hover:bg-zinc-100 xl:w-auto dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
                 >
                   Reiniciar
                 </button>
@@ -2689,7 +2739,7 @@ function AttendanceContent() {
                 <button
                   type="submit"
                   disabled={!puedeGuardar || guardando}
-                  className="h-12 rounded-2xl bg-zinc-950 px-6 text-sm font-medium text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-white dark:text-black"
+                  className="h-12 w-full rounded-2xl bg-zinc-950 px-6 text-sm font-medium text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 xl:w-auto dark:bg-white dark:text-black"
                 >
                   {guardando ? "Guardando..." : "Guardar asistencia"}
                 </button>
@@ -2697,7 +2747,7 @@ function AttendanceContent() {
                 <select
                   value={tipoDocumento}
                   onChange={(e) => setTipoDocumento(e.target.value)}
-                  className="h-12 rounded-2xl border border-zinc-200 bg-white px-3 text-sm font-medium shadow-sm dark:border-white/10 dark:bg-white/5 dark:text-white"
+                  className="h-12 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm font-medium shadow-sm xl:w-auto dark:border-white/10 dark:bg-white/5 dark:text-white"
                 >
                   {tipoDocumentoOpciones.map((o) => (
                     <option key={o.value} value={o.value}>
@@ -2716,7 +2766,7 @@ function AttendanceContent() {
                     terminandoAudiencia ||
                     acreenciaGuardandoId !== null
                   }
-                  className="h-12 rounded-2xl bg-amber-500 px-6 text-sm font-semibold text-amber-950 shadow-sm transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-amber-400 dark:text-black"
+                  className="h-12 w-full rounded-2xl bg-amber-500 px-6 text-sm font-semibold text-amber-950 shadow-sm transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-40 xl:w-auto dark:bg-amber-400 dark:text-black"
                 >
                   {terminandoAudiencia ? "Terminando..." : "Terminar audiencia"}
                 </button>
@@ -2817,7 +2867,7 @@ function AttendanceContent() {
         </section>
 
         {procesoId && (
-          <section className="mt-8 rounded-3xl border border-zinc-200 bg-white/80 p-5 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/5 sm:p-6">
+          <section id="acreencias" className="mt-8 scroll-mt-24 rounded-[30px] border border-zinc-200/90 bg-white/85 p-5 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/[0.04] sm:p-6">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold tracking-tight">Acreencias del proceso</h2>
@@ -3284,7 +3334,7 @@ function AttendanceContent() {
         )}
 
         {/* Schedule Next Event */}
-        <section id="agendar" className="mt-8 scroll-mt-24 rounded-3xl border border-zinc-200 bg-white/80 p-5 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/5 sm:p-6">
+        <section id="agendar" className="mt-8 scroll-mt-24 rounded-[30px] border border-zinc-200/90 bg-white/85 p-5 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/[0.04] sm:p-6">
             <h2 className="text-lg font-semibold tracking-tight">Agendar próxima audiencia</h2>
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
               Programa la fecha y hora del próximo evento para este proceso.
@@ -3442,11 +3492,30 @@ function AttendanceContent() {
   );
 }
 
-function Pill({ label, value }: { label: string; value: number }) {
+function Pill({
+  label,
+  value,
+  tone = "neutral",
+  compactLabel,
+}: {
+  label: string;
+  value: number | string;
+  tone?: "neutral" | "positive" | "negative";
+  compactLabel?: string;
+}) {
+  const toneClassName =
+    tone === "positive"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100"
+      : tone === "negative"
+      ? "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100"
+      : "border-zinc-200 bg-white text-zinc-700 dark:border-white/10 dark:bg-white/10 dark:text-zinc-200";
+  const labelClassName =
+    tone === "neutral" ? "text-zinc-500 dark:text-zinc-300" : "text-current/70";
+
   return (
-    <div className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs text-zinc-700 shadow-sm dark:border-white/10 dark:bg-white/10 dark:text-zinc-200">
-      <span className="text-zinc-500 dark:text-zinc-300">{label}</span>
-      <span className="font-medium">{value}</span>
+    <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs shadow-sm ${toneClassName}`}>
+      <span className={labelClassName}>{label}</span>
+      <span className="font-medium">{compactLabel ?? value}</span>
     </div>
   );
 }

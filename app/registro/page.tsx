@@ -20,7 +20,7 @@ export const metadata: Metadata = {
 
 export default async function RegistroPage({ searchParams }: RegistroPageProps) {
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
-  const procesoId = resolvedSearchParams?.procesoId;
+  const procesoId = resolvedSearchParams?.procesoId?.trim() || null;
   const tipo = resolvedSearchParams?.tipo?.toLowerCase();
   const focusSection =
     tipo === "acreedores" || tipo === "acreedor"
@@ -36,7 +36,7 @@ export default async function RegistroPage({ searchParams }: RegistroPageProps) 
           <div className="text-sm text-zinc-500">Cargando formulario...</div>
         }
       >
-        <RegistroForm initialProcesoId={procesoId ?? null} focusSection={focusSection} />
+        <RegistroForm initialProcesoId={procesoId} focusSection={focusSection} />
       </Suspense>
     </main>
   );

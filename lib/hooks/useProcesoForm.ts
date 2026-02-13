@@ -19,6 +19,8 @@ import {
   isNitIdentification,
   NIT_REQUIRED_DIGITS,
 } from "@/lib/utils/identificacion";
+import { useAuth } from "@/lib/auth-context";
+import { supabase } from "@/lib/supabase";
 import type {
   Acreedor,
   Acreencia,
@@ -172,6 +174,71 @@ function createApoderadoForm(): ApoderadoForm {
     direccion: "",
     tarjetaProfesional: "",
   };
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+
+  if (typeof error === "string" && error.trim()) {
+    return error;
+  }
+
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    const message = [record.message, record.details, record.detail, record.hint, record.code]
+      .find((value): value is string => typeof value === "string" && value.trim().length > 0);
+
+    if (message) {
+      return message;
+    }
+
+    try {
+      return JSON.stringify(error, Object.getOwnPropertyNames(error));
+    } catch {
+      return fallback;
+    }
+  }
+
+  return fallback;
+}
+
+function formatErrorForLog(error: unknown) {
+  if (error instanceof Error) {
+    return error.stack || error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  if (error && typeof error === "object") {
+    try {
+      return JSON.stringify(error, Object.getOwnPropertyNames(error));
+    } catch {
+      return String(error);
+    }
+  }
+
+  return String(error);
+}
+
+function isProcesoNotFoundError(error: unknown, message: string) {
+  if (message.includes("PGRST116")) {
+    return true;
+  }
+
+  if (message.toLowerCase().includes("cannot coerce the result to a single json object")) {
+    return true;
+  }
+
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const record = error as Record<string, unknown>;
+  return record.code === "PGRST116";
 }
 
 function mapDeudoresToFormRows(deudores?: Deudor[], apoderados?: Apoderado[]): DeudorFormRow[] {
@@ -366,6 +433,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [exito, setExito] = useState<string | null>(null);
+  const { user } = useAuth();
 
   useEffect(() => {
     if (deudoresForm.length === 0) {
@@ -507,11 +575,19 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
 
   const cargarProcesoDetalle = useCallback(
     async (procesoId: string) => {
+      const procesoIdSafe = procesoId.trim();
+      if (!procesoIdSafe) {
+        setCargandoDetalle(false);
+        setError(null);
+        setExito(null);
+        return;
+      }
+
       setCargandoDetalle(true);
       setError(null);
       setExito(null);
       try {
-        const detalle = await getProcesoWithRelations(procesoId);
+        const detalle = await getProcesoWithRelations(procesoIdSafe);
         if (!detalle) {
           setError("No se encontró el proceso");
           return;
@@ -535,8 +611,15 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
         setAcreedoresForm(acreedorRows);
         setSelectedAcreedorId(acreedorRows[0]?.id ?? "");
       } catch (err) {
-        console.error("Error loading proceso:", err);
-        setError("Error al cargar el proceso seleccionado");
+        const errorMessage = getErrorMessage(err, "No se pudo cargar el proceso seleccionado.");
+        const isNotFoundError = isProcesoNotFoundError(err, errorMessage);
+
+        console.warn("Error loading proceso:", formatErrorForLog(err));
+        setError(
+          isNotFoundError
+            ? "No se encontró el proceso seleccionado."
+            : `Error al cargar el proceso seleccionado: ${errorMessage}`,
+        );
       } finally {
         setCargandoDetalle(false);
       }
@@ -774,6 +857,20 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
 
     try {
       setGuardando(true);
+      const isEditing = Boolean(editingProcesoId);
+      let currentUsuarioId: string | null = null;
+      if (!isEditing && user?.id) {
+        try {
+          const { data: usuarioPerfil } = await supabase
+            .from("usuarios")
+            .select("id")
+            .eq("auth_id", user.id)
+            .maybeSingle();
+          currentUsuarioId = usuarioPerfil?.id ?? null;
+        } catch (lookupError) {
+          console.warn("No se pudo resolver usuario_id para proceso:", lookupError);
+        }
+      }
       const procesoPayload: ProcesoInsert = {
         numero_proceso: numeroProceso.trim(),
         fecha_procesos: fechaprocesos,
@@ -781,9 +878,13 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
         descripcion: descripcion.trim() || null,
         tipo_proceso: tipoProceso.trim() || null,
         juzgado: juzgado.trim() || null,
+        ...(isEditing
+          ? {}
+          : {
+              created_by_auth_id: user?.id ?? null,
+              usuario_id: currentUsuarioId,
+            }),
       };
-
-      const isEditing = Boolean(editingProcesoId);
       const savedProceso = isEditing
         ? await updateProceso(editingProcesoId!, procesoPayload)
         : await createProceso(procesoPayload);
@@ -797,22 +898,27 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
         await syncAcreedores(savedProceso.id, isEditing);
       }
 
-      // Update proceso_id on apoderados that were assigned but have no proceso_id yet
-      if (!isEditing) {
-        const usedApoderadoIds = new Set<string>();
-        for (const row of deudoresForm) {
-          if (row.apoderadoId.trim()) usedApoderadoIds.add(row.apoderadoId.trim());
-        }
-        for (const row of acreedoresForm) {
-          if (row.apoderadoId.trim()) usedApoderadoIds.add(row.apoderadoId.trim());
-        }
-        const apoderadosSinProceso = apoderados.filter(
-          (ap) => usedApoderadoIds.has(ap.id) && !ap.proceso_id
-        );
+      // Keep apoderados linked to the proceso being saved, even if they were linked elsewhere.
+      const usedApoderadoIds = new Set<string>();
+      for (const row of deudoresForm) {
+        if (row.apoderadoId.trim()) usedApoderadoIds.add(row.apoderadoId.trim());
+      }
+      for (const row of acreedoresForm) {
+        if (row.apoderadoId.trim()) usedApoderadoIds.add(row.apoderadoId.trim());
+      }
+      const usedApoderadoIdsList = Array.from(usedApoderadoIds);
+      if (usedApoderadoIdsList.length > 0) {
         await Promise.all(
-          apoderadosSinProceso.map((ap) =>
-            updateApoderado(ap.id, { proceso_id: savedProceso.id })
-          )
+          usedApoderadoIdsList.map((apoderadoId) =>
+            updateApoderado(apoderadoId, { proceso_id: savedProceso.id }),
+          ),
+        );
+        setApoderados((prev) =>
+          prev.map((apoderado) =>
+            usedApoderadoIds.has(apoderado.id)
+              ? { ...apoderado, proceso_id: savedProceso.id }
+              : apoderado,
+          ),
         );
       }
 
@@ -855,8 +961,9 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
   }, []);
 
   useEffect(() => {
-    if (initialProcesoId) {
-      cargarProcesoDetalle(initialProcesoId);
+    const initialProcesoIdSafe = initialProcesoId?.trim();
+    if (initialProcesoIdSafe) {
+      cargarProcesoDetalle(initialProcesoIdSafe);
     }
   }, [initialProcesoId, cargarProcesoDetalle]);
 

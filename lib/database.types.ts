@@ -113,6 +113,8 @@ export interface Database {
           descripcion: string | null
           tipo_proceso: string | null
           juzgado: string | null
+          created_by_auth_id: string | null
+          usuario_id: string | null
           created_at: string
           updated_at: string
         }
@@ -124,6 +126,8 @@ export interface Database {
           descripcion?: string | null
           tipo_proceso?: string | null
           juzgado?: string | null
+          created_by_auth_id?: string | null
+          usuario_id?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -135,10 +139,20 @@ export interface Database {
           descripcion?: string | null
           tipo_proceso?: string | null
           juzgado?: string | null
+          created_by_auth_id?: string | null
+          usuario_id?: string | null
           created_at?: string
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "proceso_usuario_id_fkey"
+            columns: ["usuario_id"]
+            isOneToOne: false
+            referencedRelation: "usuarios"
+            referencedColumns: ["id"]
+          }
+        ]
       }
       deudores: {
         Row: {
