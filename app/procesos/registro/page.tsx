@@ -19,7 +19,7 @@ export default function RegistroProcesosPage() {
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-              Registro de acreedores y deudores
+              Registro de acreedores y deudor
             </h1>
             <Link
               href="/procesos"
@@ -29,7 +29,7 @@ export default function RegistroProcesosPage() {
             </Link>
           </div>
           <p className="mt-2 max-w-2xl text-zinc-600 dark:text-zinc-300">
-            Crea un proceso y registra a los acreedores, deudores y apoderados en un solo flujo.
+            Crea un proceso y registra al deudor, acreedores y apoderados en un solo flujo.
             Usa el formulario para capturar la información jurídica y pulsa el botón cuando tengas
             todo listo.
           </p>

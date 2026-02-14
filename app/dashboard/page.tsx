@@ -1,0 +1,849 @@
+﻿"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+
+import { useAuth } from "@/lib/auth-context";
+import type { Database } from "@/lib/database.types";
+import { supabase } from "@/lib/supabase";
+
+type ProcesoRow = Database["public"]["Tables"]["proceso"]["Row"];
+type EventoRow = Database["public"]["Tables"]["eventos"]["Row"];
+type UsuarioRow = Database["public"]["Tables"]["usuarios"]["Row"];
+type DeudorRow = Database["public"]["Tables"]["deudores"]["Row"];
+type AcreedorRow = Database["public"]["Tables"]["acreedores"]["Row"];
+type ApoderadoRow = Database["public"]["Tables"]["apoderados"]["Row"];
+type AcreenciaRow = Database["public"]["Tables"]["acreencias"]["Row"];
+
+type ProcesoDashboardRow = Pick<
+  ProcesoRow,
+  "id" | "numero_proceso" | "estado" | "tipo_proceso" | "juzgado" | "created_at" | "created_by_auth_id" | "usuario_id"
+>;
+
+type EventoDashboardRow = Pick<EventoRow, "id" | "titulo" | "fecha" | "hora" | "proceso_id">;
+
+type DeudorDashboardRow = Pick<DeudorRow, "id" | "proceso_id" | "apoderado_id" | "nombre" | "identificacion">;
+type AcreedorDashboardRow = Pick<
+  AcreedorRow,
+  "id" | "proceso_id" | "apoderado_id" | "nombre" | "identificacion"
+>;
+type ApoderadoDashboardRow = Pick<ApoderadoRow, "id" | "nombre" | "email">;
+type AcreenciaDashboardRow = Pick<
+  AcreenciaRow,
+  | "id"
+  | "proceso_id"
+  | "acreedor_id"
+  | "naturaleza"
+  | "prelacion"
+  | "capital"
+  | "int_cte"
+  | "int_mora"
+  | "otros_cobros_seguros"
+  | "total"
+  | "porcentaje"
+>;
+type UsuarioOwnerDashboardRow = Pick<UsuarioRow, "id" | "auth_id" | "nombre" | "email">;
+
+type DeudorDetalle = {
+  deudor: DeudorDashboardRow;
+  apoderado: ApoderadoDashboardRow | null;
+};
+
+type AcreedorDetalle = {
+  acreedor: AcreedorDashboardRow;
+  apoderado: ApoderadoDashboardRow | null;
+  acreencias: AcreenciaDashboardRow[];
+  totalAcreencias: number;
+};
+
+type ProcesoMetricas = {
+  proceso: ProcesoDashboardRow;
+  usuarioProcesoLabel: string;
+  totalEventos: number;
+  eventosRealizados: number;
+  eventosPorVenir: number;
+  ultimoRealizado: EventoDashboardRow | null;
+  proximoEvento: EventoDashboardRow | null;
+  deudores: DeudorDetalle[];
+  acreedores: AcreedorDetalle[];
+  totalAcreenciasProceso: number;
+};
+
+const PROCESO_SELECT =
+  "id, numero_proceso, estado, tipo_proceso, juzgado, created_at, created_by_auth_id, usuario_id";
+const EVENTO_SELECT = "id, titulo, fecha, hora, proceso_id";
+const DEUDOR_SELECT = "id, proceso_id, apoderado_id, nombre, identificacion";
+const ACREEDOR_SELECT = "id, proceso_id, apoderado_id, nombre, identificacion";
+const APODERADO_SELECT = "id, nombre, email";
+const ACREENCIA_SELECT =
+  "id, proceso_id, acreedor_id, naturaleza, prelacion, capital, int_cte, int_mora, otros_cobros_seguros, total, porcentaje";
+const COP_CURRENCY = new Intl.NumberFormat("es-CO", {
+  style: "currency",
+  currency: "COP",
+  maximumFractionDigits: 0,
+});
+
+function toErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+
+  if (typeof error === "string" && error.trim()) {
+    return error;
+  }
+
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    const message = [record.message, record.detail, record.details, record.hint]
+      .find((value): value is string => typeof value === "string" && value.trim().length > 0);
+    if (message) return message;
+  }
+
+  return fallback;
+}
+
+function isMissingColumnError(error: unknown, columnName: string) {
+  if (!error || typeof error !== "object") return false;
+  const record = error as Record<string, unknown>;
+  const code = typeof record.code === "string" ? record.code : "";
+  const message = `${record.message ?? ""} ${record.details ?? ""}`.toLowerCase();
+  return (code === "PGRST204" || code === "42703" || code === "PGRST200") && message.includes(columnName);
+}
+
+function normalizeHora(value: string | null | undefined) {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (/^\d{2}:\d{2}$/.test(trimmed)) return `${trimmed}:00`;
+  if (/^\d{2}:\d{2}:\d{2}$/.test(trimmed)) return trimmed;
+  return null;
+}
+
+function toEventDate(fecha: string, hora: string | null | undefined, fallback: "start" | "end") {
+  const safeHora = normalizeHora(hora) ?? (fallback === "end" ? "23:59:59" : "00:00:00");
+  const parsed = new Date(`${fecha}T${safeHora}`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
+}
+
+function compareEventosByDateTime(a: EventoDashboardRow, b: EventoDashboardRow) {
+  const dateA = toEventDate(a.fecha, a.hora, "start");
+  const dateB = toEventDate(b.fecha, b.hora, "start");
+  const timeA = dateA?.getTime() ?? Number.POSITIVE_INFINITY;
+  const timeB = dateB?.getTime() ?? Number.POSITIVE_INFINITY;
+  if (timeA !== timeB) return timeA - timeB;
+  return a.titulo.localeCompare(b.titulo);
+}
+
+function isEventoRealizado(evento: EventoDashboardRow, now: Date) {
+  const eventDate = toEventDate(evento.fecha, evento.hora, "end");
+  if (!eventDate) return false;
+  return eventDate.getTime() < now.getTime();
+}
+
+function formatEventoFechaHora(evento: EventoDashboardRow) {
+  const baseDate = toEventDate(evento.fecha, evento.hora, "start");
+  if (!baseDate) return evento.fecha;
+
+  const fechaTexto = baseDate.toLocaleDateString("es-CO", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+  const hora = normalizeHora(evento.hora);
+  if (!hora) return fechaTexto;
+  return `${fechaTexto} ${hora.slice(0, 5)}`;
+}
+
+function toSafeNumber(value: number | null | undefined) {
+  if (typeof value !== "number" || Number.isNaN(value)) return 0;
+  return value;
+}
+
+function resolveAcreenciaTotal(acreencia: AcreenciaDashboardRow) {
+  if (typeof acreencia.total === "number" && !Number.isNaN(acreencia.total)) {
+    return acreencia.total;
+  }
+
+  const fallbackTotal =
+    toSafeNumber(acreencia.capital) +
+    toSafeNumber(acreencia.int_cte) +
+    toSafeNumber(acreencia.int_mora) +
+    toSafeNumber(acreencia.otros_cobros_seguros);
+  return fallbackTotal;
+}
+
+function formatMoney(value: number) {
+  return COP_CURRENCY.format(value);
+}
+
+function isAdminRole(rol: string | null | undefined) {
+  return (rol ?? "").trim().toLowerCase() === "admin";
+}
+
+function resolveProcesoUsuarioLabel(
+  proceso: ProcesoDashboardRow,
+  usuariosById: ReadonlyMap<string, UsuarioOwnerDashboardRow>,
+  usuariosByAuthId: ReadonlyMap<string, UsuarioOwnerDashboardRow>,
+  fallbackLabel: string,
+) {
+  const fromUsuarioId = proceso.usuario_id ? usuariosById.get(proceso.usuario_id) ?? null : null;
+  const fromAuthId = proceso.created_by_auth_id
+    ? usuariosByAuthId.get(proceso.created_by_auth_id) ?? null
+    : null;
+
+  const preferredName =
+    fromUsuarioId?.nombre?.trim() ||
+    fromAuthId?.nombre?.trim() ||
+    fromUsuarioId?.email?.trim() ||
+    fromAuthId?.email?.trim();
+
+  if (preferredName) return preferredName;
+  if (proceso.created_by_auth_id) return proceso.created_by_auth_id;
+  return fallbackLabel || "Sin usuario asignado";
+}
+
+function estadoToneClass(estado: string | null) {
+  if (estado === "Activo") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300";
+  }
+  if (estado === "Finalizado") {
+    return "border-zinc-200 bg-zinc-100 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+  }
+  if (estado === "Suspendido") {
+    return "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300";
+  }
+  return "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300";
+}
+
+type MetricChipProps = {
+  label: string;
+  value: number;
+  tone?: "neutral" | "positive" | "warning";
+};
+
+function MetricChip({ label, value, tone = "neutral" }: MetricChipProps) {
+  const toneClass =
+    tone === "positive"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300"
+      : tone === "warning"
+        ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300"
+        : "border-zinc-200 bg-white/80 text-zinc-700 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200";
+
+  return (
+    <div className={`rounded-2xl border px-4 py-3 ${toneClass}`}>
+      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] opacity-85">{label}</p>
+      <p className="mt-1 text-2xl font-semibold tracking-tight">{value}</p>
+    </div>
+  );
+}
+
+export default function DashboardPage() {
+  const { user } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [schemaWarning, setSchemaWarning] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [usuarioNombre, setUsuarioNombre] = useState<string>("");
+  const [metricasPorProceso, setMetricasPorProceso] = useState<ProcesoMetricas[]>([]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setIsAdmin(false);
+      setUsuarioNombre("");
+      setMetricasPorProceso([]);
+      setError(null);
+      setSchemaWarning(null);
+      setLoading(false);
+      return;
+    }
+
+    let canceled = false;
+
+    (async () => {
+      setLoading(true);
+      setError(null);
+      setSchemaWarning(null);
+
+      try {
+        let warning: string | null = null;
+        let usuarioPerfil: Pick<UsuarioRow, "id" | "nombre" | "rol" | "email"> | null = null;
+
+        const { data: usuarioData, error: usuarioError } = await supabase
+          .from("usuarios")
+          .select("id, nombre, rol, email")
+          .eq("auth_id", user.id)
+          .maybeSingle();
+
+        if (usuarioError) {
+          console.warn("No se pudo resolver usuarios.id para el dashboard:", usuarioError);
+        } else {
+          usuarioPerfil =
+            (usuarioData as Pick<UsuarioRow, "id" | "nombre" | "rol" | "email"> | null) ?? null;
+        }
+
+        const nombreMostrado = usuarioPerfil?.nombre?.trim() || usuarioPerfil?.email || user.email || "Usuario";
+        const usuarioEsAdmin = isAdminRole(usuarioPerfil?.rol);
+        if (!canceled) {
+          setIsAdmin(usuarioEsAdmin);
+          setUsuarioNombre(nombreMostrado);
+        }
+
+        const usuarioPerfilId = usuarioPerfil?.id ?? null;
+        let procesos: ProcesoDashboardRow[] = [];
+
+        if (usuarioEsAdmin) {
+          const allProcesos = await supabase
+            .from("proceso")
+            .select(PROCESO_SELECT)
+            .order("created_at", { ascending: false });
+          if (allProcesos.error) throw allProcesos.error;
+          procesos = (allProcesos.data ?? []) as ProcesoDashboardRow[];
+        } else if (usuarioPerfilId) {
+          const combined = await supabase
+            .from("proceso")
+            .select(PROCESO_SELECT)
+            .or(`created_by_auth_id.eq.${user.id},usuario_id.eq.${usuarioPerfilId}`)
+            .order("created_at", { ascending: false });
+
+          if (!combined.error) {
+            procesos = (combined.data ?? []) as ProcesoDashboardRow[];
+          } else {
+            const missingUsuarioId = isMissingColumnError(combined.error, "usuario_id");
+            const missingCreatedByAuthId = isMissingColumnError(combined.error, "created_by_auth_id");
+
+            if (missingUsuarioId && !missingCreatedByAuthId) {
+              const byCreator = await supabase
+                .from("proceso")
+                .select(PROCESO_SELECT)
+                .eq("created_by_auth_id", user.id)
+                .order("created_at", { ascending: false });
+              if (byCreator.error) throw byCreator.error;
+              procesos = (byCreator.data ?? []) as ProcesoDashboardRow[];
+            } else if (!missingUsuarioId && missingCreatedByAuthId) {
+              const byUsuario = await supabase
+                .from("proceso")
+                .select(PROCESO_SELECT)
+                .eq("usuario_id", usuarioPerfilId)
+                .order("created_at", { ascending: false });
+              if (byUsuario.error) throw byUsuario.error;
+              procesos = (byUsuario.data ?? []) as ProcesoDashboardRow[];
+            } else if (missingUsuarioId && missingCreatedByAuthId) {
+              procesos = [];
+              warning =
+                "No se detectaron columnas de propiedad de proceso (created_by_auth_id / usuario_id). Ejecuta migraciones para filtrar por usuario.";
+            } else {
+              throw combined.error;
+            }
+          }
+        } else {
+          const byCreator = await supabase
+            .from("proceso")
+            .select(PROCESO_SELECT)
+            .eq("created_by_auth_id", user.id)
+            .order("created_at", { ascending: false });
+
+          if (byCreator.error) {
+            if (isMissingColumnError(byCreator.error, "created_by_auth_id")) {
+              procesos = [];
+              warning =
+                "No se detecto la columna created_by_auth_id en proceso. Ejecuta migraciones para filtrar por usuario.";
+            } else {
+              throw byCreator.error;
+            }
+          } else {
+            procesos = (byCreator.data ?? []) as ProcesoDashboardRow[];
+          }
+        }
+
+        if (!canceled) {
+          setSchemaWarning(warning);
+        }
+
+        if (procesos.length === 0) {
+          if (!canceled) {
+            setMetricasPorProceso([]);
+          }
+          return;
+        }
+
+        const procesoIds = procesos.map((proceso) => proceso.id);
+        const [eventosResponse, deudoresResponse, acreedoresResponse, acreenciasResponse] =
+          await Promise.all([
+            supabase
+              .from("eventos")
+              .select(EVENTO_SELECT)
+              .in("proceso_id", procesoIds)
+              .order("fecha", { ascending: true })
+              .order("hora", { ascending: true }),
+            supabase.from("deudores").select(DEUDOR_SELECT).in("proceso_id", procesoIds),
+            supabase.from("acreedores").select(ACREEDOR_SELECT).in("proceso_id", procesoIds),
+            supabase.from("acreencias").select(ACREENCIA_SELECT).in("proceso_id", procesoIds),
+          ]);
+
+        if (eventosResponse.error) throw eventosResponse.error;
+        if (deudoresResponse.error) throw deudoresResponse.error;
+        if (acreedoresResponse.error) throw acreedoresResponse.error;
+        if (acreenciasResponse.error) throw acreenciasResponse.error;
+
+        const eventos = (eventosResponse.data ?? []) as EventoDashboardRow[];
+        const deudores = (deudoresResponse.data ?? []) as DeudorDashboardRow[];
+        const acreedores = (acreedoresResponse.data ?? []) as AcreedorDashboardRow[];
+        const acreencias = (acreenciasResponse.data ?? []) as AcreenciaDashboardRow[];
+        const usuariosById = new Map<string, UsuarioOwnerDashboardRow>();
+        const usuariosByAuthId = new Map<string, UsuarioOwnerDashboardRow>();
+
+        const usuariosResponse = await supabase
+          .from("usuarios")
+          .select("id, auth_id, nombre, email");
+
+        if (usuariosResponse.error) {
+          console.warn("No se pudieron cargar usuarios para etiquetar propietarios en dashboard:", usuariosResponse.error);
+        } else {
+          ((usuariosResponse.data ?? []) as UsuarioOwnerDashboardRow[]).forEach((usuarioOwner) => {
+            usuariosById.set(usuarioOwner.id, usuarioOwner);
+            if (usuarioOwner.auth_id) {
+              usuariosByAuthId.set(usuarioOwner.auth_id, usuarioOwner);
+            }
+          });
+        }
+
+        const apoderadoIds = Array.from(
+          new Set(
+            [...deudores.map((row) => row.apoderado_id), ...acreedores.map((row) => row.apoderado_id)].filter(
+              (value): value is string => Boolean(value),
+            ),
+          ),
+        );
+
+        let apoderadosById = new Map<string, ApoderadoDashboardRow>();
+        if (apoderadoIds.length > 0) {
+          const { data: apoderadosData, error: apoderadosError } = await supabase
+            .from("apoderados")
+            .select(APODERADO_SELECT)
+            .in("id", apoderadoIds);
+          if (apoderadosError) throw apoderadosError;
+
+          apoderadosById = new Map(
+            ((apoderadosData ?? []) as ApoderadoDashboardRow[]).map((apoderado) => [
+              apoderado.id,
+              apoderado,
+            ]),
+          );
+        }
+
+        const eventosByProcesoId = new Map<string, EventoDashboardRow[]>();
+        eventos.forEach((evento) => {
+          const procesoId = evento.proceso_id;
+          if (!procesoId) return;
+          const list = eventosByProcesoId.get(procesoId);
+          if (list) {
+            list.push(evento);
+          } else {
+            eventosByProcesoId.set(procesoId, [evento]);
+          }
+        });
+
+        const deudoresByProcesoId = new Map<string, DeudorDashboardRow[]>();
+        deudores.forEach((deudor) => {
+          const procesoId = deudor.proceso_id;
+          if (!procesoId) return;
+          const list = deudoresByProcesoId.get(procesoId);
+          if (list) {
+            list.push(deudor);
+          } else {
+            deudoresByProcesoId.set(procesoId, [deudor]);
+          }
+        });
+
+        const acreedoresByProcesoId = new Map<string, AcreedorDashboardRow[]>();
+        acreedores.forEach((acreedor) => {
+          const procesoId = acreedor.proceso_id;
+          if (!procesoId) return;
+          const list = acreedoresByProcesoId.get(procesoId);
+          if (list) {
+            list.push(acreedor);
+          } else {
+            acreedoresByProcesoId.set(procesoId, [acreedor]);
+          }
+        });
+
+        const acreenciasByAcreedorId = new Map<string, AcreenciaDashboardRow[]>();
+        acreencias.forEach((acreencia) => {
+          const acreedorId = acreencia.acreedor_id;
+          if (!acreedorId) return;
+          const list = acreenciasByAcreedorId.get(acreedorId);
+          if (list) {
+            list.push(acreencia);
+          } else {
+            acreenciasByAcreedorId.set(acreedorId, [acreencia]);
+          }
+        });
+
+        const now = new Date();
+        const metricas = procesos.map((proceso) => {
+          const eventosProceso = [...(eventosByProcesoId.get(proceso.id) ?? [])].sort(compareEventosByDateTime);
+
+          const realizados: EventoDashboardRow[] = [];
+          const porVenir: EventoDashboardRow[] = [];
+
+          eventosProceso.forEach((evento) => {
+            if (isEventoRealizado(evento, now)) {
+              realizados.push(evento);
+            } else {
+              porVenir.push(evento);
+            }
+          });
+
+          const deudoresProceso = [...(deudoresByProcesoId.get(proceso.id) ?? [])]
+            .sort((a, b) => a.nombre.localeCompare(b.nombre))
+            .map((deudor) => ({
+              deudor,
+              apoderado: deudor.apoderado_id ? apoderadosById.get(deudor.apoderado_id) ?? null : null,
+            }));
+
+          const acreedoresProceso = [...(acreedoresByProcesoId.get(proceso.id) ?? [])]
+            .sort((a, b) => a.nombre.localeCompare(b.nombre))
+            .map((acreedor) => {
+              const acreenciasAcreedor = [...(acreenciasByAcreedorId.get(acreedor.id) ?? [])].sort(
+                (a, b) =>
+                  (a.naturaleza ?? "").localeCompare(b.naturaleza ?? "") ||
+                  (a.prelacion ?? "").localeCompare(b.prelacion ?? ""),
+              );
+              const totalAcreencias = acreenciasAcreedor.reduce(
+                (sum, acreencia) => sum + resolveAcreenciaTotal(acreencia),
+                0,
+              );
+              return {
+                acreedor,
+                apoderado: acreedor.apoderado_id ? apoderadosById.get(acreedor.apoderado_id) ?? null : null,
+                acreencias: acreenciasAcreedor,
+                totalAcreencias,
+              };
+            });
+
+          const totalAcreenciasProceso = acreedoresProceso.reduce(
+            (sum, acreedorDetalle) => sum + acreedorDetalle.totalAcreencias,
+            0,
+          );
+
+          return {
+            proceso,
+            usuarioProcesoLabel: resolveProcesoUsuarioLabel(
+              proceso,
+              usuariosById,
+              usuariosByAuthId,
+              nombreMostrado,
+            ),
+            totalEventos: eventosProceso.length,
+            eventosRealizados: realizados.length,
+            eventosPorVenir: porVenir.length,
+            ultimoRealizado: realizados.length > 0 ? realizados[realizados.length - 1] : null,
+            proximoEvento: porVenir.length > 0 ? porVenir[0] : null,
+            deudores: deudoresProceso,
+            acreedores: acreedoresProceso,
+            totalAcreenciasProceso,
+          };
+        });
+
+        if (usuarioEsAdmin) {
+          metricas.sort(
+            (a, b) =>
+              a.usuarioProcesoLabel.localeCompare(b.usuarioProcesoLabel, "es", { sensitivity: "base" }) ||
+              b.proceso.created_at.localeCompare(a.proceso.created_at),
+          );
+        }
+
+        if (!canceled) {
+          setMetricasPorProceso(metricas);
+        }
+      } catch (err) {
+        if (!canceled) {
+          setMetricasPorProceso([]);
+          setError(toErrorMessage(err, "No se pudo cargar el dashboard."));
+        }
+      } finally {
+        if (!canceled) {
+          setLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      canceled = true;
+    };
+  }, [user?.id, user?.email]);
+
+  const resumenGlobal = useMemo(() => {
+    return metricasPorProceso.reduce(
+      (acc, item) => ({
+        procesos: acc.procesos + 1,
+        totalEventos: acc.totalEventos + item.totalEventos,
+        realizados: acc.realizados + item.eventosRealizados,
+        porVenir: acc.porVenir + item.eventosPorVenir,
+      }),
+      { procesos: 0, totalEventos: 0, realizados: 0, porVenir: 0 },
+    );
+  }, [metricasPorProceso]);
+
+  const usuariosConProcesos = useMemo(() => {
+    if (!isAdmin) return 0;
+    return new Set(metricasPorProceso.map((item) => item.usuarioProcesoLabel)).size;
+  }, [isAdmin, metricasPorProceso]);
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-zinc-50 text-zinc-950 dark:bg-black dark:text-zinc-50">
+        <main className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8 xl:max-w-[90rem] 2xl:max-w-[110rem]">
+          <section className="rounded-3xl border border-zinc-200 bg-white/85 p-6 text-sm text-zinc-700 shadow-sm dark:border-white/10 dark:bg-white/5 dark:text-zinc-200">
+            Debes iniciar sesion para ver tu dashboard de procesos.
+          </section>
+        </main>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-zinc-50 text-zinc-950 dark:bg-black dark:text-zinc-50">
+      <div className="pointer-events-none fixed inset-x-0 top-0 h-40 bg-gradient-to-b from-white/70 to-transparent dark:from-zinc-900/60" />
+
+      <main className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8 xl:max-w-[90rem] 2xl:max-w-[110rem]">
+        <header className="rounded-3xl border border-zinc-200 bg-white/85 p-6 shadow-sm dark:border-white/10 dark:bg-white/5">
+          <div className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/70 px-3 py-1 text-xs text-zinc-600 shadow-sm dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
+            <span className="h-2 w-2 rounded-full bg-emerald-500" />
+            Dashboard
+          </div>
+          <h1 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">
+            Dashboard de procesos por usuario
+          </h1>
+          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
+            {isAdmin
+              ? "Resumen de todos los procesos por usuario y estado de agenda."
+              : "Resumen de tus procesos y estado de agenda: eventos totales, ya realizados y por venir."}
+          </p>
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+            Usuario: <span className="font-semibold">{usuarioNombre || user.email}</span>
+            {isAdmin ? " (Admin)" : ""}
+          </p>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link
+              href="/procesos"
+              className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-zinc-700 transition hover:border-zinc-900 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white"
+            >
+              Ir a procesos
+            </Link>
+            <Link
+              href="/calendario"
+              className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-zinc-700 transition hover:border-zinc-900 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white"
+            >
+              Ir a calendario
+            </Link>
+          </div>
+        </header>
+
+        {schemaWarning && (
+          <section className="mt-6 rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+            {schemaWarning}
+          </section>
+        )}
+
+        {error && (
+          <section className="mt-6 rounded-3xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+            {error}
+          </section>
+        )}
+
+        {loading ? (
+          <section className="mt-6 rounded-3xl border border-zinc-200 bg-white/80 p-5 text-sm text-zinc-600 shadow-sm dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
+            Cargando dashboard...
+          </section>
+        ) : metricasPorProceso.length === 0 ? (
+          <section className="mt-6 rounded-3xl border border-zinc-200 bg-white/80 p-5 text-sm text-zinc-600 shadow-sm dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
+            No hay procesos para mostrar.
+          </section>
+        ) : (
+          <>
+            <section className={`mt-6 grid gap-3 sm:grid-cols-2 ${isAdmin ? "xl:grid-cols-5" : "xl:grid-cols-4"}`}>
+              <MetricChip label="Procesos" value={resumenGlobal.procesos} />
+              <MetricChip label="Eventos totales" value={resumenGlobal.totalEventos} />
+              <MetricChip label="Eventos realizados" value={resumenGlobal.realizados} tone="positive" />
+              <MetricChip label="Eventos por venir" value={resumenGlobal.porVenir} tone="warning" />
+              {isAdmin && <MetricChip label="Usuarios" value={usuariosConProcesos} />}
+            </section>
+
+            <section className="mt-6 space-y-3">
+              {metricasPorProceso.map((item) => (
+                <article
+                  key={item.proceso.id}
+                  className="rounded-3xl border border-zinc-200 bg-white/85 p-5 shadow-sm dark:border-white/10 dark:bg-white/5"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h2 className="truncate text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+                        {item.proceso.numero_proceso || item.proceso.id}
+                      </h2>
+                      <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                        {item.proceso.tipo_proceso || "Sin tipo"}
+                        {item.proceso.juzgado ? ` - ${item.proceso.juzgado}` : ""}
+                      </p>
+                      <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                        Usuario: <span className="font-semibold">{item.usuarioProcesoLabel}</span>
+                      </p>
+                    </div>
+                    <span
+                      className={`rounded-full border px-3 py-1 text-xs font-semibold ${estadoToneClass(
+                        item.proceso.estado,
+                      )}`}
+                    >
+                      {item.proceso.estado || "Sin estado"}
+                    </span>
+                  </div>
+
+                  <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                    <MetricChip label="Total" value={item.totalEventos} />
+                    <MetricChip label="Realizados" value={item.eventosRealizados} tone="positive" />
+                    <MetricChip label="Por venir" value={item.eventosPorVenir} tone="warning" />
+                  </div>
+
+                  <div className="mt-4 grid gap-3 text-sm text-zinc-600 dark:text-zinc-300 md:grid-cols-2">
+                    <p>
+                      <span className="font-semibold text-zinc-900 dark:text-zinc-100">Ultimo realizado:</span>{" "}
+                      {item.ultimoRealizado
+                        ? `${item.ultimoRealizado.titulo} (${formatEventoFechaHora(item.ultimoRealizado)})`
+                        : "Sin eventos realizados"}
+                    </p>
+                    <p>
+                      <span className="font-semibold text-zinc-900 dark:text-zinc-100">Proximo evento:</span>{" "}
+                      {item.proximoEvento
+                        ? `${item.proximoEvento.titulo} (${formatEventoFechaHora(item.proximoEvento)})`
+                        : "Sin eventos por venir"}
+                    </p>
+                  </div>
+
+                  <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                    <section className="rounded-2xl border border-zinc-200 bg-white/70 p-4 dark:border-white/10 dark:bg-white/5">
+                      <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Deudores y apoderados</h3>
+                      {item.deudores.length === 0 ? (
+                        <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">Sin deudores registrados.</p>
+                      ) : (
+                        <div className="mt-3 space-y-2">
+                          {item.deudores.map(({ deudor, apoderado }) => (
+                            <div
+                              key={deudor.id}
+                              className="rounded-xl border border-zinc-200 bg-white/70 p-3 text-xs dark:border-white/10 dark:bg-black/20"
+                            >
+                              <p className="font-semibold text-zinc-900 dark:text-zinc-100">{deudor.nombre}</p>
+                              <p className="mt-0.5 text-zinc-500 dark:text-zinc-400">
+                                ID: {deudor.identificacion || "Sin identificacion"}
+                              </p>
+                              <p className="mt-1 text-zinc-600 dark:text-zinc-300">
+                                Apoderado: {apoderado?.nombre || "Sin apoderado asignado"}
+                              </p>
+                              {apoderado?.email && (
+                                <p className="mt-0.5 text-zinc-500 dark:text-zinc-400">Correo: {apoderado.email}</p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </section>
+
+                    <section className="rounded-2xl border border-zinc-200 bg-white/70 p-4 dark:border-white/10 dark:bg-white/5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                          Acreedores, apoderados y acreencias
+                        </h3>
+                        <span className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-700 dark:border-white/10 dark:bg-black/20 dark:text-zinc-200">
+                          Total: {formatMoney(item.totalAcreenciasProceso)}
+                        </span>
+                      </div>
+
+                      {item.acreedores.length === 0 ? (
+                        <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">Sin acreedores registrados.</p>
+                      ) : (
+                        <div className="mt-3 space-y-2">
+                          {item.acreedores.map(({ acreedor, apoderado, acreencias, totalAcreencias }) => (
+                            <div
+                              key={acreedor.id}
+                              className="rounded-xl border border-zinc-200 bg-white/70 p-3 text-xs dark:border-white/10 dark:bg-black/20"
+                            >
+                              <div className="flex flex-wrap items-start justify-between gap-2">
+                                <div>
+                                  <p className="font-semibold text-zinc-900 dark:text-zinc-100">{acreedor.nombre}</p>
+                                  <p className="mt-0.5 text-zinc-500 dark:text-zinc-400">
+                                    ID: {acreedor.identificacion || "Sin identificacion"}
+                                  </p>
+                                  <p className="mt-1 text-zinc-600 dark:text-zinc-300">
+                                    Apoderado: {apoderado?.nombre || "Sin apoderado asignado"}
+                                  </p>
+                                  {apoderado?.email && (
+                                    <p className="mt-0.5 text-zinc-500 dark:text-zinc-400">Correo: {apoderado.email}</p>
+                                  )}
+                                </div>
+
+                                <div className="text-right">
+                                  <p className="font-semibold text-zinc-800 dark:text-zinc-200">
+                                    {acreencias.length} acreencias
+                                  </p>
+                                  <p className="mt-0.5 text-zinc-600 dark:text-zinc-300">{formatMoney(totalAcreencias)}</p>
+                                </div>
+                              </div>
+
+                              {acreencias.length > 0 ? (
+                                <div className="mt-2 space-y-1">
+                                  {acreencias.map((acreencia) => (
+                                    <div
+                                      key={acreencia.id}
+                                      className="rounded-lg border border-zinc-200 bg-white/80 px-2 py-1.5 dark:border-white/10 dark:bg-white/5"
+                                    >
+                                      <p className="font-medium text-zinc-800 dark:text-zinc-100">
+                                        {acreencia.naturaleza || "Sin naturaleza"}
+                                        {acreencia.prelacion ? ` - ${acreencia.prelacion}` : ""}
+                                      </p>
+                                      <p className="mt-0.5 text-zinc-600 dark:text-zinc-300">
+                                        Total: {formatMoney(resolveAcreenciaTotal(acreencia))}
+                                      </p>
+                                      {typeof acreencia.porcentaje === "number" && (
+                                        <p className="mt-0.5 text-zinc-500 dark:text-zinc-400">
+                                          Porcentaje: {acreencia.porcentaje}%
+                                        </p>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="mt-2 text-zinc-500 dark:text-zinc-400">
+                                  Sin acreencias registradas para este acreedor.
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </section>
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Link
+                      href={`/calendario?procesoId=${encodeURIComponent(item.proceso.id)}`}
+                      className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-zinc-700 transition hover:border-zinc-900 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white"
+                    >
+                      Ver en calendario
+                    </Link>
+                    <Link
+                      href={`/lista?procesoId=${encodeURIComponent(item.proceso.id)}`}
+                      className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-zinc-700 transition hover:border-zinc-900 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white"
+                    >
+                      Abrir lista
+                    </Link>
+                  </div>
+                </article>
+              ))}
+            </section>
+          </>
+        )}
+      </main>
+    </div>
+  );
+}
+

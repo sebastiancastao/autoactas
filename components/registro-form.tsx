@@ -99,15 +99,15 @@ export default function RegistroForm({ initialProcesoId, focusSection }: Registr
       ? "Registrar deudor"
       : normalizedProcesoId
       ? "Gestionar relaciones del proceso"
-      : "Agregar deudores y acreedores";
+      : "Agregar deudor y acreedores";
   const subtitle =
     normalizedFocusSection === "acreedores"
       ? "Añade un acreedor y su información antes de guardarlo en el proceso."
       : normalizedFocusSection === "deudores"
       ? "Añade un deudor y su apoderado para continuar."
       : normalizedProcesoId
-      ? "Actualiza los apoderados, deudores y acreedores asociados al proceso seleccionado."
-      : "Registra nuevos deudores y acreedores; el formulario general está disponible en Procesos.";
+      ? "Actualiza los apoderados, deudor y acreedores asociados al proceso seleccionado."
+      : "Registra un deudor y los acreedores; el formulario general está disponible en Procesos.";
 
   const tipoParamHint =
     normalizedFocusSection === "acreedores"

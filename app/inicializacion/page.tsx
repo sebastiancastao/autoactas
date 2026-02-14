@@ -272,7 +272,7 @@ export default function InicializacionPage() {
 
   if (!user) {
     return (
-      <div className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8">
+      <div className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8 xl:max-w-[90rem] 2xl:max-w-[110rem]">
         <div className="rounded-3xl border border-zinc-200 bg-white/85 p-6 text-sm text-zinc-700 shadow-sm dark:border-white/10 dark:bg-white/5 dark:text-zinc-200">
           Debes iniciar sesion para acceder a Inicializacion.
         </div>
@@ -284,7 +284,7 @@ export default function InicializacionPage() {
     <div className="min-h-screen bg-zinc-50 text-zinc-950 dark:bg-black dark:text-zinc-50">
       <div className="pointer-events-none fixed inset-x-0 top-0 h-40 bg-gradient-to-b from-white/70 to-transparent dark:from-zinc-900/60" />
 
-      <main className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8">
+      <main className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8 xl:max-w-[90rem] 2xl:max-w-[110rem]">
         <header className="rounded-3xl border border-zinc-200 bg-white/85 p-6 shadow-sm dark:border-white/10 dark:bg-white/5">
           <div className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/70 px-3 py-1 text-xs text-zinc-600 shadow-sm dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
             <span className="h-2 w-2 rounded-full bg-emerald-500" />

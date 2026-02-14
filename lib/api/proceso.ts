@@ -36,6 +36,10 @@ const SELECT_PROCESO_WITHOUT_PROGRESO_AND_ACREENCIAS: string = `
       acreedores (*)
     `
 
+const SELECT_PROCESO_BASIC: string = `
+      *
+    `
+
 const SCHEMA_RELATION_ERROR_CODES = new Set([
   'PGRST200',
   'PGRST201',
@@ -79,6 +83,12 @@ function isSchemaRelationError(error: unknown) {
   if (!error || typeof error !== 'object') return false
   const record = error as Record<string, unknown>
   return typeof record.code === 'string' && SCHEMA_RELATION_ERROR_CODES.has(record.code)
+}
+
+function isNotFoundSingleRowError(error: unknown) {
+  if (!error || typeof error !== "object") return false
+  const record = error as Record<string, unknown>
+  return record.code === "PGRST116"
 }
 
 function getMissingColumnFromError(error: unknown) {
@@ -141,6 +151,11 @@ async function fetchProcesoByIdWithFallbacks(id: string): Promise<ProcesoWithNes
       select: SELECT_PROCESO_WITHOUT_PROGRESO_AND_ACREENCIAS,
       normalize: withNullProgresoAndEmptyAcreencias,
     },
+    {
+      label: 'basic proceso fields',
+      select: SELECT_PROCESO_BASIC,
+      normalize: withNullProgresoAndEmptyAcreencias,
+    },
   ] as const
 
   let lastError: unknown = null
@@ -158,12 +173,16 @@ async function fetchProcesoByIdWithFallbacks(id: string): Promise<ProcesoWithNes
     }
 
     lastError = error
-    if (!isSchemaRelationError(error) || index === attempts.length - 1) {
+    if (isNotFoundSingleRowError(error)) {
+      break
+    }
+    if (index === attempts.length - 1) {
       break
     }
 
+    const reason = isSchemaRelationError(error) ? "schema mismatch" : "restricted relation access"
     console.warn(
-      `Retrying proceso relations query (${attempt.label}) due to schema mismatch:`,
+      `Retrying proceso relations query (${attempt.label}) due to ${reason}:`,
       formatErrorDetails(error),
     )
   }
@@ -188,6 +207,11 @@ async function fetchProcesosWithFallbacks(): Promise<ProcesoWithNestedData[]> {
       select: SELECT_PROCESO_WITHOUT_PROGRESO_AND_ACREENCIAS,
       normalize: (rows: ProcesoWithNestedData[]) => rows.map(withNullProgresoAndEmptyAcreencias),
     },
+    {
+      label: 'basic proceso fields',
+      select: SELECT_PROCESO_BASIC,
+      normalize: (rows: ProcesoWithNestedData[]) => rows.map(withNullProgresoAndEmptyAcreencias),
+    },
   ] as const
 
   let lastError: unknown = null
@@ -204,12 +228,13 @@ async function fetchProcesosWithFallbacks(): Promise<ProcesoWithNestedData[]> {
     }
 
     lastError = error
-    if (!isSchemaRelationError(error) || index === attempts.length - 1) {
+    if (index === attempts.length - 1) {
       break
     }
 
+    const reason = isSchemaRelationError(error) ? "schema mismatch" : "restricted relation access"
     console.warn(
-      `Retrying procesos relations query (${attempt.label}) due to schema mismatch:`,
+      `Retrying procesos relations query (${attempt.label}) due to ${reason}:`,
       formatErrorDetails(error),
     )
   }

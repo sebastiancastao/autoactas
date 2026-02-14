@@ -277,7 +277,7 @@ function AcreenciasContent() {
           </section>
         ) : (
           <section className="rounded-3xl border border-zinc-200 bg-white/80 p-6 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-sm text-zinc-600 dark:text-zinc-300">
                 {cargando ? "Cargando datos..." : acreedores.length === 0 ? "No hay acreedores asociados a este apoderado en este proceso." : "Edita y guarda la informaci\u00f3n."}
               </div>
@@ -285,7 +285,7 @@ function AcreenciasContent() {
                 type="button"
                 onClick={guardar}
                 disabled={guardando || cargando || drafts.length === 0}
-                className="inline-flex items-center justify-center rounded-full bg-zinc-950 px-5 py-2 text-sm font-medium text-white shadow-sm transition disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-zinc-950"
+                className="inline-flex w-full items-center justify-center rounded-full bg-zinc-950 px-5 py-2 text-sm font-medium text-white shadow-sm transition disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto dark:bg-white dark:text-zinc-950"
               >
                 {guardando ? "Guardando..." : "Guardar"}
               </button>
@@ -305,7 +305,7 @@ function AcreenciasContent() {
 
             {drafts.length > 0 ? (
               <div className="mt-6 overflow-x-auto">
-                <table className="w-full min-w-[980px] border-separate border-spacing-0">
+                <table className="w-full min-w-[760px] border-separate border-spacing-0 md:min-w-[920px]">
                   <thead>
                     <tr className="text-left text-xs uppercase tracking-[0.25em] text-zinc-400">
                       <th className="pb-3 pr-4">Acreedor</th>
@@ -323,7 +323,7 @@ function AcreenciasContent() {
                     {drafts.map((draft, idx) => (
                       <tr key={draft.acreedor_id} className="border-t border-zinc-200/70 dark:border-white/10">
                         <td className="py-3 pr-4 font-medium text-zinc-900 dark:text-zinc-50">
-                          <div className="max-w-[260px] truncate">{draft.acreedor_nombre}</div>
+                          <div className="max-w-[200px] truncate sm:max-w-[260px]">{draft.acreedor_nombre}</div>
                         </td>
 
                         <td className="py-3 pr-4">

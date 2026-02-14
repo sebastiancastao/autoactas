@@ -269,7 +269,7 @@ export default function FinalizacionPage() {
                     key={a.id}
                     className="rounded-2xl border border-zinc-200 bg-white/70 p-4 shadow-sm transition hover:shadow-md dark:border-white/10 dark:bg-white/5"
                   >
-                    <div className="mb-3 flex items-center justify-between">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200 bg-white text-sm font-medium text-zinc-700 dark:border-white/10 dark:bg-white/10 dark:text-zinc-200">
                           {index + 1}
@@ -429,7 +429,7 @@ export default function FinalizacionPage() {
                           Asistencia
                         </label>
 
-                        <div className="flex items-center justify-between rounded-2xl border border-zinc-200 bg-white px-4 py-2 dark:border-white/10 dark:bg-black/20">
+                        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-zinc-200 bg-white px-4 py-2 dark:border-white/10 dark:bg-black/20">
                           <div>
                             <p className="text-sm font-medium">
                               {a.estado === "Presente" ? "Presente ✅" : "Ausente ❌"}
@@ -520,7 +520,7 @@ export default function FinalizacionPage() {
                 + Agregar asistente
               </button>
 
-              <div className="flex gap-3">
+              <div className="flex flex-col gap-3 sm:flex-row">
                 <button
                   type="button"
                   onClick={reiniciar}
@@ -542,7 +542,7 @@ export default function FinalizacionPage() {
             {/* JSON Preview */}
             {guardado !== null && (
               <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4 text-sm dark:border-white/10 dark:bg-white/5">
-                <div className="mb-2 flex items-center justify-between">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                   <p className="font-medium text-zinc-900 dark:text-zinc-50">
                     Resultado guardado
                   </p>

@@ -616,16 +616,16 @@ export default function ProcesosPage() {
           return created;
         };
 
-        (deudores ?? []).forEach((row) => {
-          const pid = (row as any).proceso_id as string | null;
-          const aid = (row as any).apoderado_id as string | null;
+        (deudores ?? []).forEach((row: { proceso_id: string | null; apoderado_id: string | null }) => {
+          const pid = row.proceso_id;
+          const aid = row.apoderado_id;
           if (!pid || !aid) return;
           ensure(pid).deudor.add(aid);
         });
 
-        (acreedores ?? []).forEach((row) => {
-          const pid = (row as any).proceso_id as string | null;
-          const aid = (row as any).apoderado_id as string | null;
+        (acreedores ?? []).forEach((row: { proceso_id: string | null; apoderado_id: string | null }) => {
+          const pid = row.proceso_id;
+          const aid = row.apoderado_id;
           if (!pid || !aid) return;
           ensure(pid).acreedor.add(aid);
         });
@@ -1117,7 +1117,7 @@ export default function ProcesosPage() {
 
 
 
-      <main className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8">
+      <main className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8 xl:max-w-[90rem] 2xl:max-w-[110rem]">
 
         <header className="mb-8">
 
@@ -1186,7 +1186,7 @@ export default function ProcesosPage() {
 
         {mostrarPanelEnvio && (
           <section className="mb-8 rounded-3xl border border-zinc-200 bg-white/90 p-5 shadow-[0_12px_40px_-20px_rgba(0,0,0,0.35)] backdrop-blur dark:border-white/10 dark:bg-white/5 sm:p-6">
-            <div className="flex items-start justify-between gap-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold">Enviar registro</h2>
                 <p className="text-xs text-zinc-500 dark:text-zinc-400">
@@ -1208,7 +1208,7 @@ export default function ProcesosPage() {
                   Si el nombre coincide con uno existente se completará el correo automáticamente.
                 </p>
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-[0.3em] text-zinc-500">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-semibold uppercase tracking-[0.3em] text-zinc-500">
                     <span>Apoderados</span>
                     <button
                       type="button"
@@ -1225,7 +1225,7 @@ export default function ProcesosPage() {
                         className="rounded-2xl border border-zinc-200 bg-white/80 p-3 dark:border-white/10 dark:bg-white/5"
                       >
                         <div className="flex flex-wrap items-center gap-3">
-                          <div className="flex-1 min-w-[140px]">
+                          <div className="min-w-0 flex-1 sm:min-w-[140px]">
                             <label className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
                               Relación
                             </label>
@@ -1416,7 +1416,7 @@ export default function ProcesosPage() {
 
 
 
-          <section className="rounded-3xl border border-zinc-200 bg-white/80 p-5 shadow-[0_12px_40px_-20px_rgba(0,0,0,0.35)] backdrop-blur dark:border-white/10 dark:bg-white/5 sm:p-6">
+          <section className="h-full min-h-0 rounded-3xl border border-zinc-200 bg-white/80 p-5 shadow-[0_12px_40px_-20px_rgba(0,0,0,0.35)] backdrop-blur dark:border-white/10 dark:bg-white/5 sm:p-6 flex flex-col">
 
             <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
               <h2 className="text-lg font-semibold">Procesos Existentes</h2>
@@ -1490,29 +1490,30 @@ export default function ProcesosPage() {
 
 
 
-            {cargando ? (
+            <div className="min-h-0 flex-1">
+              {cargando ? (
 
-              <div className="text-sm text-zinc-500 dark:text-zinc-400">Cargando procesos...</div>
+                <div className="text-sm text-zinc-500 dark:text-zinc-400">Cargando procesos...</div>
 
-            ) : procesos.length === 0 ? (
+              ) : procesos.length === 0 ? (
 
-              <div className="rounded-2xl border border-zinc-200 bg-white/60 p-4 text-sm text-zinc-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
+                <div className="rounded-2xl border border-zinc-200 bg-white/60 p-4 text-sm text-zinc-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
 
-                No hay procesos registrados.
+                  No hay procesos registrados.
 
-              </div>
+                </div>
 
-            ) : visibleProcesos.length === 0 ? (
+              ) : visibleProcesos.length === 0 ? (
 
-              <div className="rounded-2xl border border-zinc-200 bg-white/60 p-4 text-sm text-zinc-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
+                <div className="rounded-2xl border border-zinc-200 bg-white/60 p-4 text-sm text-zinc-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
 
-                No se encontraron procesos que coincidan con {searchLabel} para {creatorFilterLabel}.
+                  No se encontraron procesos que coincidan con {searchLabel} para {creatorFilterLabel}.
 
-              </div>
+                </div>
 
-            ) : (
+              ) : (
 
-              <div className="space-y-3 max-h-[600px] overflow-y-auto">
+                <div className="h-full space-y-3 overflow-y-auto pr-1">
 
                 {visibleProcesos.map((proceso) => {
 
@@ -1551,7 +1552,10 @@ export default function ProcesosPage() {
 
                       key={proceso.id}
 
-                      onClick={() => cargarProcesoDetalle(proceso.id)}
+                      onClick={() => {
+                        setFormVisible(true);
+                        void cargarProcesoDetalle(proceso.id);
+                      }}
 
                       className={[
 
@@ -1571,7 +1575,7 @@ export default function ProcesosPage() {
 
                     >
 
-                      <div className="flex items-start justify-between gap-3">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
 
                         <div className="min-w-0 flex-1">
 
@@ -1691,7 +1695,7 @@ export default function ProcesosPage() {
 
                       </div>
 
-                      <div className="mt-3 flex items-center justify-between gap-3">
+                      <div className="mt-3 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
 
                         {autoState.error && (
                           <div className="mr-3 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
@@ -1774,7 +1778,7 @@ export default function ProcesosPage() {
  
                         </p>
 
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap gap-2">
 
                           <Link
 
@@ -1841,9 +1845,10 @@ export default function ProcesosPage() {
 
                 })}
 
-              </div>
+                </div>
 
-            )}
+              )}
+            </div>
 
           </section>
 
@@ -1899,7 +1904,7 @@ export default function ProcesosPage() {
                   </div>
                 )}
 
-                <div className="flex items-center justify-end gap-2">
+                <div className="flex flex-wrap items-center justify-end gap-2">
                   <button
                     type="button"
                     onClick={cerrarModalExcel}

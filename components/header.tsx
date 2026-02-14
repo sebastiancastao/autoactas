@@ -27,11 +27,11 @@ type ListaPickerPosition = {
 
 const NAV_LINKS: NavLink[] = [
   { href: '/', label: 'Inicio', match: (pathname) => pathname === '/' },
+  { href: '/dashboard', label: 'Dashboard', match: (pathname) => pathname.startsWith('/dashboard') },
   { href: '/procesos', label: 'Procesos', match: (pathname) => pathname.startsWith('/procesos') },
   { href: '/calendario', label: 'Calendario', match: (pathname) => pathname.startsWith('/calendario') },
   { href: '/inicializacion', label: 'Inicializacion', match: (pathname) => pathname.startsWith('/inicializacion') },
-  { href: '/lista', label: 'Lista', match: (pathname) => pathname.startsWith('/lista') },
-  { href: '/finalizacion', label: 'Finalizacion', match: (pathname) => pathname.startsWith('/finalizacion') },
+  { href: '/lista', label: 'Audiencia', match: (pathname) => pathname.startsWith('/lista') },
 ]
 
 function getContextLabel(pathname: string) {
@@ -40,6 +40,7 @@ function getContextLabel(pathname: string) {
   if (pathname.startsWith('/perfil')) return 'Perfil'
   if (pathname.startsWith('/consulta-publica')) return 'Consulta publica'
   if (pathname.startsWith('/onboarding')) return 'Onboarding'
+  if (pathname.startsWith('/finalizacion')) return 'Finalizacion'
   return 'Flujo principal'
 }
 
@@ -272,7 +273,7 @@ export function Header() {
 
   return (
     <header className="sticky top-0 z-40 border-b border-zinc-200/80 bg-white/85 backdrop-blur-xl dark:border-white/10 dark:bg-black/80">
-      <div className="mx-auto max-w-6xl px-5 sm:px-8">
+      <div className="mx-auto w-full max-w-6xl px-5 sm:px-8 xl:max-w-[90rem] 2xl:max-w-[110rem]">
         <div className="flex flex-wrap items-center justify-between gap-3 py-3">
           <div className="flex min-w-0 items-center gap-3">
             <Link
@@ -287,7 +288,7 @@ export function Header() {
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <span className="hidden rounded-full border border-zinc-200 bg-white/70 px-3 py-1 text-xs text-zinc-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300 md:inline-flex">
               {user.email}
             </span>
@@ -306,11 +307,11 @@ export function Header() {
           </div>
         </div>
 
-        <nav aria-label="Navegacion principal" className="-mx-1 flex overflow-x-auto pb-3">
+        <nav aria-label="Navegacion principal" className="-mx-1 flex overflow-x-auto pb-3 [-webkit-overflow-scrolling:touch]">
           <div className="flex min-w-full gap-2 px-1">
             {NAV_LINKS.map((item) => {
               const isActive = item.match(pathname)
-              const className = `inline-flex items-center justify-center rounded-full border px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] transition ${
+              const className = `inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-full border px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] transition ${
                 isActive
                   ? 'border-zinc-900 bg-zinc-900 text-white shadow-sm dark:border-white dark:bg-white dark:text-black'
                   : 'border-zinc-200 bg-white/70 text-zinc-600 hover:border-zinc-900 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300 dark:hover:border-white dark:hover:text-white'

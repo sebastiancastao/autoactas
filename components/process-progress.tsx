@@ -28,15 +28,9 @@ const STEPS = [
   },
   {
     key: "lista",
-    label: "Lista",
+    label: "Audiencia",
     description: "Controla asistencia y actas.",
     href: "/lista",
-  },
-  {
-    key: "finalizacion",
-    label: "Finalizacion",
-    description: "Cierra el proceso y resultados.",
-    href: "/finalizacion",
   },
 ] as const;
 
@@ -69,9 +63,6 @@ function resolveStageIndex(normalizedPathname: string): number {
   if (normalizedPathname.startsWith("/lista") || normalizedPathname.startsWith("/acreencias")) {
     return 3;
   }
-  if (normalizedPathname.startsWith("/finalizacion")) {
-    return 4;
-  }
   return 0;
 }
 
@@ -83,7 +74,6 @@ function shouldShowProgress(pathname: string) {
     "/inicializacion",
     "/lista",
     "/acreencias",
-    "/finalizacion",
   ].some((route) => pathname === route || pathname.startsWith(`${route}/`));
 }
 
@@ -262,7 +252,7 @@ export function ProcessProgress() {
 
   return (
     <div className="border-b border-zinc-800 bg-gradient-to-b from-zinc-900 via-zinc-950 to-black shadow-sm">
-      <div className="mx-auto max-w-6xl px-5 py-4 sm:px-8">
+      <div className="mx-auto w-full max-w-6xl px-5 py-4 sm:px-8 xl:max-w-[90rem] 2xl:max-w-[110rem]">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-zinc-400">
@@ -272,7 +262,7 @@ export function ProcessProgress() {
               Avanza por etapas y usa cada paso para navegar mas rapido.
             </p>
           </div>
-          <div className="rounded-full border border-emerald-500/70 bg-zinc-900 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-400">
+          <div className="self-start rounded-full border border-emerald-500/70 bg-zinc-900 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-400 sm:self-auto">
             Etapa {activeIndex + 1} / {STEPS.length}
           </div>
         </div>
@@ -284,7 +274,7 @@ export function ProcessProgress() {
           />
         </div>
 
-        <ol className="mt-4 flex gap-2 overflow-x-auto pb-1">
+        <ol className="mt-4 flex gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]">
           {STEPS.map((step, index) => {
             const isActive = index === activeIndex;
             const isComplete = index < activeIndex;
@@ -304,7 +294,7 @@ export function ProcessProgress() {
             }`;
 
             return (
-              <li key={step.key} className="min-w-[180px] flex-1">
+              <li key={step.key} className="min-w-[165px] flex-1 sm:min-w-[180px]">
                 {step.key === "lista" ? (
                   <div className={cardClassName}>
                     <button

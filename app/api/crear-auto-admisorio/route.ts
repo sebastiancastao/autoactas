@@ -1,6 +1,15 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { Document, Packer, Paragraph, TextRun, AlignmentType, LevelFormat, convertInchesToTwip } from "docx";
+import {
+  Document,
+  Packer,
+  Paragraph,
+  TextRun,
+  AlignmentType,
+  LevelFormat,
+  ImageRun,
+  convertInchesToTwip,
+} from "docx";
 
 import { uploadDocxToGoogleDrive } from "@/lib/google-drive";
 import type { Database } from "@/lib/database.types";
@@ -38,6 +47,58 @@ function createSupabaseAdmin() {
 
 function safeDateKey() {
   return new Date().toISOString().slice(0, 10);
+}
+
+type DocImageType = "png" | "jpg" | "gif" | "bmp";
+type DecodedSignatureImage = { data: Buffer; type: DocImageType };
+
+function decodeSignatureDataUrl(dataUrl: string | null | undefined): DecodedSignatureImage | null {
+  const raw = String(dataUrl ?? "").trim();
+  if (!raw) return null;
+
+  const match = raw.match(/^data:image\/([a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\r\n]+)$/);
+  if (!match) return null;
+
+  const subtypeRaw = match[1].toLowerCase();
+  const base64 = match[2].replace(/\s+/g, "");
+  if (!base64) return null;
+
+  let type: DocImageType | null = null;
+  if (subtypeRaw === "png") type = "png";
+  if (subtypeRaw === "jpg" || subtypeRaw === "jpeg") type = "jpg";
+  if (subtypeRaw === "gif") type = "gif";
+  if (subtypeRaw === "bmp") type = "bmp";
+  if (!type) return null;
+
+  try {
+    return { type, data: Buffer.from(base64, "base64") };
+  } catch {
+    return null;
+  }
+}
+
+async function loadUsuarioFirmaDataUrlByEmail(
+  supabase: ReturnType<typeof createSupabaseAdmin>,
+  email: string | null | undefined,
+): Promise<string | null> {
+  if (!supabase) return null;
+
+  const normalizedEmail = String(email ?? "").trim().toLowerCase();
+  if (!normalizedEmail) return null;
+
+  const { data, error } = await supabase
+    .from("usuarios")
+    .select("firma_data_url")
+    .eq("email", normalizedEmail)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("[crear-auto-admisorio] Unable to load usuario signature by email:", toErrorMessage(error));
+    return null;
+  }
+
+  const firma = data?.firma_data_url;
+  return typeof firma === "string" && firma.trim() ? firma : null;
 }
 
 // --- Spanish date helpers ---
@@ -267,13 +328,14 @@ export async function POST(req: Request) {
       tarjetaProfesional: "334936 del C S de la J.",
       email: "grupodeapoyojuridico1@gmail.com",
     };
+    let operadorFirmaDataUrl: string | null = null;
 
     // Look up the logged-in user's profile from the usuarios table
     const authUserId = body?.authUserId?.trim();
     if (authUserId) {
       const { data: usuario } = await supabase
         .from("usuarios")
-        .select("nombre, email, identificacion, tarjeta_profesional")
+        .select("nombre, email, identificacion, tarjeta_profesional, firma_data_url")
         .eq("auth_id", authUserId)
         .maybeSingle();
 
@@ -284,6 +346,7 @@ export async function POST(req: Request) {
           tarjetaProfesional: usuario.tarjeta_profesional || operador.tarjetaProfesional,
           email: usuario.email || operador.email,
         };
+        operadorFirmaDataUrl = usuario.firma_data_url || null;
       }
     }
 
@@ -296,6 +359,11 @@ export async function POST(req: Request) {
         email: body.operador.email || operador.email,
       };
     }
+
+    if (!operadorFirmaDataUrl) {
+      operadorFirmaDataUrl = await loadUsuarioFirmaDataUrlByEmail(supabase, operador.email);
+    }
+    const operadorSignatureImage = decodeSignatureDataUrl(operadorFirmaDataUrl);
 
     // --- Build document ---
     const doc = new Document({
@@ -488,9 +556,20 @@ export async function POST(req: Request) {
 
             bodyParagraph("Atentamente,"),
 
-            emptyLine(),
-            emptyLine(),
-            emptyLine(),
+            ...(operadorSignatureImage
+              ? [
+                  new Paragraph({
+                    spacing: { after: 140 },
+                    children: [
+                      new ImageRun({
+                        type: operadorSignatureImage.type,
+                        data: operadorSignatureImage.data,
+                        transformation: { width: 190, height: 70 },
+                      }),
+                    ],
+                  }),
+                ]
+              : [emptyLine(), emptyLine(), emptyLine()]),
 
             // Signature block
             new Paragraph({

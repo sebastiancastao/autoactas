@@ -7,6 +7,13 @@
   --surface-soft: rgba(255, 255, 255, 0.65);
   --ring-color: rgba(15, 23, 42, 0.18);
   --ring-color-strong: rgba(15, 23, 42, 0.32);
+  --select-bg: #ffffff;
+  --select-fg: #0f172a;
+  --select-border: #64748b;
+  --select-option-bg: #ffffff;
+  --select-option-fg: #0f172a;
+  --select-disabled-bg: #f1f5f9;
+  --select-disabled-fg: #475569;
 }
 
 @theme inline {
@@ -24,6 +31,13 @@
     --surface-soft: rgba(255, 255, 255, 0.03);
     --ring-color: rgba(255, 255, 255, 0.2);
     --ring-color-strong: rgba(255, 255, 255, 0.35);
+    --select-bg: #0b1220;
+    --select-fg: #f8fafc;
+    --select-border: #94a3b8;
+    --select-option-bg: #111827;
+    --select-option-fg: #f8fafc;
+    --select-disabled-bg: #111827;
+    --select-disabled-fg: #94a3b8;
   }
 }
 
@@ -34,6 +48,8 @@
 html,
 body {
   min-height: 100%;
+  width: 100%;
+  overflow-x: clip;
 }
 
 body {
@@ -43,6 +59,16 @@ body {
   line-height: 1.45;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+}
+
+main {
+  width: 100%;
+}
+
+img,
+video {
+  max-width: 100%;
+  height: auto;
 }
 
 ::selection {
@@ -78,6 +104,10 @@ body {
 
 #main-content > * {
   animation: page-in 280ms ease-out;
+}
+
+#main-content {
+  overflow-x: clip;
 }
 
 @keyframes page-in {
@@ -124,6 +154,28 @@ a:focus-visible {
   }
 }
 
+select {
+  color: var(--select-fg) !important;
+  background-color: var(--select-bg) !important;
+  border-color: var(--select-border) !important;
+}
+
+select:hover {
+  border-color: var(--select-fg) !important;
+}
+
+select:disabled {
+  color: var(--select-disabled-fg) !important;
+  background-color: var(--select-disabled-bg) !important;
+  opacity: 1;
+}
+
+select option,
+select optgroup {
+  color: var(--select-option-fg) !important;
+  background-color: var(--select-option-bg) !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -132,5 +184,13 @@ a:focus-visible {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+@media (max-width: 640px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
   }
 }

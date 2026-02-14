@@ -5,7 +5,15 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getProcesos } from "@/lib/api/proceso";
 import { getUsuarios, type Usuario } from "@/lib/api/usuarios";
-import { getEventos, createEvento, deleteEvento as deleteEventoApi, type Evento } from "@/lib/api/eventos";
+import {
+  getEventos,
+  getEventosByProceso,
+  createEvento,
+  deleteEvento as deleteEventoApi,
+  type Evento,
+} from "@/lib/api/eventos";
+import { getDeudoresByProceso } from "@/lib/api/deudores";
+import { getApoderadoById, getApoderadosByProceso } from "@/lib/api/apoderados";
 import { getProgresos, updateProgresoByProcesoId, type Progreso } from "@/lib/api/progreso";
 import type { Proceso } from "@/lib/database.types";
 import { useAuth } from "@/lib/auth-context";
@@ -72,6 +80,40 @@ function addDays(date: Date, amount: number) {
   return result;
 }
 
+const BUSINESS_START_MINUTES = 8 * 60;
+const BUSINESS_END_MINUTES = 17 * 60;
+const BUSINESS_SLOT_MINUTES = 30;
+
+function minutesToHHMM(total: number) {
+  const hh = Math.floor(total / 60);
+  const mm = total % 60;
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
+function normalizeHoraHHMM(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  const match = trimmed.match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+  return `${match[1].padStart(2, "0")}:${match[2]}`;
+}
+
+function getBusinessSlotsHHMM() {
+  const out: string[] = [];
+  for (let m = BUSINESS_START_MINUTES; m <= BUSINESS_END_MINUTES; m += BUSINESS_SLOT_MINUTES) {
+    out.push(minutesToHHMM(m));
+  }
+  return out;
+}
+
+function formatHoraLabel(hhmm: string) {
+  const [hhRaw, mm] = hhmm.split(":");
+  const hh = Number(hhRaw);
+  const meridiem = hh >= 12 ? "PM" : "AM";
+  const hh12 = hh % 12 === 0 ? 12 : hh % 12;
+  return `${hh12}:${mm} ${meridiem}`;
+}
+
 function startOfWeek(date: Date) {
   const result = new Date(date);
   const dayIndex = (result.getDay() + 6) % 7;
@@ -135,6 +177,22 @@ function getErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
+function normalizeLabel(value: string | null | undefined, fallback: string) {
+  const normalized = (value ?? "").replace(/\s+/g, " ").trim();
+  return normalized || fallback;
+}
+
+function buildAcronimo(nombre: string | null | undefined) {
+  const normalized = normalizeLabel(nombre, "SIN APODERADO");
+  const words = normalized
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean);
+  const initials = words.map((word) => word[0]?.toUpperCase() ?? "").join("");
+  return initials || "SA";
+}
+
 function CalendarioContent() {
   const { user } = useAuth();
   const hoy = useMemo(() => new Date(), []);
@@ -165,6 +223,7 @@ function CalendarioContent() {
     Record<string, AutoAdmisorioState>
   >({});
   const [guardando, setGuardando] = useState(false);
+  const businessSlots = useMemo(() => getBusinessSlotsHHMM(), []);
 
   const userColorMap = useMemo(() => {
     const map: Record<string, string> = {};
@@ -379,6 +438,30 @@ function CalendarioContent() {
     return eventos.filter((ev) => ev.usuarioId === usuarioFiltro);
   }, [eventos, usuarioFiltro]);
 
+  const rangoVista = useMemo(() => {
+    if (viewType === "day") {
+      return { from: diaSeleccionadoISO, to: diaSeleccionadoISO };
+    }
+    if (viewType === "week") {
+      return {
+        from: toISODate(startOfWeek(viewDate)),
+        to: toISODate(endOfWeek(viewDate)),
+      };
+    }
+    return {
+      from: toISODate(startOfMonth(viewDate)),
+      to: toISODate(endOfMonth(viewDate)),
+    };
+  }, [viewType, viewDate, diaSeleccionadoISO]);
+
+  const eventosEnVista = useMemo(
+    () =>
+      eventosFiltrados.filter(
+        (evento) => evento.fechaISO >= rangoVista.from && evento.fechaISO <= rangoVista.to,
+      ),
+    [eventosFiltrados, rangoVista],
+  );
+
   const eventosPorDia = useMemo(() => {
     const map: Record<string, EventoCalendario[]> = {};
     for (const ev of eventosFiltrados) {
@@ -457,21 +540,77 @@ function CalendarioContent() {
     prepararModalAgregar(diaISO);
   }
 
+  async function buildProcesoEventoTitle(procesoId: string): Promise<string> {
+    const [deudoresProceso, eventosProceso] = await Promise.all([
+      getDeudoresByProceso(procesoId).catch((error) => {
+        console.error("Error loading deudores for calendar title:", error);
+        return [];
+      }),
+      getEventosByProceso(procesoId).catch((error) => {
+        console.error("Error loading eventos for calendar title:", error);
+        return null;
+      }),
+    ]);
+
+    const deudorPrincipal = deudoresProceso.find((deudor) => (deudor.nombre ?? "").trim().length > 0);
+    const deudorNombre = normalizeLabel(deudorPrincipal?.nombre, "SIN DEUDOR");
+
+    let apoderadoNombre = "";
+    if (deudorPrincipal?.apoderado_id) {
+      try {
+        const apoderado = await getApoderadoById(deudorPrincipal.apoderado_id);
+        apoderadoNombre = apoderado?.nombre ?? "";
+      } catch (error) {
+        console.error("Error loading deudor apoderado for calendar title:", error);
+      }
+    }
+
+    if (!apoderadoNombre) {
+      try {
+        const apoderadosProceso = await getApoderadosByProceso(procesoId);
+        apoderadoNombre =
+          apoderadosProceso.find((apoderado) => (apoderado.nombre ?? "").trim().length > 0)?.nombre ?? "";
+      } catch (error) {
+        console.error("Error loading proceso apoderado for calendar title:", error);
+      }
+    }
+
+    const apoderadoAcronimo = buildAcronimo(apoderadoNombre);
+    const eventosExistentes = Array.isArray(eventosProceso)
+      ? eventosProceso.length
+      : eventos.filter((ev) => ev.procesoId === procesoId).length;
+    const numeroEvento = eventosExistentes + 1;
+
+    return `AUD INSOLVENCIA ${deudorNombre}- ${apoderadoAcronimo}-${numeroEvento}`;
+  }
+
   async function agregarEvento() {
-    const titulo = nuevoTitulo.trim();
-    if (!titulo || !nuevaFecha || guardando) return;
+    const tituloManual = nuevoTitulo.trim();
+    const procesoId = nuevoProcesoId.trim();
+    const shouldAutoNameByProceso = Boolean(procesoId);
+    const horaNormalizada = normalizeHoraHHMM(nuevaHora);
+    if (!nuevaFecha || guardando) return;
+    if (!shouldAutoNameByProceso && !tituloManual) return;
+    if (!horaNormalizada || !businessSlots.includes(horaNormalizada)) {
+      alert("La hora debe estar entre 08:00 y 17:00, en intervalos de 30 minutos.");
+      return;
+    }
 
     setGuardando(true);
     try {
+      const titulo = shouldAutoNameByProceso
+        ? await buildProcesoEventoTitle(procesoId)
+        : tituloManual;
+
       const nuevoEvento = await createEvento({
         titulo,
         descripcion: null,
         fecha: nuevaFecha,
-        hora: nuevaHora ? `${nuevaHora}:00` : null,
+        hora: `${horaNormalizada}:00`,
         fecha_fin: null,
         hora_fin: null,
         usuario_id: nuevoUsuarioId || null,
-        proceso_id: nuevoProcesoId || null,
+        proceso_id: procesoId || null,
         tipo: 'general',
         color: null,
         recordatorio: false,
@@ -741,10 +880,10 @@ function CalendarioContent() {
     router.replace("/calendario");
   }, [procesoIdDesdeQuery, fechaDesdeQuery, hoyISO, router]);
 
-  const totalEventosVista = eventosFiltrados.length;
+  const totalEventosVista = eventosEnVista.length;
   const eventosHoy = eventosPorDia[hoyISO]?.length ?? 0;
   const procesosConEvento = new Set(
-    eventosFiltrados
+    eventosEnVista
       .map((evento) => evento.procesoId)
       .filter((procesoId): procesoId is string => Boolean(procesoId)),
   ).size;
@@ -754,7 +893,7 @@ function CalendarioContent() {
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,rgba(226,232,240,0.65),transparent_55%),linear-gradient(to_bottom,#fafafa,#f4f4f5)] text-zinc-950 dark:bg-[radial-gradient(circle_at_top,rgba(39,39,42,0.45),transparent_50%),linear-gradient(to_bottom,#000,#09090b)] dark:text-zinc-50">
       <div className="pointer-events-none fixed inset-x-0 top-0 h-56 bg-gradient-to-b from-white/80 to-transparent dark:from-zinc-900/70" />
-      <main className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8">
+      <main className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8 xl:max-w-[90rem] 2xl:max-w-[110rem]">
         <header className="mb-8 space-y-4">
           <div className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/70 px-3 py-1 text-xs text-zinc-600 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
             <span className="h-2 w-2 rounded-full bg-zinc-950 dark:bg-zinc-50" />
@@ -790,7 +929,7 @@ function CalendarioContent() {
                   value={usuarioFiltro}
                   onChange={(e) => setUsuarioFiltro(e.target.value)}
                   disabled={cargandoUsuarios}
-                  className="h-11 min-w-[180px] rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-medium shadow-sm transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10 dark:text-zinc-200 outline-none cursor-pointer"
+                  className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-medium shadow-sm transition hover:bg-zinc-100 sm:w-auto sm:min-w-[180px] dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10 dark:text-zinc-200 outline-none cursor-pointer"
                 >
                   <option value="global">Global (Todos)</option>
                   {usuarios.map((u) => (
@@ -816,9 +955,9 @@ function CalendarioContent() {
                   ))}
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex w-full items-center gap-2 sm:w-auto">
                 <button onClick={irPeriodoAnterior} className="h-11 rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-medium shadow-sm transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10">←</button>
-                <div className="min-w-[220px] rounded-2xl border border-zinc-200 bg-white/70 px-4 py-2 text-center text-sm font-medium shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/5">{etiquetaPeriodo}</div>
+                <div className="w-full rounded-2xl border border-zinc-200 bg-white/70 px-4 py-2 text-left text-sm font-medium shadow-sm backdrop-blur sm:w-auto sm:min-w-[220px] sm:text-center dark:border-white/10 dark:bg-white/5">{etiquetaPeriodo}</div>
                 <button onClick={irPeriodoSiguiente} className="h-11 rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-medium shadow-sm transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10">→</button>
               </div>
               <button onClick={irHoy} className="h-11 rounded-2xl bg-zinc-950 px-4 text-sm font-medium text-white shadow-sm transition hover:opacity-90 dark:bg-white dark:text-black">Hoy</button>
@@ -840,7 +979,7 @@ function CalendarioContent() {
               <div className="flex flex-wrap gap-2">
                 <CalendarStatChip label="Eventos vista" value={totalEventosVista} tone="neutral" />
                 <CalendarStatChip label="Eventos hoy" value={eventosHoy} tone="positive" />
-                <CalendarStatChip label="Procesos" value={procesosConEvento} tone="neutral" />
+                <CalendarStatChip label="Procesos vista" value={procesosConEvento} tone="neutral" />
                 <CalendarStatChip label="Dia seleccionado" value={diaSeleccionadoISO} tone="neutral" />
               </div>
             </div>
@@ -857,122 +996,130 @@ function CalendarioContent() {
           <section id="calendar-grid" className="scroll-mt-24 lg:col-span-2 rounded-[30px] border border-zinc-200/90 bg-white/85 p-5 shadow-[0_18px_60px_-30px_rgba(15,23,42,0.35)] backdrop-blur dark:border-white/10 dark:bg-white/[0.04] sm:p-6">
             {viewType === "month" && (
               <>
-                <div className="grid grid-cols-7 gap-2 pb-3 text-xs font-medium text-zinc-500 dark:text-zinc-400">
-                  {DIAS_SEMANA.map((d) => (<div key={d} className="px-2">{d}</div>))}
-                </div>
-                <div className="grid grid-cols-7 gap-2">
-                  {diasDelMes.map((day) => {
-                    const selected = day.iso === diaSeleccionadoISO;
-                    const inMonth = day.inMonth;
-                    const dayEvents = eventosPorDia[day.iso] || [];
-                    return (
-                      <button
-                        key={day.iso}
-                        type="button"
-                        onClick={() => setDiaSeleccionadoISO(day.iso)}
-                        onDoubleClick={() => abrirModalAgregar(day.iso)}
-                        className={[
-                          "group relative flex h-24 flex-col rounded-2xl border p-2 text-left transition",
-                          inMonth ? "border-zinc-200 bg-white/60 hover:bg-white dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10" : "border-zinc-200/60 bg-zinc-50/40 text-zinc-400 hover:bg-zinc-100 dark:border-white/5 dark:bg-white/5 dark:text-zinc-500",
-                          selected ? "ring-4 ring-zinc-950/10 dark:ring-white/10" : "",
-                        ].join(" ")}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className={["inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-medium", day.iso === hoyISO ? "bg-zinc-950 text-white dark:bg-white dark:text-black" : "bg-transparent"].join(" ")}>{day.date.getDate()}</div>
-                          <span onClick={(e) => { e.stopPropagation(); abrirModalAgregar(day.iso); }} className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-100 text-base font-medium text-zinc-600 opacity-0 transition group-hover:opacity-100 hover:bg-zinc-950 hover:text-white dark:bg-white/10 dark:text-zinc-300 dark:hover:bg-white dark:hover:text-black cursor-pointer">+</span>
-                        </div>
-                        <div className="mt-2 flex flex-1 flex-col gap-1 overflow-hidden">
-                          {dayEvents.slice(0, 2).map((ev) => {
-                            const eventStyle = getEventoStyle(ev.usuarioId);
-                            return (
-                              <div
-                                key={ev.id}
-                                onClick={(e) => { e.stopPropagation(); abrirDetalleEvento(ev); }}
-                                className="truncate rounded-xl border border-zinc-200 bg-white px-2 py-1 text-[11px] text-zinc-700 shadow-sm cursor-pointer transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/10 dark:text-zinc-200 dark:hover:bg-white/20"
-                                style={eventStyle}
-                                title={ev.titulo}
-                              >
-                                {ev.hora ? `${ev.hora} · ` : ""}{ev.titulo}
-                              </div>
-                            );
-                          })}
-                          {dayEvents.length > 2 && <div className="text-[11px] text-zinc-500 dark:text-zinc-400">+{dayEvents.length - 2} más</div>}
-                        </div>
-                        {dayEvents.length > 0 && <span className="absolute bottom-2 right-2 h-2 w-2 rounded-full bg-zinc-950/70 dark:bg-white/70" />}
-                      </button>
-                    );
-                  })}
+                <div className="overflow-x-auto pb-1">
+                  <div className="min-w-[640px]">
+                    <div className="grid grid-cols-7 gap-2 pb-3 text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                      {DIAS_SEMANA.map((d) => (<div key={d} className="px-2">{d}</div>))}
+                    </div>
+                    <div className="grid grid-cols-7 gap-2">
+                      {diasDelMes.map((day) => {
+                        const selected = day.iso === diaSeleccionadoISO;
+                        const inMonth = day.inMonth;
+                        const dayEvents = eventosPorDia[day.iso] || [];
+                        return (
+                          <button
+                            key={day.iso}
+                            type="button"
+                            onClick={() => setDiaSeleccionadoISO(day.iso)}
+                            onDoubleClick={() => abrirModalAgregar(day.iso)}
+                            className={[
+                              "group relative flex h-24 flex-col rounded-2xl border p-2 text-left transition",
+                              inMonth ? "border-zinc-200 bg-white/60 hover:bg-white dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10" : "border-zinc-200/60 bg-zinc-50/40 text-zinc-400 hover:bg-zinc-100 dark:border-white/5 dark:bg-white/5 dark:text-zinc-500",
+                              selected ? "ring-4 ring-zinc-950/10 dark:ring-white/10" : "",
+                            ].join(" ")}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className={["inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-medium", day.iso === hoyISO ? "bg-zinc-950 text-white dark:bg-white dark:text-black" : "bg-transparent"].join(" ")}>{day.date.getDate()}</div>
+                              <span onClick={(e) => { e.stopPropagation(); abrirModalAgregar(day.iso); }} className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-100 text-base font-medium text-zinc-600 opacity-0 transition group-hover:opacity-100 hover:bg-zinc-950 hover:text-white dark:bg-white/10 dark:text-zinc-300 dark:hover:bg-white dark:hover:text-black cursor-pointer">+</span>
+                            </div>
+                            <div className="mt-2 flex flex-1 flex-col gap-1 overflow-hidden">
+                              {dayEvents.slice(0, 2).map((ev) => {
+                                const eventStyle = getEventoStyle(ev.usuarioId);
+                                return (
+                                  <div
+                                    key={ev.id}
+                                    onClick={(e) => { e.stopPropagation(); abrirDetalleEvento(ev); }}
+                                    className="truncate rounded-xl border border-zinc-200 bg-white px-2 py-1 text-[11px] text-zinc-700 shadow-sm cursor-pointer transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/10 dark:text-zinc-200 dark:hover:bg-white/20"
+                                    style={eventStyle}
+                                    title={ev.titulo}
+                                  >
+                                    {ev.hora ? `${ev.hora} · ` : ""}{ev.titulo}
+                                  </div>
+                                );
+                              })}
+                              {dayEvents.length > 2 && <div className="text-[11px] text-zinc-500 dark:text-zinc-400">+{dayEvents.length - 2} más</div>}
+                            </div>
+                            {dayEvents.length > 0 && <span className="absolute bottom-2 right-2 h-2 w-2 rounded-full bg-zinc-950/70 dark:bg-white/70" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
                 <p className="mt-4 text-xs text-zinc-500 dark:text-zinc-400">Tip: doble clic en un día para crear un evento rápido.</p>
               </>
             )}
             {viewType === "week" && (
               <>
-                <div
-                  className="grid gap-2 pb-3 text-xs font-medium text-zinc-500 dark:text-zinc-400"
-                  style={weekGridStyle}
-                >
-                  {displayWeekDays.map((day) => (
-                    <div key={day.iso} className="text-center">
-                      <p className="uppercase tracking-wide">
-                        {day.date.toLocaleDateString("es-ES", { weekday: "short" })}
-                      </p>
-                      <p className="text-sm font-semibold">{day.date.getDate()}</p>
+                <div className="overflow-x-auto pb-1">
+                  <div className="min-w-[680px]">
+                    <div
+                      className="grid gap-2 pb-3 text-xs font-medium text-zinc-500 dark:text-zinc-400"
+                      style={weekGridStyle}
+                    >
+                      {displayWeekDays.map((day) => (
+                        <div key={day.iso} className="text-center">
+                          <p className="uppercase tracking-wide">
+                            {day.date.toLocaleDateString("es-ES", { weekday: "short" })}
+                          </p>
+                          <p className="text-sm font-semibold">{day.date.getDate()}</p>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-                <div className="grid gap-3" style={weekGridStyle}>
-                  {displayWeekDays.map((day) => {
-                    const selected = day.iso === diaSeleccionadoISO;
-                    const dayEvents = eventosPorDia[day.iso] || [];
-                    return (
-                      <button
-                        key={day.iso}
-                        type="button"
-                        onClick={() => setDiaSeleccionadoISO(day.iso)}
-                        onDoubleClick={() => abrirModalAgregar(day.iso)}
-                        className={[
-                          "group relative flex min-h-[170px] flex-col rounded-2xl border p-3 text-left transition",
-                          day.inMonth ? "border-zinc-200 bg-white/60 hover:bg-white dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10" : "border-zinc-200/60 bg-zinc-50/40 text-zinc-400 hover:bg-zinc-100 dark:border-white/5 dark:bg-white/5 dark:text-zinc-500",
-                          selected ? "ring-4 ring-zinc-950/10 dark:ring-white/10" : "",
-                        ].join(" ")}
-                      >
-                        <div className="flex items-center justify-between text-xs font-semibold text-zinc-500 dark:text-zinc-400">
-                          <span className={["text-sm font-semibold", day.iso === hoyISO ? "text-zinc-900 dark:text-zinc-50" : "text-zinc-700 dark:text-zinc-200"].join(" ")}>{day.date.getDate()}</span>
-                          <span onClick={(e) => { e.stopPropagation(); abrirModalAgregar(day.iso); }} className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-100 text-base font-medium text-zinc-600 opacity-0 transition group-hover:opacity-100 hover:bg-zinc-950 hover:text-white dark:bg-white/10 dark:text-zinc-300 dark:hover:bg-white dark:hover:text-black cursor-pointer">+</span>
-                        </div>
-                        <div className="mt-3 flex flex-1 flex-col gap-2 overflow-hidden">
-                        {dayEvents.length === 0 ? (
-                            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Sin eventos</p>
-                          ) : (
-                            dayEvents.slice(0, 3).map((ev) => {
-                              const eventStyle = getEventoStyle(ev.usuarioId);
-                              return (
-                                <div
-                                  key={ev.id}
-                                  onClick={(e) => { e.stopPropagation(); abrirDetalleEvento(ev); }}
-                                  className="truncate rounded-xl border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-700 shadow-sm cursor-pointer transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/10 dark:text-zinc-200 dark:hover:bg-white/20"
-                                  style={eventStyle}
-                                  title={ev.titulo}
-                                >
-                                  {ev.hora ? `${ev.hora} · ` : ""}{ev.titulo}
-                                </div>
-                              );
-                            })
-                          )}
-                          {dayEvents.length > 3 && <div className="text-[11px] text-zinc-500 dark:text-zinc-400">+{dayEvents.length - 3} más</div>}
-                        </div>
-                        {dayEvents.length > 0 && <span className="absolute bottom-2 right-2 h-2 w-2 rounded-full bg-zinc-950/70 dark:bg-white/70" />}
-                      </button>
-                    );
-                  })}
+                    <div className="grid gap-3" style={weekGridStyle}>
+                      {displayWeekDays.map((day) => {
+                        const selected = day.iso === diaSeleccionadoISO;
+                        const dayEvents = eventosPorDia[day.iso] || [];
+                        return (
+                          <button
+                            key={day.iso}
+                            type="button"
+                            onClick={() => setDiaSeleccionadoISO(day.iso)}
+                            onDoubleClick={() => abrirModalAgregar(day.iso)}
+                            className={[
+                              "group relative flex min-h-[170px] flex-col rounded-2xl border p-3 text-left transition",
+                              day.inMonth ? "border-zinc-200 bg-white/60 hover:bg-white dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10" : "border-zinc-200/60 bg-zinc-50/40 text-zinc-400 hover:bg-zinc-100 dark:border-white/5 dark:bg-white/5 dark:text-zinc-500",
+                              selected ? "ring-4 ring-zinc-950/10 dark:ring-white/10" : "",
+                            ].join(" ")}
+                          >
+                            <div className="flex items-center justify-between text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                              <span className={["text-sm font-semibold", day.iso === hoyISO ? "text-zinc-900 dark:text-zinc-50" : "text-zinc-700 dark:text-zinc-200"].join(" ")}>{day.date.getDate()}</span>
+                              <span onClick={(e) => { e.stopPropagation(); abrirModalAgregar(day.iso); }} className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-100 text-base font-medium text-zinc-600 opacity-0 transition group-hover:opacity-100 hover:bg-zinc-950 hover:text-white dark:bg-white/10 dark:text-zinc-300 dark:hover:bg-white dark:hover:text-black cursor-pointer">+</span>
+                            </div>
+                            <div className="mt-3 flex flex-1 flex-col gap-2 overflow-hidden">
+                            {dayEvents.length === 0 ? (
+                                <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Sin eventos</p>
+                              ) : (
+                                dayEvents.slice(0, 3).map((ev) => {
+                                  const eventStyle = getEventoStyle(ev.usuarioId);
+                                  return (
+                                    <div
+                                      key={ev.id}
+                                      onClick={(e) => { e.stopPropagation(); abrirDetalleEvento(ev); }}
+                                      className="truncate rounded-xl border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-700 shadow-sm cursor-pointer transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/10 dark:text-zinc-200 dark:hover:bg-white/20"
+                                      style={eventStyle}
+                                      title={ev.titulo}
+                                    >
+                                      {ev.hora ? `${ev.hora} · ` : ""}{ev.titulo}
+                                    </div>
+                                  );
+                                })
+                              )}
+                              {dayEvents.length > 3 && <div className="text-[11px] text-zinc-500 dark:text-zinc-400">+{dayEvents.length - 3} más</div>}
+                            </div>
+                            {dayEvents.length > 0 && <span className="absolute bottom-2 right-2 h-2 w-2 rounded-full bg-zinc-950/70 dark:bg-white/70" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
                 <p className="mt-4 text-xs text-zinc-500 dark:text-zinc-400">Tip: doble clic o usa el botón para sumar eventos rápido.</p>
               </>
             )}
             {viewType === "day" && (
               <>
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <p className="text-xs text-zinc-500 dark:text-zinc-400">Agenda del día</p>
                     <h2 className="text-lg font-semibold">{diaSeleccionadoISO}</h2>
@@ -997,7 +1144,7 @@ function CalendarioContent() {
                           <div className="grid items-start gap-3 sm:grid-cols-[90px_1fr]">
                             <div className="text-xs text-zinc-500">{ev.hora ?? "Sin hora"}</div>
                             <div className="space-y-2">
-                              <div className="flex items-center justify-between gap-3">
+                              <div className="flex flex-wrap items-center justify-between gap-3">
                                 <p className="text-sm font-semibold">{ev.titulo}</p>
                                 <button type="button" onClick={() => eliminarEvento(ev.id)} className="text-xs text-zinc-500 transition hover:text-zinc-950 dark:hover:text-white">Eliminar</button>
                               </div>
@@ -1099,7 +1246,7 @@ function CalendarioContent() {
           </section>
 
           <aside id="day-agenda" className="scroll-mt-24 rounded-[30px] border border-zinc-200/90 bg-white/85 p-5 shadow-[0_18px_60px_-30px_rgba(15,23,42,0.35)] backdrop-blur dark:border-white/10 dark:bg-white/[0.04] sm:p-6">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <p className="text-xs text-zinc-500 dark:text-zinc-400">Día seleccionado</p>
                 <h2 className="text-lg font-semibold">{diaSeleccionadoISO}</h2>
@@ -1126,7 +1273,7 @@ function CalendarioContent() {
                       className="rounded-2xl border border-zinc-200 bg-white/60 p-3 shadow-sm cursor-pointer transition hover:bg-white dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
                       style={eventStyle}
                     >
-                      <div className="flex items-center justify-between gap-3">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-medium">{ev.titulo}</p>
                           <p className="text-xs text-zinc-500 dark:text-zinc-400">
@@ -1252,7 +1399,22 @@ function CalendarioContent() {
             </div>
             <div className="mt-4">
               <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">Título</label>
-              <input value={nuevoTitulo} onChange={(e) => setNuevoTitulo(e.target.value)} placeholder="Ej: Reunión con equipo" className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10" />
+              <input
+                value={nuevoTitulo}
+                onChange={(e) => setNuevoTitulo(e.target.value)}
+                disabled={Boolean(nuevoProcesoId)}
+                placeholder={
+                  nuevoProcesoId
+                    ? "Se genera automaticamente: AUD INSOLVENCIA [Deudor]- [Acronimo]-[#]"
+                    : "Ej: Reunion con equipo"
+                }
+                className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-500 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10 dark:disabled:bg-white/5 dark:disabled:text-zinc-500"
+              />
+              {nuevoProcesoId && (
+                <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                  Para eventos vinculados a proceso, el titulo se genera automaticamente al guardar.
+                </p>
+              )}
             </div>
             <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
@@ -1261,7 +1423,17 @@ function CalendarioContent() {
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">Hora</label>
-                <input type="time" value={nuevaHora} onChange={(e) => setNuevaHora(e.target.value)} className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10" />
+                <select
+                  value={nuevaHora}
+                  onChange={(e) => setNuevaHora(e.target.value)}
+                  className="h-11 w-full cursor-pointer rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                >
+                  {businessSlots.map((slot) => (
+                    <option key={slot} value={slot}>
+                      {formatHoraLabel(slot)}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
             <div className="mt-3">
@@ -1278,9 +1450,9 @@ function CalendarioContent() {
                 {procesos.map((p) => (<option key={p.id} value={p.id}>{p.numero_proceso}{p.tipo_proceso ? ` - ${p.tipo_proceso}` : ""}</option>))}
               </select>
             </div>
-            <div className="mt-5 flex justify-end gap-3">
+            <div className="mt-5 flex flex-col-reverse justify-end gap-3 sm:flex-row">
               <button onClick={() => setModalAbierto(false)} disabled={guardando} className="h-11 rounded-2xl border border-zinc-200 bg-white px-5 text-sm font-medium shadow-sm transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10 disabled:opacity-40">Cancelar</button>
-              <button onClick={agregarEvento} disabled={!nuevoTitulo.trim() || !nuevaFecha || guardando} className="h-11 rounded-2xl bg-zinc-950 px-6 text-sm font-medium text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-white dark:text-black">
+              <button onClick={agregarEvento} disabled={(!nuevoProcesoId.trim() && !nuevoTitulo.trim()) || !nuevaFecha || guardando} className="h-11 rounded-2xl bg-zinc-950 px-6 text-sm font-medium text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-white dark:text-black">
                 {guardando ? "Guardando..." : "Guardar"}
               </button>
             </div>
@@ -1314,32 +1486,32 @@ function CalendarioContent() {
               </div>
 
               <div className="mt-4 space-y-3">
-                <div className="flex items-center gap-3 rounded-2xl border border-zinc-200 bg-zinc-50 p-3 dark:border-white/10 dark:bg-white/5">
+                <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-zinc-200 bg-zinc-50 p-3 dark:border-white/10 dark:bg-white/5">
                   <div className="text-xs text-zinc-500 dark:text-zinc-400">Fecha</div>
                   <div className="text-sm font-medium">{eventoSeleccionado.fechaISO}</div>
                 </div>
 
-                <div className="flex items-center gap-3 rounded-2xl border border-zinc-200 bg-zinc-50 p-3 dark:border-white/10 dark:bg-white/5">
+                <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-zinc-200 bg-zinc-50 p-3 dark:border-white/10 dark:bg-white/5">
                   <div className="text-xs text-zinc-500 dark:text-zinc-400">Hora</div>
                   <div className="text-sm font-medium">{eventoSeleccionado.hora || "Sin hora"}</div>
                 </div>
 
                 {getNombreUsuario(eventoSeleccionado.usuarioId) && (
-                  <div className="flex items-center gap-3 rounded-2xl border border-zinc-200 bg-zinc-50 p-3 dark:border-white/10 dark:bg-white/5">
+                  <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-zinc-200 bg-zinc-50 p-3 dark:border-white/10 dark:bg-white/5">
                     <div className="text-xs text-zinc-500 dark:text-zinc-400">Usuario</div>
                     <div className="text-sm font-medium">{getNombreUsuario(eventoSeleccionado.usuarioId)}</div>
                   </div>
                 )}
 
                 {getNumeroProceso(eventoSeleccionado.procesoId) && (
-                  <div className="flex items-center gap-3 rounded-2xl border border-zinc-200 bg-zinc-50 p-3 dark:border-white/10 dark:bg-white/5">
+                  <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-zinc-200 bg-zinc-50 p-3 dark:border-white/10 dark:bg-white/5">
                     <div className="text-xs text-zinc-500 dark:text-zinc-400">Proceso</div>
                     <div className="text-sm font-medium">{getNumeroProceso(eventoSeleccionado.procesoId)}</div>
                   </div>
                 )}
 
                 {eventoSeleccionado.procesoId && (
-                  <div className="flex items-center gap-3 rounded-2xl border border-zinc-200 bg-zinc-50 p-3 dark:border-white/10 dark:bg-white/5">
+                  <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-zinc-200 bg-zinc-50 p-3 dark:border-white/10 dark:bg-white/5">
                     <div className="text-xs text-zinc-500 dark:text-zinc-400">Estado</div>
                     <div className="text-sm font-medium">
                       {estadoProgreso === 'no_iniciado' && <span className="rounded-full bg-yellow-100 px-2 py-0.5 text-xs text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">No iniciado</span>}
@@ -1449,7 +1621,7 @@ function CalendarioContent() {
                   </div>
                 )}
 
-                <div className="flex gap-3">
+                <div className="flex flex-col gap-3 sm:flex-row">
                   <button
                     onClick={() => {
                       eliminarEvento(eventoSeleccionado.id);

@@ -1896,7 +1896,7 @@ function AttendanceContent() {
       {/* Gradient top */}
       <div className="pointer-events-none fixed inset-x-0 top-0 h-56 bg-gradient-to-b from-white/80 to-transparent dark:from-zinc-900/70" />
 
-      <main className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8">
+      <main className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8 xl:max-w-[90rem] 2xl:max-w-[110rem]">
         {mostrarModalTerminarAudiencia && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <button
@@ -1969,7 +1969,7 @@ function AttendanceContent() {
                 ))}
               </ul>
 
-              <div className="mt-5 flex justify-end">
+              <div className="mt-5 flex flex-wrap justify-end">
                 <button
                   type="button"
                   onClick={() => {
@@ -2091,7 +2091,7 @@ function AttendanceContent() {
         <section id="asistencia" className="scroll-mt-24 rounded-[30px] border border-zinc-200/90 bg-white/85 p-5 shadow-[0_18px_60px_-30px_rgba(15,23,42,0.35)] backdrop-blur dark:border-white/10 dark:bg-white/[0.04] sm:p-7">
           <form onSubmit={guardarAsistencia} className="space-y-6">
             {/* Top Controls */}
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <div className="sm:col-span-2">
                 <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
                   Título
@@ -2130,7 +2130,7 @@ function AttendanceContent() {
             </div>
 
             {/* Deudor & Ciudad */}
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <div className="sm:col-span-2">
                 <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
                   Nombre del Deudor
@@ -2169,7 +2169,7 @@ function AttendanceContent() {
             </div>
 
             {/* Próxima Audiencia */}
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <div>
                 <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
                   Próxima Fecha
@@ -2310,7 +2310,7 @@ function AttendanceContent() {
                   key={a.id}
                   className="rounded-2xl border border-zinc-200 bg-white/70 p-4 shadow-sm transition hover:shadow-md dark:border-white/10 dark:bg-white/5"
                 >
-                  <div className="mb-3 flex items-center justify-between">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200 bg-white text-sm font-medium text-zinc-700 dark:border-white/10 dark:bg-white/10 dark:text-zinc-200">
                         {index + 1}
@@ -2320,7 +2320,7 @@ function AttendanceContent() {
                       </p>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
                         onClick={() => toggleDatosAsistente(a.id)}
@@ -2462,7 +2462,7 @@ function AttendanceContent() {
                         Estado
                       </label>
 
-                      <div className="flex items-center justify-between rounded-2xl border border-zinc-200 bg-white px-4 py-2 dark:border-white/10 dark:bg-black/20">
+                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-zinc-200 bg-white px-4 py-2 dark:border-white/10 dark:bg-black/20">
                         <div>
                           <p className="text-sm font-medium">
                             {a.estado === "Presente" ? "Presente ✅" : "Ausente ❌"}
@@ -2529,7 +2529,7 @@ function AttendanceContent() {
                         {title}
                       </h4>
 
-                      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-4">
+                      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                         <div>
                           <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
                             Número de cuotas
@@ -2637,7 +2637,7 @@ function AttendanceContent() {
                   </p>
                 ) : (
                   <div className="mt-3 overflow-x-auto">
-                    <table className="w-full min-w-[860px] border-separate border-spacing-0 text-sm">
+                    <table className="w-full min-w-[720px] border-separate border-spacing-0 text-sm md:min-w-[860px]">
                       <thead>
                         <tr className="text-left text-xs uppercase tracking-[0.25em] text-zinc-400">
                           <th className="pb-3 pr-4">Acreedor</th>
@@ -2677,7 +2677,7 @@ function AttendanceContent() {
                                       [a.id]: e.target.value as VotoAcuerdo | "",
                                     }))
                                   }
-                                  className="h-10 w-full min-w-[220px] cursor-pointer rounded-2xl border border-zinc-200 bg-white px-3 text-sm font-medium shadow-sm dark:border-white/10 dark:bg-white/5 dark:text-white"
+                                  className="h-10 w-full min-w-[160px] cursor-pointer rounded-2xl border border-zinc-200 bg-white px-3 text-sm font-medium shadow-sm sm:min-w-[220px] dark:border-white/10 dark:bg-white/5 dark:text-white"
                                 >
                                   <option value="">Seleccionar...</option>
                                   <option value="POSITIVO">Voto positivo</option>
@@ -2880,7 +2880,7 @@ function AttendanceContent() {
                 </p>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   disabled={
@@ -2889,7 +2889,7 @@ function AttendanceContent() {
                     acreenciaGuardandoId !== null
                   }
                   onClick={() => acreenciaEditandoId && guardarEdicionAcreencia(acreenciaEditandoId)}
-                  className="inline-flex h-10 items-center rounded-2xl bg-zinc-950 px-4 text-sm font-medium text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-white dark:text-black"
+                  className="inline-flex h-10 w-full items-center justify-center rounded-2xl bg-zinc-950 px-4 text-sm font-medium text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto dark:bg-white dark:text-black"
                 >
                   Guardar
                 </button>
@@ -2898,7 +2898,7 @@ function AttendanceContent() {
                   type="button"
                   disabled={!acreenciaEditandoId || acreenciaGuardandoId !== null}
                   onClick={cancelarEdicionAcreencia}
-                  className="inline-flex h-10 items-center rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white"
+                  className="inline-flex h-10 w-full items-center justify-center rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white"
                 >
                   Cancelar
                 </button>
@@ -2919,7 +2919,7 @@ function AttendanceContent() {
 
             {acreencias.length > 0 && (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[980px] border-separate border-spacing-0 text-sm">
+                <table className="w-full min-w-[760px] border-separate border-spacing-0 text-sm md:min-w-[980px]">
                   <thead>
                     <tr className="text-left text-xs uppercase tracking-[0.25em] text-zinc-400">
                       <th className="pb-3 pr-4">Acreedor</th>
@@ -3192,7 +3192,7 @@ function AttendanceContent() {
                             )}
                           </td>
                           <td className="py-3 pr-0">
-                            <div className="flex justify-end gap-2">
+                            <div className="flex flex-wrap justify-end gap-2">
                               {editando ? (
                                 <>
                                   <button
@@ -3363,7 +3363,7 @@ function AttendanceContent() {
               </div>
             )}
 
-            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-4">
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <div className="sm:col-span-2">
                 <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
                   Título del evento

@@ -372,7 +372,7 @@ export default function PerfilPage() {
 
   if (loading) {
     return (
-      <div className="mx-auto w-full max-w-4xl px-5 py-10 sm:px-8">
+      <div className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8 xl:max-w-[90rem] 2xl:max-w-[110rem]">
         <p className="text-sm text-zinc-600 dark:text-zinc-300">Cargando perfil...</p>
       </div>
     );
@@ -380,7 +380,7 @@ export default function PerfilPage() {
 
   if (!user) {
     return (
-      <div className="mx-auto w-full max-w-4xl px-5 py-10 sm:px-8">
+      <div className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8 xl:max-w-[90rem] 2xl:max-w-[110rem]">
         <p className="text-sm text-zinc-600 dark:text-zinc-300">No hay sesion activa.</p>
       </div>
     );
@@ -390,7 +390,7 @@ export default function PerfilPage() {
     <div className="min-h-screen bg-zinc-50 text-zinc-950 dark:bg-black dark:text-zinc-50">
       <div className="pointer-events-none fixed inset-x-0 top-0 h-40 bg-gradient-to-b from-white/70 to-transparent dark:from-zinc-900/60" />
 
-      <main className="mx-auto w-full max-w-4xl px-5 py-10 sm:px-8">
+      <main className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8 xl:max-w-[90rem] 2xl:max-w-[110rem]">
         <header className="mb-8">
           <div className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/70 px-3 py-1 text-xs text-zinc-600 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
             <span className="h-2 w-2 rounded-full bg-zinc-950 dark:bg-zinc-50" />
@@ -406,7 +406,7 @@ export default function PerfilPage() {
 
         <section className="rounded-3xl border border-zinc-200 bg-white/80 p-5 shadow-[0_12px_40px_-20px_rgba(0,0,0,0.35)] backdrop-blur dark:border-white/10 dark:bg-white/5 sm:p-6">
           <form onSubmit={handleSave} className="space-y-6">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
               <div>
                 <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
                   Nombre
@@ -532,7 +532,7 @@ export default function PerfilPage() {
               <button
                 type="submit"
                 disabled={saving || !perfil}
-                className="h-11 rounded-2xl bg-zinc-950 px-6 text-sm font-medium text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-white dark:text-black"
+                className="h-11 w-full rounded-2xl bg-zinc-950 px-6 text-sm font-medium text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto dark:bg-white dark:text-black"
               >
                 {saving ? "Guardando..." : "Guardar perfil"}
               </button>

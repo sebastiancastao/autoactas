@@ -74,7 +74,7 @@ const quickTips = [
 
 export default function HomePage() {
   return (
-    <main className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8">
+    <main className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8 xl:max-w-7xl 2xl:max-w-[96rem]">
       <section className="rounded-3xl border border-zinc-200 bg-white/85 p-6 shadow-[0_12px_45px_-24px_rgba(15,23,42,0.35)] backdrop-blur dark:border-white/10 dark:bg-white/5 sm:p-8">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="max-w-3xl">
@@ -91,7 +91,7 @@ export default function HomePage() {
             </p>
           </div>
 
-          <div className="grid min-w-[220px] gap-2 rounded-2xl border border-zinc-200 bg-white/75 p-4 text-sm shadow-sm dark:border-white/10 dark:bg-white/5">
+          <div className="grid w-full gap-2 rounded-2xl border border-zinc-200 bg-white/75 p-4 text-sm shadow-sm sm:w-auto sm:min-w-[220px] dark:border-white/10 dark:bg-white/5">
             <p className="text-xs font-semibold uppercase tracking-[0.25em] text-zinc-500 dark:text-zinc-400">
               Atajos
             </p>

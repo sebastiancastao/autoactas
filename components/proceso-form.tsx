@@ -77,10 +77,8 @@ export default function ProcesoForm({
     setDescripcion,
     deudoresForm,
     actualizarDeudorRow,
-    eliminarDeudorRow,
-    selectedDeudorId,
-    setSelectedDeudorId,
     acreedoresForm,
+    agregarAcreedorRow,
     actualizarAcreedorRow,
     eliminarAcreedorRow,
     agregarObligacionRow,
@@ -152,7 +150,7 @@ export default function ProcesoForm({
         key={acreedor.id}
         className="rounded-2xl border border-zinc-200 bg-white/70 p-4 shadow-sm transition hover:shadow-md dark:border-white/10 dark:bg-white/5"
       >
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
             Acreedor {index + 1}
           </p>
@@ -248,7 +246,7 @@ export default function ProcesoForm({
             <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
               Apoderado
             </label>
-            <div className="flex gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row">
               <input
                 value={acreedor.apoderadoNombre}
                 onChange={(e) => handleRowApoderadoInput("acreedor", acreedor.id, e.target.value)}
@@ -271,7 +269,7 @@ export default function ProcesoForm({
         </div>
 
         <div className="mt-4 rounded-2xl border border-dashed border-zinc-200 bg-zinc-50/70 p-3 dark:border-white/10 dark:bg-white/10">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-zinc-500 dark:text-zinc-400">
               Obligaciones
             </p>
@@ -293,7 +291,7 @@ export default function ProcesoForm({
                   key={obligacion.id}
                   className="space-y-3 rounded-2xl border border-zinc-200 bg-white/70 p-3 shadow-[0_0_0_1px_rgba(0,0,0,0.05)] dark:border-white/5 dark:bg-black/10"
                 >
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">Obligación</p>
                     <button
                       type="button"
@@ -355,7 +353,7 @@ export default function ProcesoForm({
                       </select>
                     </div>
                   </div>
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
                     <div>
                       <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
                         Capital
@@ -639,38 +637,25 @@ export default function ProcesoForm({
           <div className="space-y-6">
             {shouldShowDeudoresSection && (
               <div className="rounded-2xl border border-zinc-200 bg-white/80 p-4 shadow-sm dark:border-white/10 dark:bg-white/5">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                  <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Deudores</p>
+                  <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Deudor</p>
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    Agrega los deudores que participan en este proceso.
+                    Agrega el deudor que participa en este proceso.
                   </p>
                   </div>
                 </div>
 
               <div className="space-y-4 mt-4">
-                {deudoresForm.map((deudor, index) => (
+                {deudoresForm.slice(0, 1).map((deudor) => (
                   <div
                     key={deudor.id}
                     className="rounded-2xl border border-zinc-200 bg-white/70 p-4 shadow-sm transition hover:shadow-md dark:border-white/10 dark:bg-white/5"
                   >
-                    <div className="mb-3 flex items-center justify-between">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                       <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
-                        Deudor {index + 1}
+                        Deudor
                       </p>
-                      <button
-                        type="button"
-                        onClick={() => eliminarDeudorRow(deudor.id)}
-                        disabled={deudoresForm.length === 1}
-                        className="rounded-full px-3 py-1 text-sm text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-white/10 dark:hover:text-white"
-                        title={
-                          deudoresForm.length === 1
-                            ? "Debe quedar al menos un deudor"
-                            : "Eliminar"
-                        }
-                      >
-                        Eliminar
-                      </button>
                     </div>
 
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -756,7 +741,7 @@ export default function ProcesoForm({
                         <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
                           Apoderado
                         </label>
-                        <div className="flex gap-2">
+                        <div className="flex flex-col gap-2 sm:flex-row">
                           <input
                             value={deudor.apoderadoNombre}
                             onChange={(e) =>
@@ -796,39 +781,24 @@ export default function ProcesoForm({
                   </div>
                 ))}
               </div>
-
-              {deudoresForm.length > 0 && (
-                <div className="mt-4 space-y-1">
-                  <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                    Deudor principal
-                  </label>
-                  <select
-                    value={selectedDeudorId}
-                    onChange={(e) => setSelectedDeudorId(e.target.value)}
-                    className="h-11 w-full cursor-pointer rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                  >
-                    {deudoresForm.map((deudor, index) => (
-                      <option key={deudor.id} value={deudor.id}>
-                        {deudor.nombre.trim() ? deudor.nombre : `Deudor ${index + 1}`}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                    Elige el deudor que figurará como principal en este proceso.
-                  </p>
-                </div>
-              )}
             </div>
           )}
             {shouldShowAcreedoresSection && (
               <div className="rounded-2xl border border-zinc-200 bg-white/80 p-4 shadow-sm dark:border-white/10 dark:bg-white/5">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                   <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Acreedores</p>
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
                     Añade los acreedores relacionados con el proceso.
                   </p>
                   </div>
+                  <button
+                    type="button"
+                    onClick={agregarAcreedorRow}
+                    className="h-9 rounded-full border border-zinc-200 bg-white px-3 text-xs font-semibold text-zinc-700 transition hover:border-zinc-900 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white"
+                  >
+                    + Acreedor
+                  </button>
                 </div>
 
               <div className="space-y-4 mt-4">
@@ -989,7 +959,7 @@ export default function ProcesoForm({
                 />
               </div>
             </div>
-            <div className="mt-5 flex justify-end gap-3">
+            <div className="mt-5 flex flex-col-reverse justify-end gap-3 sm:flex-row">
               <button
                 type="button"
                 onClick={cerrarModalApoderado}

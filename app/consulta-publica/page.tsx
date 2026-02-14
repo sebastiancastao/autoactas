@@ -104,7 +104,7 @@ export default async function ConsultaPublicaPage() {
         )}
 
         <section className="mt-8 space-y-4">
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <h2 className="text-xl font-semibold">Apoderados destacados</h2>
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
@@ -163,7 +163,7 @@ export default async function ConsultaPublicaPage() {
         </section>
 
         <section className="mt-10 space-y-4">
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <h2 className="text-xl font-semibold">Acreedores vinculados</h2>
               <p className="text-sm text-zinc-500 dark:text-zinc-400">

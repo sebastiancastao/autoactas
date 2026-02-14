@@ -247,8 +247,8 @@ function mapDeudoresToFormRows(deudores?: Deudor[], apoderados?: Apoderado[]): D
   }
 
   const apoderadoLookup = new Map(apoderados?.map((a) => [a.id, a.nombre]) ?? []);
-
-  return deudores.map((deudor) => ({
+  const deudor = deudores[0];
+  return [{
     id: uid(),
     dbId: deudor.id,
     nombre: deudor.nombre,
@@ -261,7 +261,7 @@ function mapDeudoresToFormRows(deudores?: Deudor[], apoderados?: Apoderado[]): D
     apoderadoNombre: deudor.apoderado_id
       ? apoderadoLookup.get(deudor.apoderado_id) ?? ""
       : "",
-  }));
+  }];
 }
 
 function mapAcreedoresToFormRows(
@@ -457,7 +457,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
 
   const agregarDeudorRow = () => {
     const nuevaFila = createDeudorRow();
-    setDeudoresForm((prev) => [...prev, nuevaFila]);
+    setDeudoresForm([nuevaFila]);
     setSelectedDeudorId(nuevaFila.id);
   };
 
@@ -466,7 +466,10 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
   };
 
   const eliminarDeudorRow = (id: string) => {
-    setDeudoresForm((prev) => prev.filter((fila) => fila.id !== id));
+    setDeudoresForm((prev) => {
+      const next = prev.filter((fila) => fila.id !== id);
+      return next.length > 0 ? [next[0]] : [createDeudorRow()];
+    });
   };
 
   const agregarAcreedorRow = () => {
@@ -640,12 +643,10 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
   };
 
   const syncDeudores = async (procesoId: string, isEditing: boolean) => {
-    const filasConNombre = deudoresForm.filter((fila) => fila.nombre.trim());
-    const paraCrear = filasConNombre.filter((fila) => !fila.dbId);
-    const paraActualizar = filasConNombre.filter((fila) => fila.dbId);
-    const idsActivos = new Set(paraActualizar.map((fila) => fila.dbId));
+    const filaConNombre = deudoresForm[0]?.nombre.trim() ? deudoresForm[0] : null;
+    const deudorActivoId = filaConNombre?.dbId ?? null;
     const idsParaEliminar = isEditing
-      ? originalDeudoresIds.filter((id) => !idsActivos.has(id))
+      ? originalDeudoresIds.filter((id) => id !== deudorActivoId)
       : [];
 
     const construirPayload = (fila: DeudorFormRow) => ({
@@ -659,10 +660,13 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
       email: fila.email.trim() || null,
     });
 
-    await Promise.all(paraCrear.map((fila) => createDeudor(construirPayload(fila))));
-    await Promise.all(
-      paraActualizar.map((fila) => updateDeudor(fila.dbId!, construirPayload(fila)))
-    );
+    if (filaConNombre) {
+      if (filaConNombre.dbId) {
+        await updateDeudor(filaConNombre.dbId, construirPayload(filaConNombre));
+      } else {
+        await createDeudor(construirPayload(filaConNombre));
+      }
+    }
     if (idsParaEliminar.length > 0) {
       await Promise.all(idsParaEliminar.map((id) => deleteDeudor(id)));
     }
