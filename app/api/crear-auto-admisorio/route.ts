@@ -2,14 +2,19 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import {
   Document,
+  Header,
   Packer,
   Paragraph,
   TextRun,
   AlignmentType,
   LevelFormat,
   ImageRun,
+  Tab,
+  TabStopType,
   convertInchesToTwip,
 } from "docx";
+import { promises as fs } from "fs";
+import path from "path";
 
 import { uploadDocxToGoogleDrive } from "@/lib/google-drive";
 import type { Database } from "@/lib/database.types";
@@ -42,6 +47,90 @@ function createSupabaseAdmin() {
   if (!url || !serviceKey) return null;
   return createClient<Database>(url, serviceKey, {
     auth: { persistSession: false, detectSessionInUrl: false },
+  });
+}
+
+async function loadFundaseerHeader(): Promise<Header | null> {
+  const leftPath = path.join(process.cwd(), "fundaseer.png");
+  const rightPath = path.join(process.cwd(), "ministeriodelderecho.png");
+
+  let leftLogo: Buffer | null = null;
+  let rightLogo: Buffer | null = null;
+
+  try {
+    leftLogo = await fs.readFile(leftPath);
+  } catch (error) {
+    console.warn(
+      "[crear-auto-admisorio] Unable to load header image fundaseer.png:",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+
+  try {
+    rightLogo = await fs.readFile(rightPath);
+  } catch (error) {
+    console.warn(
+      "[crear-auto-admisorio] Unable to load header image ministeriodelderecho.png:",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+
+  if (!leftLogo && !rightLogo) return null;
+
+  const leftSize = { width: 250, height: 184 };
+  const rightSize = { width: 210, height: 45 };
+
+  const leftLogoRun = leftLogo
+    ? new ImageRun({
+        type: "png",
+        data: leftLogo,
+        transformation: leftSize,
+      })
+    : null;
+
+  const rightLogoRun = rightLogo
+    ? new ImageRun({
+        type: "png",
+        data: rightLogo,
+        transformation: rightSize,
+      })
+    : null;
+
+  if (leftLogo && !rightLogo) {
+    return new Header({
+      children: [
+        new Paragraph({
+          alignment: AlignmentType.LEFT,
+          children: [leftLogoRun!],
+        }),
+      ],
+    });
+  }
+
+  if (!leftLogo && rightLogo) {
+    return new Header({
+      children: [
+        new Paragraph({
+          alignment: AlignmentType.RIGHT,
+          children: [rightLogoRun!],
+        }),
+      ],
+    });
+  }
+
+  return new Header({
+    children: [
+      new Paragraph({
+        indent: { left: convertInchesToTwip(0.85) },
+        tabStops: [
+          {
+            type: TabStopType.RIGHT,
+            position: convertInchesToTwip(8.35),
+          },
+        ],
+        children: [leftLogoRun!, new Tab(), rightLogoRun!],
+      }),
+    ],
   });
 }
 
@@ -364,6 +453,7 @@ export async function POST(req: Request) {
       operadorFirmaDataUrl = await loadUsuarioFirmaDataUrlByEmail(supabase, operador.email);
     }
     const operadorSignatureImage = decodeSignatureDataUrl(operadorFirmaDataUrl);
+    const docHeader = await loadFundaseerHeader();
 
     // --- Build document ---
     const doc = new Document({
@@ -416,9 +506,11 @@ export async function POST(req: Request) {
                 bottom: convertInchesToTwip(1),
                 left: convertInchesToTwip(1.18),
                 right: convertInchesToTwip(1.18),
+                header: convertInchesToTwip(0.2),
               },
             },
           },
+          headers: docHeader ? { default: docHeader } : undefined,
           children: [
             // --- HEADER ---
             centeredBold("AUTO DE ADMISIÓN", SIZE_14),
@@ -578,9 +670,23 @@ export async function POST(req: Request) {
                 new TextRun({ text: operador.nombre.toUpperCase(), bold: true, font: FONT, size: SIZE_11 }),
               ],
             }),
-            bodyParagraph(
-              `Conciliador Extrajudicial en Derecho y Operador en Insolvencias C. C. No. ${operador.identificacion}`
-            ),
+            new Paragraph({
+              alignment: AlignmentType.JUSTIFIED,
+              spacing: { after: 120 },
+              children: [
+                new TextRun({
+                  text: "Conciliador Extrajudicial en Derecho y Operador en Insolvencias",
+                  font: FONT,
+                  size: SIZE_11,
+                }),
+                new TextRun({
+                  text: `C. C. No. ${operador.identificacion}`,
+                  break: 1,
+                  font: FONT,
+                  size: SIZE_11,
+                }),
+              ],
+            }),
             bodyParagraph(
               `T. P. No. ${operador.tarjetaProfesional ?? ""}`
             ),

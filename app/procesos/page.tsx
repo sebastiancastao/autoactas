@@ -1543,6 +1543,8 @@ export default function ProcesosPage() {
                   const deudorSet = new Set(submission.deudorIds);
                   const acreedorSet = new Set(submission.acreedorIds);
                   const submittedAnyCount = apoderadosDelProceso.filter((ap) => deudorSet.has(ap.id) || acreedorSet.has(ap.id)).length;
+                  const hasApoderadosIncompletos =
+                    apoderadosDelProceso.length > 0 && submittedAnyCount < apoderadosDelProceso.length;
                   const autoState = autoAdmisorioStateByProcesoId[proceso.id] ?? { loading: false, error: null, result: null };
                   const excelUpload = excelUploadByProcesoId[proceso.id] ?? null;
 
@@ -1797,6 +1799,12 @@ export default function ProcesosPage() {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
+                              if (hasApoderadosIncompletos) {
+                                const continuar = window.confirm(
+                                  `Este proceso tiene apoderados sin registrar (${submittedAnyCount}/${apoderadosDelProceso.length}). ¿Deseas crear el auto admisorio de todas formas?`,
+                                );
+                                if (!continuar) return;
+                              }
                               void crearAutoAdmisorioDesdeProceso(proceso);
                             }}
                             disabled={autoState.loading}
@@ -1812,7 +1820,7 @@ export default function ProcesosPage() {
                             }}
                             className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800 transition hover:border-emerald-500 hover:bg-emerald-100 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200 dark:hover:border-emerald-700 dark:hover:bg-emerald-950/60"
                           >
-                            {excelUpload ? "Reemplazar Excel" : "Subir Excel"}
+                            {excelUpload ? "Reemplazar Excel" : "Subir Proyección de Pagos"}
                           </button>
 
                           <button
@@ -1864,7 +1872,7 @@ export default function ProcesosPage() {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
-                    Subir Excel
+                    Subir Proyección de Pagos
                   </h3>
                   <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
                     Proceso: {excelUploadModal.procesoNumero}
@@ -1919,7 +1927,7 @@ export default function ProcesosPage() {
                     disabled={!excelFile || excelUploadLoading}
                     className="h-10 rounded-xl bg-emerald-600 px-4 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-emerald-400 dark:text-black dark:hover:bg-emerald-300"
                   >
-                    {excelUploadLoading ? "Subiendo..." : "Subir Excel"}
+                    {excelUploadLoading ? "Subiendo..." : "Subir Proyección de Pagos"}
                   </button>
                 </div>
               </div>
