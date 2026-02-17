@@ -35,6 +35,7 @@ async function uploadBufferToGoogleDrive(params: {
   mimeType: string;
   folderId?: string | null;
   shareWithEmails?: string[] | null;
+  convertToGoogleDocs?: boolean;
 }) {
   const clientEmail = getEnv("GOOGLE_DRIVE_CLIENT_EMAIL");
   const privateKey = parsePrivateKey(getEnv("GOOGLE_DRIVE_PRIVATE_KEY"));
@@ -54,7 +55,7 @@ async function uploadBufferToGoogleDrive(params: {
 
   const metadata: Record<string, unknown> = {
     name: params.filename,
-    mimeType: params.mimeType,
+    mimeType: params.convertToGoogleDocs ? "application/vnd.google-apps.document" : params.mimeType,
   };
   if (folderId) metadata.parents = [folderId];
 
@@ -158,7 +159,36 @@ export async function uploadDocxToGoogleDrive(params: {
   return uploadBufferToGoogleDrive({
     ...params,
     mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    convertToGoogleDocs: true,
   });
+}
+
+export async function exportFileAsPdf(fileId: string): Promise<Buffer> {
+  const clientEmail = getEnv("GOOGLE_DRIVE_CLIENT_EMAIL");
+  const privateKey = parsePrivateKey(getEnv("GOOGLE_DRIVE_PRIVATE_KEY"));
+
+  const jwtClient = new JWT({
+    email: clientEmail,
+    key: privateKey,
+    scopes: ["https://www.googleapis.com/auth/drive"],
+  });
+
+  const auth = await jwtClient.authorize();
+  const accessToken = auth?.access_token ?? jwtClient.credentials.access_token ?? null;
+  if (!accessToken) throw new Error("Failed to obtain Google access token.");
+
+  const exportUrl = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=application/pdf`;
+  const res = await fetch(exportUrl, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Google Drive PDF export failed (${res.status}): ${text || res.statusText}`);
+  }
+
+  const arrayBuffer = await res.arrayBuffer();
+  return Buffer.from(arrayBuffer);
 }
 
 export async function uploadFileToGoogleDrive(params: {

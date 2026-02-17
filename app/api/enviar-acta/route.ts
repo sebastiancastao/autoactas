@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { Resend } from "resend";
+import { exportFileAsPdf } from "@/lib/google-drive";
 
 export const runtime = "nodejs";
 
@@ -9,6 +10,8 @@ type EnviarActaPayload = {
   titulo: string;
   fecha: string;
   webViewLink: string;
+  fileId?: string;
+  fileName?: string;
 };
 
 function toErrorMessage(e: unknown) {
@@ -28,6 +31,8 @@ async function sendApoderadoEmails(params: {
   titulo: string;
   fecha: string;
   webViewLink: string;
+  fileId?: string;
+  fileName?: string;
 }) {
   const apiKey = process.env.RESEND_API_KEY?.trim();
   if (!apiKey) {
@@ -45,6 +50,20 @@ async function sendApoderadoEmails(params: {
   const errors: string[] = [];
   let sent = 0;
 
+  // Export the Google Drive file as PDF if fileId is provided
+  let pdfBuffer: Buffer | null = null;
+  let pdfFilename = "documento.pdf";
+  if (params.fileId) {
+    try {
+      pdfBuffer = await exportFileAsPdf(params.fileId);
+      pdfFilename = (params.fileName ?? "documento").replace(/\.docx$/i, "") + ".pdf";
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("Failed to export PDF from Google Drive:", msg);
+      errors.push(`PDF export: ${msg}`);
+    }
+  }
+
   const subject = `Acta de Audiencia - ${params.numeroProceso} - ${params.fecha}`;
   const html = `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -56,12 +75,13 @@ async function sendApoderadoEmails(params: {
         <strong>Titulo:</strong> ${params.titulo}<br/>
         <strong>Fecha:</strong> ${params.fecha}
       </p>
+      ${pdfBuffer ? `<p style="color: #3f3f46; line-height: 1.6;">El documento se encuentra adjunto en formato PDF.</p>` : `
       <p style="margin: 24px 0;">
         <a href="${params.webViewLink}"
            style="display: inline-block; background-color: #18181b; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: 500;">
           Ver documento en Google Drive
         </a>
-      </p>
+      </p>`}
       <p style="color: #71717a; font-size: 14px; margin-top: 32px;">
         Este correo fue enviado automaticamente por AutoActas.
       </p>
@@ -75,6 +95,16 @@ async function sendApoderadoEmails(params: {
         to: email,
         subject,
         html,
+        ...(pdfBuffer
+          ? {
+              attachments: [
+                {
+                  filename: pdfFilename,
+                  content: pdfBuffer,
+                },
+              ],
+            }
+          : {}),
       });
       sent++;
     } catch (e) {
@@ -114,6 +144,8 @@ export async function POST(req: Request) {
       titulo: payload.titulo || "Audiencia",
       fecha: payload.fecha || new Date().toLocaleDateString("es-CO"),
       webViewLink: payload.webViewLink,
+      fileId: payload.fileId,
+      fileName: payload.fileName,
     });
 
     return NextResponse.json({

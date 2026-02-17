@@ -775,6 +775,8 @@ export default function ProcesosPage() {
           titulo: "Auto de Admisión",
           fecha: new Date().toISOString().slice(0, 10),
           webViewLink: state.result.webViewLink,
+          fileId: state.result.fileId,
+          fileName: state.result.fileName,
         }),
       });
 

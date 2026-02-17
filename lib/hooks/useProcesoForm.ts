@@ -1,6 +1,6 @@
 "use client";
 
-import { Dispatch, FormEvent, SetStateAction, useCallback, useEffect, useState } from "react";
+import { Dispatch, FormEvent, SetStateAction, useCallback, useEffect, useId, useState } from "react";
 import { createAcreedor, deleteAcreedor, updateAcreedor } from "@/lib/api/acreedores";
 import {
   deleteAcreenciasByAcreedorIds,
@@ -19,6 +19,7 @@ import {
   isNitIdentification,
   NIT_REQUIRED_DIGITS,
 } from "@/lib/utils/identificacion";
+import { isValidEmail, isValidPhone, isValidName } from "@/lib/utils/validation";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
 import type {
@@ -91,9 +92,9 @@ function uid() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
-function createDeudorRow(): DeudorFormRow {
+function createDeudorRow(id: string = uid()): DeudorFormRow {
   return {
-    id: uid(),
+    id,
     nombre: "",
     identificacion: "",
     tipoIdentificacion: "",
@@ -105,9 +106,9 @@ function createDeudorRow(): DeudorFormRow {
   };
 }
 
-function createObligacionRow(): ObligacionFormRow {
+function createObligacionRow(id: string = uid()): ObligacionFormRow {
   return {
-    id: uid(),
+    id,
     descripcion: "",
     naturaleza: "",
     prelacion: "",
@@ -118,9 +119,9 @@ function createObligacionRow(): ObligacionFormRow {
   };
 }
 
-function createAcreedorRow(): AcreedorFormRow {
+function createAcreedorRow(id: string = uid()): AcreedorFormRow {
   return {
-    id: uid(),
+    id,
     nombre: "",
     identificacion: "",
     tipoIdentificacion: "",
@@ -174,6 +175,19 @@ function createApoderadoForm(): ApoderadoForm {
     direccion: "",
     tarjetaProfesional: "",
   };
+}
+
+function focusFirstInvalidField(errors: Record<string, string>) {
+  if (typeof document === "undefined") return;
+
+  const firstInvalidField = Object.keys(errors)
+    .map((key) => document.querySelector(`[data-field-id="${key}"]`))
+    .find((node): node is HTMLElement => node instanceof HTMLElement);
+
+  if (!firstInvalidField) return;
+
+  firstInvalidField.scrollIntoView({ behavior: "smooth", block: "center" });
+  firstInvalidField.focus({ preventScroll: true });
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -397,6 +411,7 @@ export type ProcesoFormContext = {
   exito: string | null;
   editingProcesoId: string | null;
   cargandoApoderados: boolean;
+  fieldErrors: Record<string, string>;
   handleSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   resetFormFields: () => void;
   cargarProcesoDetalle: (procesoId: string) => Promise<void>;
@@ -409,6 +424,10 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
     focusedMode,
     updateProgresoOnSubmit = true,
   } = options ?? {};
+
+  const formInstancePrefix = useId().replace(/:/g, "");
+  const initialDeudorRowId = `${formInstancePrefix}-deudor-0`;
+  const initialAcreedorRowId = `${formInstancePrefix}-acreedor-0`;
 
   const [numeroProceso, setNumeroProceso] = useState("");
   const [fechaprocesos, setFechaprocesos] = useState(() => new Date().toISOString().split("T")[0]);
@@ -426,12 +445,13 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
   const [cargandoDetalle, setCargandoDetalle] = useState(false);
   const [originalDeudoresIds, setOriginalDeudoresIds] = useState<string[]>([]);
   const [originalAcreedoresIds, setOriginalAcreedoresIds] = useState<string[]>([]);
-  const [deudoresForm, setDeudoresForm] = useState<DeudorFormRow[]>(() => [createDeudorRow()]);
-  const [selectedDeudorId, setSelectedDeudorId] = useState<string>(() => deudoresForm[0]?.id ?? "");
-  const [acreedoresForm, setAcreedoresForm] = useState<AcreedorFormRow[]>(() => [createAcreedorRow()]);
-  const [selectedAcreedorId, setSelectedAcreedorId] = useState<string>(() => acreedoresForm[0]?.id ?? "");
+  const [deudoresForm, setDeudoresForm] = useState<DeudorFormRow[]>(() => [createDeudorRow(initialDeudorRowId)]);
+  const [selectedDeudorId, setSelectedDeudorId] = useState<string>(() => initialDeudorRowId);
+  const [acreedoresForm, setAcreedoresForm] = useState<AcreedorFormRow[]>(() => [createAcreedorRow(initialAcreedorRowId)]);
+  const [selectedAcreedorId, setSelectedAcreedorId] = useState<string>(() => initialAcreedorRowId);
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [exito, setExito] = useState<string | null>(null);
   const { user } = useAuth();
 
@@ -592,7 +612,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
       try {
         const detalle = await getProcesoWithRelations(procesoIdSafe);
         if (!detalle) {
-          setError("No se encontró el proceso");
+          setError("No se encontrÃ³ el proceso");
           return;
         }
         const procesoApoderados = detalle.apoderados ?? [];
@@ -620,7 +640,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
         console.warn("Error loading proceso:", formatErrorForLog(err));
         setError(
           isNotFoundError
-            ? "No se encontró el proceso seleccionado."
+            ? "No se encontrÃ³ el proceso seleccionado."
             : `Error al cargar el proceso seleccionado: ${errorMessage}`,
         );
       } finally {
@@ -797,6 +817,22 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
     if (!apoderadoForm.nombre.trim() || apoderadoGuardando) return;
     if (!apoderadoModalTarget) return;
 
+    const apErrors: Record<string, string> = {};
+    if (!isValidName(apoderadoForm.nombre)) {
+      apErrors["apoderado-nombre"] = "Solo letras y espacios. Ej: Carlos MartÃ­nez";
+    }
+    if (apoderadoForm.email.trim() && !isValidEmail(apoderadoForm.email)) {
+      apErrors["apoderado-email"] = "Email no vÃ¡lido. Ej: apoderado@correo.com";
+    }
+    if (apoderadoForm.telefono.trim() && !isValidPhone(apoderadoForm.telefono)) {
+      apErrors["apoderado-telefono"] = "Solo nÃºmeros, entre 7 y 10 dÃ­gitos. Ej: 3001234567";
+    }
+    setFieldErrors(apErrors);
+    if (Object.keys(apErrors).length > 0) {
+      setTimeout(() => focusFirstInvalidField(apErrors), 50);
+      return;
+    }
+
     try {
       setApoderadoGuardando(true);
       const created = await createApoderado({
@@ -838,24 +874,59 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
     event.preventDefault();
     setError(null);
     setExito(null);
+    setFieldErrors({});
 
     if (!numeroProceso.trim() && !editingProcesoId) {
-      setError("El número de proceso es requerido");
+      setError("El numero de proceso es requerido");
       return;
     }
 
-    const invalidNitAcreedor = acreedoresForm.find((fila) => {
-      if (!isNitIdentification(fila.tipoIdentificacion)) {
-        return false;
-      }
-      return getDigitCount(fila.identificacion) !== NIT_REQUIRED_DIGITS;
-    });
+    const errors: Record<string, string> = {};
+    const shouldValidateDeudores = focusedMode !== "acreedores";
+    const shouldValidateAcreedores = focusedMode !== "deudores";
 
-    if (invalidNitAcreedor) {
-      const displayName = invalidNitAcreedor.nombre.trim() || "sin nombre";
-      setError(
-        `El NIT del acreedor ${displayName} debe contener exactamente ${NIT_REQUIRED_DIGITS} dígitos numéricos.`,
-      );
+    if (shouldValidateDeudores) {
+      for (const deudor of deudoresForm) {
+        if (deudor.nombre.trim() && !isValidName(deudor.nombre)) {
+          errors[`deudor-${deudor.id}-nombre`] = "Solo letras y espacios. Ej: Juan Perez";
+        }
+        if (deudor.email.trim() && !isValidEmail(deudor.email)) {
+          errors[`deudor-${deudor.id}-email`] = "Email no valido. Ej: usuario@correo.com";
+        }
+        if (deudor.telefono.trim() && !isValidPhone(deudor.telefono)) {
+          errors[`deudor-${deudor.id}-telefono`] =
+            "Solo numeros, entre 7 y 10 digitos. Ej: 3001234567";
+        }
+      }
+    }
+
+    if (shouldValidateAcreedores) {
+      for (const acreedor of acreedoresForm) {
+        if (
+          isNitIdentification(acreedor.tipoIdentificacion) &&
+          getDigitCount(acreedor.identificacion) !== NIT_REQUIRED_DIGITS
+        ) {
+          errors[`acreedor-${acreedor.id}-identificacion`] =
+            `El NIT debe contener exactamente ${NIT_REQUIRED_DIGITS} digitos numericos. Ej: 900123456`;
+        }
+        if (acreedor.nombre.trim() && !isValidName(acreedor.nombre)) {
+          errors[`acreedor-${acreedor.id}-nombre`] = "Solo letras y espacios. Ej: Maria Lopez";
+        }
+        if (acreedor.email.trim() && !isValidEmail(acreedor.email)) {
+          errors[`acreedor-${acreedor.id}-email`] = "Email no valido. Ej: usuario@correo.com";
+        }
+        if (acreedor.telefono.trim() && !isValidPhone(acreedor.telefono)) {
+          errors[`acreedor-${acreedor.id}-telefono`] =
+            "Solo numeros, entre 7 y 10 digitos. Ej: 3001234567";
+        }
+      }
+    }
+
+    setFieldErrors(errors);
+
+    if (Object.keys(errors).length > 0) {
+      setError("Algunos campos tienen errores. Por favor revisa los campos marcados en rojo.");
+      setTimeout(() => focusFirstInvalidField(errors), 50);
       return;
     }
 
@@ -1014,9 +1085,11 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
     error,
     exito,
     editingProcesoId,
+    fieldErrors,
     cargandoApoderados,
     handleSubmit,
     resetFormFields,
     cargarProcesoDetalle,
   };
 }
+

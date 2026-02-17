@@ -345,6 +345,8 @@ export default function InicializacionPage() {
           titulo: "Auto de Admision",
           fecha: new Date().toISOString().slice(0, 10),
           webViewLink,
+          fileId: state.result?.fileId,
+          fileName: state.result?.fileName,
         }),
       });
 

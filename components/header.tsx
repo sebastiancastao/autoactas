@@ -92,6 +92,7 @@ export function Header() {
   })
 
   const activeLabel = useMemo(() => getContextLabel(pathname), [pathname])
+  const isRegistroRoute = pathname.startsWith('/registro')
 
   const handleSignOut = async () => {
     await signOut()
@@ -269,7 +270,7 @@ export function Header() {
     }
   }, [listaPickerOpen, updateListaPickerPosition])
 
-  if (!user) return null
+  if (!user || isRegistroRoute) return null
 
   return (
     <header className="sticky top-0 z-40 border-b border-zinc-200/80 bg-white/85 backdrop-blur-xl dark:border-white/10 dark:bg-black/80">

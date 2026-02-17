@@ -209,6 +209,7 @@ function CalendarioContent() {
   const [nuevaHora, setNuevaHora] = useState("09:00");
   const [nuevoUsuarioId, setNuevoUsuarioId] = useState<string>("");
   const [nuevoProcesoId, setNuevoProcesoId] = useState<string>("");
+  const [tituloEditable, setTituloEditable] = useState(false);
   const [eventoSeleccionado, setEventoSeleccionado] = useState<EventoCalendario | null>(null);
 
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
@@ -533,6 +534,7 @@ function CalendarioContent() {
     setNuevaHora("09:00");
     setNuevoUsuarioId("");
     setNuevoProcesoId(procesoId ?? "");
+    setTituloEditable(false);
     setModalAbierto(true);
   }
 
@@ -822,6 +824,8 @@ function CalendarioContent() {
           titulo: "Auto de Admision",
           fecha: new Date().toISOString().slice(0, 10),
           webViewLink: state.result.webViewLink,
+          fileId: state.result.fileId,
+          fileName: state.result.fileName,
         }),
       });
 
@@ -1397,26 +1401,7 @@ function CalendarioContent() {
               </div>
               <button className="rounded-full px-3 py-1 text-sm text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-white/10 dark:hover:text-white" onClick={() => setModalAbierto(false)}>Cerrar</button>
             </div>
-            <div className="mt-4">
-              <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">Título</label>
-              <input
-                value={nuevoTitulo}
-                onChange={(e) => setNuevoTitulo(e.target.value)}
-                disabled={Boolean(nuevoProcesoId)}
-                placeholder={
-                  nuevoProcesoId
-                    ? "Se genera automaticamente: AUD INSOLVENCIA [Deudor]- [Acronimo]-[#]"
-                    : "Ej: Reunion con equipo"
-                }
-                className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-500 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10 dark:disabled:bg-white/5 dark:disabled:text-zinc-500"
-              />
-              {nuevoProcesoId && (
-                <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-                  Para eventos vinculados a proceso, el titulo se genera automaticamente al guardar.
-                </p>
-              )}
-            </div>
-            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">Fecha</label>
                 <input type="date" value={nuevaFecha} onChange={(e) => setNuevaFecha(e.target.value)} className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10" />
@@ -1437,9 +1422,9 @@ function CalendarioContent() {
               </div>
             </div>
             <div className="mt-3">
-              <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">Asignar a usuario (opcional)</label>
+              <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">Asignar a usuario</label>
               <select value={nuevoUsuarioId} onChange={(e) => setNuevoUsuarioId(e.target.value)} className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10 cursor-pointer">
-                <option value="">Sin asignar</option>
+                <option value="">Seleccionar usuario</option>
                 {usuarios.map((u) => (<option key={u.id} value={u.id}>{u.nombre}</option>))}
               </select>
             </div>
@@ -1450,9 +1435,40 @@ function CalendarioContent() {
                 {procesos.map((p) => (<option key={p.id} value={p.id}>{p.numero_proceso}{p.tipo_proceso ? ` - ${p.tipo_proceso}` : ""}</option>))}
               </select>
             </div>
+            <div className="mt-3">
+              <div className="mb-1 flex items-center justify-between">
+                <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-300">Título</label>
+                {!nuevoProcesoId && (
+                  <button
+                    type="button"
+                    onClick={() => setTituloEditable(!tituloEditable)}
+                    className="flex items-center gap-1 rounded-lg px-2 py-0.5 text-[11px] font-medium text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-white/10 dark:hover:text-white"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+                    {tituloEditable ? "Bloquear" : "Editar"}
+                  </button>
+                )}
+              </div>
+              <input
+                value={nuevoTitulo}
+                onChange={(e) => setNuevoTitulo(e.target.value)}
+                disabled={Boolean(nuevoProcesoId) || !tituloEditable}
+                placeholder={
+                  nuevoProcesoId
+                    ? "Se genera automaticamente: AUD INSOLVENCIA [Deudor]- [Acronimo]-[#]"
+                    : "Ej: Reunion con equipo"
+                }
+                className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-500 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10 dark:disabled:bg-white/5 dark:disabled:text-zinc-500"
+              />
+              {nuevoProcesoId && (
+                <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                  Para eventos vinculados a proceso, el titulo se genera automaticamente al guardar.
+                </p>
+              )}
+            </div>
             <div className="mt-5 flex flex-col-reverse justify-end gap-3 sm:flex-row">
               <button onClick={() => setModalAbierto(false)} disabled={guardando} className="h-11 rounded-2xl border border-zinc-200 bg-white px-5 text-sm font-medium shadow-sm transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10 disabled:opacity-40">Cancelar</button>
-              <button onClick={agregarEvento} disabled={(!nuevoProcesoId.trim() && !nuevoTitulo.trim()) || !nuevaFecha || guardando} className="h-11 rounded-2xl bg-zinc-950 px-6 text-sm font-medium text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-white dark:text-black">
+              <button onClick={agregarEvento} disabled={(!nuevoProcesoId.trim() && !nuevoTitulo.trim()) || !nuevaFecha || !nuevoUsuarioId || guardando} className="h-11 rounded-2xl bg-zinc-950 px-6 text-sm font-medium text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-white dark:text-black">
                 {guardando ? "Guardando..." : "Guardar"}
               </button>
             </div>
@@ -1463,16 +1479,7 @@ function CalendarioContent() {
       {eventoSeleccionado && (() => {
         const action = getProgresoActionUrl(eventoSeleccionado.procesoId, eventoSeleccionado.id);
         const estadoProgreso = getProgresoEstado(eventoSeleccionado.procesoId);
-        const iniciandoProceso = eventoSeleccionado.procesoId
-          ? Boolean(iniciandoProcesoById[eventoSeleccionado.procesoId])
-          : false;
-        const iniciarProcesoError = eventoSeleccionado.procesoId
-          ? iniciarProcesoErrorById[eventoSeleccionado.procesoId]
-          : null;
         const autoState = getAutoAdmisorioState(eventoSeleccionado.procesoId);
-        const canCrearAutoAdmisorio =
-          estadoProgreso === "no_iniciado" &&
-          tieneApoderadosRegistrados(eventoSeleccionado.procesoId);
         return (
           <div className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center">
             <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={cerrarDetalleEvento} />
@@ -1524,7 +1531,7 @@ function CalendarioContent() {
               </div>
 
               <div className="mt-5 flex flex-col gap-3">
-                {canCrearAutoAdmisorio && eventoSeleccionado.procesoId && (
+                {action?.requiereIniciar && eventoSeleccionado.procesoId && (
                   <button
                     type="button"
                     onClick={() => void crearAutoAdmisorioDesdeCalendario(eventoSeleccionado.procesoId)}
@@ -1535,39 +1542,23 @@ function CalendarioContent() {
                   </button>
                 )}
 
-                {action && (
-                  action.requiereIniciar ? (
-                    <button
-                      type="button"
-                      onClick={() => void iniciarProcesoYIrLista(eventoSeleccionado.procesoId, action.url)}
-                      disabled={iniciandoProceso}
-                      className="flex h-11 w-full items-center justify-center rounded-2xl bg-zinc-950 text-sm font-medium text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-black"
-                    >
-                      {iniciandoProceso ? "Iniciando..." : action.label}
-                    </button>
-                  ) : (
-                    <Link
-                      href={action.url}
-                      className="flex h-11 w-full items-center justify-center rounded-2xl bg-zinc-950 text-sm font-medium text-white shadow-sm transition hover:opacity-90 dark:bg-white dark:text-black"
-                      onClick={cerrarDetalleEvento}
-                    >
-                      {action.label}
-                    </Link>
-                  )
-                )}
-                {action?.requiereIniciar && iniciarProcesoError && (
-                  <div className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
-                    {iniciarProcesoError}
-                  </div>
+                {action && !action.requiereIniciar && (
+                  <Link
+                    href={action.url}
+                    className="flex h-11 w-full items-center justify-center rounded-2xl bg-zinc-950 text-sm font-medium text-white shadow-sm transition hover:opacity-90 dark:bg-white dark:text-black"
+                    onClick={cerrarDetalleEvento}
+                  >
+                    {action.label}
+                  </Link>
                 )}
 
-                {canCrearAutoAdmisorio && autoState?.error && (
+                {action?.requiereIniciar && autoState?.error && (
                   <div className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
                     {autoState.error}
                   </div>
                 )}
 
-                {canCrearAutoAdmisorio && autoState?.result?.webViewLink && (
+                {action?.requiereIniciar && autoState?.result?.webViewLink && (
                   <a
                     href={autoState.result.webViewLink}
                     target="_blank"
@@ -1578,7 +1569,7 @@ function CalendarioContent() {
                   </a>
                 )}
 
-                {canCrearAutoAdmisorio &&
+                {action?.requiereIniciar &&
                   autoState?.result?.apoderadoEmails &&
                   autoState.result.apoderadoEmails.length > 0 && (
                     <button
@@ -1595,7 +1586,7 @@ function CalendarioContent() {
                     </button>
                   )}
 
-                {canCrearAutoAdmisorio &&
+                {action?.requiereIniciar &&
                   autoState?.result?.apoderadoEmails &&
                   autoState.result.apoderadoEmails.length === 0 && (
                     <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
@@ -1603,13 +1594,13 @@ function CalendarioContent() {
                     </div>
                   )}
 
-                {canCrearAutoAdmisorio && autoState?.emailError && (
+                {action?.requiereIniciar && autoState?.emailError && (
                   <div className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
                     {autoState.emailError}
                   </div>
                 )}
 
-                {canCrearAutoAdmisorio && autoState?.emailResult && (
+                {action?.requiereIniciar && autoState?.emailResult && (
                   <div className="rounded-2xl border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-700 dark:border-green-900 dark:bg-green-950/40 dark:text-green-300">
                     Correos enviados: {autoState.emailResult.sent}
                     {autoState.emailResult.errors && autoState.emailResult.errors.length > 0 && (

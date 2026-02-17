@@ -7,6 +7,13 @@ import {
 } from "@/lib/utils/identificacion";
 import type { ProcesoFormContext } from "@/lib/hooks/useProcesoForm";
 
+const inputBase =
+  "h-11 w-full rounded-2xl bg-white px-3 text-sm outline-none transition focus:ring-4 dark:bg-black/20";
+const inputValid =
+  "border border-zinc-200 focus:border-zinc-950/30 focus:ring-zinc-950/10 dark:border-white/10 dark:focus:border-white/20 dark:focus:ring-white/10";
+const inputError =
+  "border-2 border-red-500 focus:border-red-500 focus:ring-red-100 dark:border-red-500 dark:focus:border-red-400 dark:focus:ring-red-200";
+
 type FocusSection = "deudores" | "acreedores";
 
 type ProcesoFormProps = {
@@ -97,9 +104,13 @@ export default function ProcesoForm({
     handleRowApoderadoInput,
     cargandoDetalle,
     editingProcesoId,
+    fieldErrors,
     handleSubmit,
     resetFormFields,
   } = form;
+
+  const fieldClass = (key: string) =>
+    `${inputBase} ${fieldErrors[key] ? inputError : inputValid}`;
 
   const focusSectionNormalized =
     focusSection === "acreedores"
@@ -132,15 +143,6 @@ export default function ProcesoForm({
     const highlightNitError =
       usesNit && nitDigitCount > 0 && nitDigitCount !== NIT_REQUIRED_DIGITS;
     const showNitHint = usesNit && nitDigitCount !== NIT_REQUIRED_DIGITS;
-    const identificacionInputBase =
-      "h-11 w-full rounded-2xl bg-white px-3 text-sm outline-none transition focus:ring-4 dark:bg-black/20";
-    const identificacionValidBorders =
-      "border border-zinc-200 focus:border-zinc-950/30 focus:ring-zinc-950/10 dark:border-white/10 dark:focus:border-white/20 dark:focus:ring-white/10";
-    const identificacionErrorBorders =
-      "border border-red-500 focus:border-red-500 focus:ring-red-100 dark:border-red-500 dark:focus:border-red-400 dark:focus:ring-red-200";
-    const identificacionInputClassName = `${identificacionInputBase} ${
-      highlightNitError ? identificacionErrorBorders : identificacionValidBorders
-    }`;
     const nitHintColorClass =
       nitDigitCount > 0 ? "text-red-600 dark:text-red-300" : "text-zinc-500 dark:text-zinc-400";
     const nitHintText = `El NIT debe contener exactamente ${NIT_REQUIRED_DIGITS} dígitos numéricos.`;
@@ -173,13 +175,14 @@ export default function ProcesoForm({
               Nombre
             </label>
             <input
+              data-field-id={`acreedor-${acreedor.id}-nombre`}
               value={acreedor.nombre}
               onChange={(e) => actualizarAcreedorRow(acreedor.id, { nombre: e.target.value })}
               placeholder="Ej: Banco ABC"
-              className={identificacionInputClassName}
+              className={fieldClass(`acreedor-${acreedor.id}-nombre`)}
             />
-            {showNitHint && (
-              <p className={`mt-1 text-xs ${nitHintColorClass}`}>{nitHintText}</p>
+            {fieldErrors[`acreedor-${acreedor.id}-nombre`] && (
+              <p className="mt-1 text-xs text-red-600 dark:text-red-400">{fieldErrors[`acreedor-${acreedor.id}-nombre`]}</p>
             )}
           </div>
 
@@ -188,12 +191,16 @@ export default function ProcesoForm({
               Teléfono
             </label>
             <input
+              data-field-id={`acreedor-${acreedor.id}-telefono`}
               value={acreedor.telefono}
               onChange={(e) => actualizarAcreedorRow(acreedor.id, { telefono: e.target.value })}
-              placeholder="Ej: +57 300 000 0000"
+              placeholder="Ej: 3001234567"
               inputMode="tel"
-              className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+              className={fieldClass(`acreedor-${acreedor.id}-telefono`)}
             />
+            {fieldErrors[`acreedor-${acreedor.id}-telefono`] && (
+              <p className="mt-1 text-xs text-red-600 dark:text-red-400">{fieldErrors[`acreedor-${acreedor.id}-telefono`]}</p>
+            )}
           </div>
 
           <div>
@@ -220,13 +227,24 @@ export default function ProcesoForm({
               Identificación
             </label>
             <input
+              data-field-id={`acreedor-${acreedor.id}-identificacion`}
               value={acreedor.identificacion}
               onChange={(e) =>
                 actualizarAcreedorRow(acreedor.id, { identificacion: e.target.value })
               }
               placeholder="Ej: 9.876.543.210"
-              className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+              className={
+                fieldErrors[`acreedor-${acreedor.id}-identificacion`] || highlightNitError
+                  ? `${inputBase} ${inputError}`
+                  : `${inputBase} ${inputValid}`
+              }
             />
+            {fieldErrors[`acreedor-${acreedor.id}-identificacion`] && (
+              <p className="mt-1 text-xs text-red-600 dark:text-red-400">{fieldErrors[`acreedor-${acreedor.id}-identificacion`]}</p>
+            )}
+            {!fieldErrors[`acreedor-${acreedor.id}-identificacion`] && showNitHint && (
+              <p className={`mt-1 text-xs ${nitHintColorClass}`}>{nitHintText}</p>
+            )}
           </div>
 
           <div>
@@ -234,12 +252,16 @@ export default function ProcesoForm({
               Correo electrónico
             </label>
             <input
+              data-field-id={`acreedor-${acreedor.id}-email`}
               value={acreedor.email}
               onChange={(e) => actualizarAcreedorRow(acreedor.id, { email: e.target.value })}
               placeholder="Ej: acreedor@empresa.com"
               inputMode="email"
-              className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+              className={fieldClass(`acreedor-${acreedor.id}-email`)}
             />
+            {fieldErrors[`acreedor-${acreedor.id}-email`] && (
+              <p className="mt-1 text-xs text-red-600 dark:text-red-400">{fieldErrors[`acreedor-${acreedor.id}-email`]}</p>
+            )}
           </div>
 
           <div className="sm:col-span-2">
@@ -664,13 +686,17 @@ export default function ProcesoForm({
                           Nombre
                         </label>
                         <input
+                          data-field-id={`deudor-${deudor.id}-nombre`}
                           value={deudor.nombre}
                           onChange={(e) =>
                             actualizarDeudorRow(deudor.id, { nombre: e.target.value })
                           }
                           placeholder="Ej: Juan Pérez"
-                          className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                          className={fieldClass(`deudor-${deudor.id}-nombre`)}
                         />
+                        {fieldErrors[`deudor-${deudor.id}-nombre`] && (
+                          <p className="mt-1 text-xs text-red-600 dark:text-red-400">{fieldErrors[`deudor-${deudor.id}-nombre`]}</p>
+                        )}
                       </div>
 
                       <div>
@@ -678,14 +704,18 @@ export default function ProcesoForm({
                           Teléfono
                         </label>
                         <input
+                          data-field-id={`deudor-${deudor.id}-telefono`}
                           value={deudor.telefono}
                           onChange={(e) =>
                             actualizarDeudorRow(deudor.id, { telefono: e.target.value })
                           }
-                          placeholder="Ej: +57 300 000 0000"
+                          placeholder="Ej: 3001234567"
                           inputMode="tel"
-                          className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                          className={fieldClass(`deudor-${deudor.id}-telefono`)}
                         />
+                        {fieldErrors[`deudor-${deudor.id}-telefono`] && (
+                          <p className="mt-1 text-xs text-red-600 dark:text-red-400">{fieldErrors[`deudor-${deudor.id}-telefono`]}</p>
+                        )}
                       </div>
 
                       <div>
@@ -727,14 +757,18 @@ export default function ProcesoForm({
                           Correo electrónico
                         </label>
                         <input
+                          data-field-id={`deudor-${deudor.id}-email`}
                           value={deudor.email}
                           onChange={(e) =>
                             actualizarDeudorRow(deudor.id, { email: e.target.value })
                           }
                           placeholder="Ej: ejemplo@correo.com"
                           inputMode="email"
-                          className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                          className={fieldClass(`deudor-${deudor.id}-email`)}
                         />
+                        {fieldErrors[`deudor-${deudor.id}-email`] && (
+                          <p className="mt-1 text-xs text-red-600 dark:text-red-400">{fieldErrors[`deudor-${deudor.id}-email`]}</p>
+                        )}
                       </div>
 
                       <div className="sm:col-span-2">
@@ -879,13 +913,17 @@ export default function ProcesoForm({
                   Nombre *
                 </label>
                 <input
+                  data-field-id="apoderado-nombre"
                   value={apoderadoForm.nombre}
                   onChange={(e) =>
                     setApoderadoForm((prev) => ({ ...prev, nombre: e.target.value }))
                   }
                   placeholder="Ej: Laura Gómez"
-                  className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                  className={fieldErrors["apoderado-nombre"] ? `h-11 w-full rounded-2xl bg-white px-4 text-sm outline-none transition focus:ring-4 dark:bg-black/20 ${inputError}` : "h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"}
                 />
+                {fieldErrors["apoderado-nombre"] && (
+                  <p className="mt-1 text-xs text-red-600 dark:text-red-400">{fieldErrors["apoderado-nombre"]}</p>
+                )}
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
@@ -906,14 +944,18 @@ export default function ProcesoForm({
                     Correo electrónico
                   </label>
                   <input
+                    data-field-id="apoderado-email"
                     value={apoderadoForm.email}
                     onChange={(e) =>
                       setApoderadoForm((prev) => ({ ...prev, email: e.target.value }))
                     }
                     inputMode="email"
                     placeholder="Ej: apoderado@firma.com"
-                    className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                    className={fieldErrors["apoderado-email"] ? `h-11 w-full rounded-2xl bg-white px-4 text-sm outline-none transition focus:ring-4 dark:bg-black/20 ${inputError}` : "h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"}
                   />
+                  {fieldErrors["apoderado-email"] && (
+                    <p className="mt-1 text-xs text-red-600 dark:text-red-400">{fieldErrors["apoderado-email"]}</p>
+                  )}
                 </div>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -922,14 +964,18 @@ export default function ProcesoForm({
                     Teléfono
                   </label>
                   <input
+                    data-field-id="apoderado-telefono"
                     value={apoderadoForm.telefono}
                     onChange={(e) =>
                       setApoderadoForm((prev) => ({ ...prev, telefono: e.target.value }))
                     }
                     inputMode="tel"
-                    placeholder="Ej: +57 300 000 0000"
-                    className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                    placeholder="Ej: 3001234567"
+                    className={fieldErrors["apoderado-telefono"] ? `h-11 w-full rounded-2xl bg-white px-4 text-sm outline-none transition focus:ring-4 dark:bg-black/20 ${inputError}` : "h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"}
                   />
+                  {fieldErrors["apoderado-telefono"] && (
+                    <p className="mt-1 text-xs text-red-600 dark:text-red-400">{fieldErrors["apoderado-telefono"]}</p>
+                  )}
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-zinc-600 dark:text-zinc-300">

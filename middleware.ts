@@ -32,7 +32,7 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser()
 
   // Public routes that don't require authentication
-  const publicRoutes = ['/login', '/consulta-publica']
+  const publicRoutes = ['/login', '/consulta-publica', '/registro']
   const isPublicRoute = publicRoutes.some(route =>
     request.nextUrl.pathname.startsWith(route)
   )
@@ -45,7 +45,7 @@ export async function middleware(request: NextRequest) {
   }
 
   // If authenticated and trying to access login, redirect to procesos
-  if (user && isPublicRoute) {
+  if (user && request.nextUrl.pathname.startsWith('/login')) {
     const url = request.nextUrl.clone()
     url.pathname = '/procesos'
     return NextResponse.redirect(url)

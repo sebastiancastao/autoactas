@@ -713,7 +713,7 @@ function AttendanceContent() {
 
     // If the vote result is mostly negative, restrict the type choices to "rechazo" outcomes.
     return base.filter((o) =>
-      o.value === "ACTA RECHAZO DEL TRAMITE" || o.value === "ACTA FRACASO DEL TRAMITE"
+      o.value === "ACTA RECHAZO DEL TRAMITE" || o.value === "ACTA FRACASO DEL TRAMITE" || o.value === "AUTO DECLARA NULIDAD"
     );
   }, [votosNegativosMayores]);
 
@@ -1608,6 +1608,8 @@ function AttendanceContent() {
         titulo: titulo,
         fecha: fecha,
         webViewLink: terminarAudienciaResult.webViewLink,
+        fileId: terminarAudienciaResult.fileId,
+        fileName: terminarAudienciaResult.fileName,
       };
 
       const res = await fetch("/api/enviar-acta", {
@@ -2768,7 +2770,7 @@ function AttendanceContent() {
                   }
                   className="h-12 w-full rounded-2xl bg-amber-500 px-6 text-sm font-semibold text-amber-950 shadow-sm transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-40 xl:w-auto dark:bg-amber-400 dark:text-black"
                 >
-                  {terminandoAudiencia ? "Terminando..." : "Terminar audiencia"}
+                  {terminandoAudiencia ? "Terminando..." : "Crear Acta"}
                 </button>
               </div>
             </div>
