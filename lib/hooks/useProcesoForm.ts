@@ -1,7 +1,7 @@
 "use client";
 
 import { Dispatch, FormEvent, SetStateAction, useCallback, useEffect, useId, useState } from "react";
-import { createAcreedor, deleteAcreedor, updateAcreedor } from "@/lib/api/acreedores";
+import { createAcreedor, deleteAcreedor, getAcreedores, updateAcreedor } from "@/lib/api/acreedores";
 import {
   deleteAcreenciasByAcreedorIds,
   upsertAcreencias,
@@ -76,7 +76,7 @@ type ApoderadoForm = {
 };
 
 type AcreedorWithApoderado = Acreedor & {
-  apoderados?: Apoderado[];
+  apoderados?: Apoderado[] | Apoderado | null;
 };
 
 type AcreedorWithObligaciones = AcreedorWithApoderado & {
@@ -86,6 +86,20 @@ type AcreedorWithObligaciones = AcreedorWithApoderado & {
     descripcion?: string | null;
     monto?: number | null;
   }[];
+};
+
+type AcreedorCatalogItem = {
+  id: string;
+  nombre: string;
+  identificacion: string;
+  tipoIdentificacion: string;
+  direccion: string;
+  telefono: string;
+  email: string;
+  apoderadoId: string;
+  apoderadoNombre: string;
+  monto: string;
+  tipoAcreencia: string;
 };
 
 function uid() {
@@ -175,6 +189,10 @@ function createApoderadoForm(): ApoderadoForm {
     direccion: "",
     tarjetaProfesional: "",
   };
+}
+
+function normalizeName(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 function focusFirstInvalidField(errors: Record<string, string>) {
@@ -379,7 +397,9 @@ export type ProcesoFormContext = {
   selectedDeudorId: string;
   setSelectedDeudorId: Dispatch<SetStateAction<string>>;
   acreedoresForm: AcreedorFormRow[];
+  acreedoresCatalogo: AcreedorCatalogItem[];
   agregarAcreedorRow: () => void;
+  handleAcreedorNombreInput: (id: string, value: string) => void;
   actualizarAcreedorRow: (id: string, patch: Partial<AcreedorFormRow>) => void;
   eliminarAcreedorRow: (id: string) => void;
   agregarObligacionRow: (acreedorId: string) => void;
@@ -436,6 +456,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
   const [tipoProceso, setTipoProceso] = useState("");
   const [juzgado, setJuzgado] = useState("");
   const [apoderados, setApoderados] = useState<Apoderado[]>([]);
+  const [acreedoresCatalogo, setAcreedoresCatalogo] = useState<AcreedorCatalogItem[]>([]);
   const [cargandoApoderados, setCargandoApoderados] = useState(false);
   const [apoderadoModalOpen, setApoderadoModalOpen] = useState(false);
   const [apoderadoModalTarget, setApoderadoModalTarget] = useState<ApoderadoModalTarget | null>(null);
@@ -496,6 +517,35 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
     const nuevaFila = createAcreedorRow();
     setAcreedoresForm((prev) => [...prev, nuevaFila]);
     setSelectedAcreedorId(nuevaFila.id);
+  };
+
+  const handleAcreedorNombreInput = (id: string, value: string) => {
+    actualizarAcreedorRow(id, { nombre: value });
+
+    const normalizedValue = normalizeName(value);
+    if (!normalizedValue) return;
+
+    const match = acreedoresCatalogo.find(
+      (acreedor) => normalizeName(acreedor.nombre) === normalizedValue,
+    );
+    if (!match) return;
+    const apoderadoNombre =
+      match.apoderadoNombre ||
+      apoderados.find((apoderado) => apoderado.id === match.apoderadoId)?.nombre ||
+      "";
+
+    actualizarAcreedorRow(id, {
+      nombre: match.nombre,
+      identificacion: match.identificacion,
+      tipoIdentificacion: match.tipoIdentificacion,
+      direccion: match.direccion,
+      telefono: match.telefono,
+      email: match.email,
+      apoderadoId: match.apoderadoId,
+      apoderadoNombre,
+      monto: match.monto,
+      tipoAcreencia: match.tipoAcreencia,
+    });
   };
 
   const actualizarAcreedorRow = (id: string, patch: Partial<AcreedorFormRow>) => {
@@ -659,6 +709,49 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
       console.error("Error fetching apoderados:", err);
     } finally {
       setCargandoApoderados(false);
+    }
+  };
+
+  const fetchAcreedoresCatalogo = async () => {
+    try {
+      const data = await getAcreedores();
+      const rows = (data ?? []) as Array<AcreedorWithApoderado>;
+      const seen = new Set<string>();
+      const catalog: AcreedorCatalogItem[] = [];
+
+      rows.forEach((acreedor) => {
+        const nombre = acreedor.nombre?.trim() ?? "";
+        if (!nombre) return;
+
+        const key = normalizeName(nombre);
+        if (seen.has(key)) return;
+        seen.add(key);
+
+        const apoderado = Array.isArray(acreedor.apoderados)
+          ? acreedor.apoderados[0]
+          : acreedor.apoderados;
+
+        catalog.push({
+          id: acreedor.id,
+          nombre,
+          identificacion: acreedor.identificacion ?? "",
+          tipoIdentificacion: acreedor.tipo_identificacion ?? "",
+          direccion: acreedor.direccion ?? "",
+          telefono: acreedor.telefono ?? "",
+          email: acreedor.email ?? "",
+          apoderadoId: acreedor.apoderado_id ?? "",
+          apoderadoNombre: apoderado?.nombre ?? "",
+          monto:
+            acreedor.monto_acreencia != null && Number.isFinite(acreedor.monto_acreencia)
+              ? acreedor.monto_acreencia.toString()
+              : "",
+          tipoAcreencia: acreedor.tipo_acreencia ?? "",
+        });
+      });
+
+      setAcreedoresCatalogo(catalog);
+    } catch (err) {
+      console.error("Error fetching acreedores:", err);
     }
   };
 
@@ -1033,6 +1126,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
 
   useEffect(() => {
     fetchApoderadosList();
+    fetchAcreedoresCatalogo();
   }, []);
 
   useEffect(() => {
@@ -1062,7 +1156,9 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
     selectedDeudorId,
     setSelectedDeudorId,
     acreedoresForm,
+    acreedoresCatalogo,
     agregarAcreedorRow,
+    handleAcreedorNombreInput,
     actualizarAcreedorRow,
     eliminarAcreedorRow,
     agregarObligacionRow,

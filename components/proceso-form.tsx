@@ -85,7 +85,9 @@ export default function ProcesoForm({
     deudoresForm,
     actualizarDeudorRow,
     acreedoresForm,
+    acreedoresCatalogo,
     agregarAcreedorRow,
+    handleAcreedorNombreInput,
     actualizarAcreedorRow,
     eliminarAcreedorRow,
     agregarObligacionRow,
@@ -176,13 +178,19 @@ export default function ProcesoForm({
             </label>
             <input
               data-field-id={`acreedor-${acreedor.id}-nombre`}
+              list="acreedores-list"
               value={acreedor.nombre}
-              onChange={(e) => actualizarAcreedorRow(acreedor.id, { nombre: e.target.value })}
+              onChange={(e) => handleAcreedorNombreInput(acreedor.id, e.target.value)}
               placeholder="Ej: Banco ABC"
               className={fieldClass(`acreedor-${acreedor.id}-nombre`)}
             />
             {fieldErrors[`acreedor-${acreedor.id}-nombre`] && (
               <p className="mt-1 text-xs text-red-600 dark:text-red-400">{fieldErrors[`acreedor-${acreedor.id}-nombre`]}</p>
+            )}
+            {!fieldErrors[`acreedor-${acreedor.id}-nombre`] && (
+              <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                Escribe y selecciona un acreedor existente para autocompletar sus datos.
+              </p>
             )}
           </div>
 
@@ -860,6 +868,20 @@ export default function ProcesoForm({
               </div>
             )}
           </div>
+
+          <datalist id="acreedores-list">
+            {acreedoresCatalogo.map((acreedor) => (
+              <option
+                key={acreedor.id}
+                value={acreedor.nombre}
+                label={
+                  acreedor.identificacion
+                    ? `${acreedor.nombre} (${acreedor.identificacion})`
+                    : undefined
+                }
+              />
+            ))}
+          </datalist>
 
           <datalist id="apoderados-list">
             {apoderados.map((apoderado) => (
