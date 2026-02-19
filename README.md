@@ -95,6 +95,32 @@ Si necesitas exponer los datos de los eventos a otro sistema, configura `EVENT_R
 
 El webhook se invoca incluso si se decide no enviar correos (por ejemplo, cuando no hay apoderados con email). Puedes filtrar los datos de entrada para tomar decisiones externas antes de cualquier envío.
 
+## Gravity Forms lead sync
+
+The app can now create a Gravity Forms lead when a new process is created from the process form.
+It posts to `POST /api/gravity-forms/lead`, which forwards the payload to the Gravity Forms submissions endpoint.
+
+Set these environment variables (see `.env.example`):
+
+- `GRAVITY_FORMS_SUBMISSIONS_URL` (required for sync to run)
+- `GRAVITY_FORMS_BASIC_AUTH_USER` and `GRAVITY_FORMS_BASIC_AUTH_PASSWORD` (optional)
+- `GRAVITY_FORMS_TIMEOUT_MS` (optional, default `12000`)
+- `GRAVITY_FORMS_FIELD_MAP` (optional JSON map from Gravity input key to payload path)
+- `GRAVITY_FORMS_STATIC_VALUES` (optional JSON object with fixed input values)
+
+Example `GRAVITY_FORMS_FIELD_MAP`:
+
+```json
+{
+  "input_1": "numeroProceso",
+  "input_2": "deudor.nombre",
+  "input_3": "deudor.email",
+  "input_4": "acreedorPrincipal.nombre"
+}
+```
+
+If lead sync fails, process creation still succeeds and the UI shows a warning with the Gravity failure reason.
+
 ## Deploy on Vercel
 
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.

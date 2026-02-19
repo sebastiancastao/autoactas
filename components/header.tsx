@@ -39,8 +39,6 @@ function getContextLabel(pathname: string) {
   if (match) return match.label
   if (pathname.startsWith('/perfil')) return 'Perfil'
   if (pathname.startsWith('/consulta-publica')) return 'Consulta publica'
-  if (pathname.startsWith('/onboarding')) return 'Onboarding'
-  if (pathname.startsWith('/finalizacion')) return 'Finalizacion'
   return 'Flujo principal'
 }
 

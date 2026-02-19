@@ -753,12 +753,32 @@ export default function ProcesosPage() {
     }
   }
 
-  async function enviarAutoAdmisorioApoderados(procesoId: string, proceso: Proceso) {
+  async function enviarAutoAdmisorioApoderados(
+    procesoId: string,
+    proceso: Proceso,
+    overrideEmails?: string[],
+  ) {
     const state = autoAdmisorioStateByProcesoId[procesoId];
     if (!state?.result?.webViewLink || state.emailSending) return;
 
-    const emails = state.result.apoderadoEmails ?? [];
-    if (emails.length === 0) return;
+    const emailsSource = overrideEmails ?? state.result.apoderadoEmails ?? [];
+    const emails = Array.from(
+      new Set(
+        emailsSource
+          .map((email) => email.trim())
+          .filter((email) => esEmailValido(email)),
+      ),
+    );
+    if (emails.length === 0) {
+      setAutoAdmisorioStateByProcesoId((prev) => ({
+        ...prev,
+        [procesoId]: {
+          ...prev[procesoId],
+          emailError: "No hay correos pendientes válidos para enviar.",
+        },
+      }));
+      return;
+    }
 
     setAutoAdmisorioStateByProcesoId((prev) => ({
       ...prev,
@@ -1548,6 +1568,21 @@ export default function ProcesosPage() {
                   const hasApoderadosIncompletos =
                     apoderadosDelProceso.length > 0 && submittedAnyCount < apoderadosDelProceso.length;
                   const autoState = autoAdmisorioStateByProcesoId[proceso.id] ?? { loading: false, error: null, result: null };
+                  const availableEmailSet = new Set(
+                    (autoState.result?.apoderadoEmails ?? []).map((email) => email.trim().toLowerCase()),
+                  );
+                  const pendingApoderadoEmails = Array.from(
+                    new Set(
+                      apoderadosDelProceso
+                        .filter((ap) => !deudorSet.has(ap.id) && !acreedorSet.has(ap.id))
+                        .map((ap) => ap.email?.trim() ?? "")
+                        .filter(
+                          (email) =>
+                            esEmailValido(email) &&
+                            (availableEmailSet.size === 0 || availableEmailSet.has(email.toLowerCase())),
+                        ),
+                    ),
+                  );
                   const excelUpload = excelUploadByProcesoId[proceso.id] ?? null;
 
                   return (
@@ -1722,8 +1757,8 @@ export default function ProcesosPage() {
                               </a>
                             </div>
 
-                            {autoState.result.apoderadoEmails && autoState.result.apoderadoEmails.length > 0 && !autoState.emailResult && (
-                              <div className="flex items-center gap-2">
+                            {autoState.result.apoderadoEmails && autoState.result.apoderadoEmails.length > 0 && (
+                              <div className="flex flex-wrap items-center gap-2">
                                 <span className="text-zinc-500 dark:text-zinc-400">
                                   {autoState.result.apoderadoEmails.length} apoderado{autoState.result.apoderadoEmails.length > 1 ? "s" : ""} con correo
                                 </span>
@@ -1737,6 +1772,36 @@ export default function ProcesosPage() {
                                 >
                                   {autoState.emailSending ? "Enviando..." : "Enviar a apoderados"}
                                 </button>
+                                {pendingApoderadoEmails.length > 0 && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      void enviarAutoAdmisorioApoderados(
+                                        proceso.id,
+                                        proceso,
+                                        pendingApoderadoEmails,
+                                      );
+                                    }}
+                                    disabled={autoState.emailSending}
+                                    className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800 transition hover:border-amber-500 hover:bg-amber-100 disabled:opacity-50 disabled:cursor-not-allowed dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:border-amber-700 dark:hover:bg-amber-950/60"
+                                  >
+                                    {autoState.emailSending
+                                      ? "Enviando pendientes..."
+                                      : `Enviar pendientes (${pendingApoderadoEmails.length})`}
+                                  </button>
+                                )}
+                                {autoState.emailResult && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      void enviarAutoAdmisorioApoderados(proceso.id, proceso);
+                                    }}
+                                    disabled={autoState.emailSending}
+                                    className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 transition hover:border-emerald-500 hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:border-emerald-700 dark:hover:bg-emerald-950/60"
+                                  >
+                                    {autoState.emailSending ? "Reenviando..." : "Reenviar a todos"}
+                                  </button>
+                                )}
                               </div>
                             )}
 

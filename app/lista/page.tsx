@@ -10,6 +10,7 @@ import { getDeudoresByProceso } from "@/lib/api/deudores";
 import { createAsistenciasBulk } from "@/lib/api/asistencia";
 import { getAcreenciasByProceso, getAcreenciasHistorialByProceso, updateAcreencia } from "@/lib/api/acreencias";
 import { createEvento, updateEvento } from "@/lib/api/eventos";
+import { updateProgresoByProcesoId } from "@/lib/api/progreso";
 import type { Acreedor, Acreencia, Apoderado, AsistenciaInsert } from "@/lib/database.types";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth-context";
@@ -38,6 +39,13 @@ type Asistente = {
 };
 
 const CATEGORIAS: Categoria[] = ["Acreedor", "Deudor", "Apoderado"];
+const TIPOS_ACTA_CON_TERMINACION_PROCESO = new Set([
+  "ACUERDO DE PAGO",
+  "ACUERDO DE PAGO BILATERAL Y FRACASO DEL TRAMITE",
+  "ACTA FRACASO DEL TRAMITE",
+  "ACTA RECHAZO DEL TRAMITE",
+  "AUTO DECLARA NULIDAD",
+]);
 
 function uid() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
@@ -614,6 +622,10 @@ function AttendanceContent() {
   const [terminarAudienciaResult, setTerminarAudienciaResult] = useState<
     { fileId: string; fileName: string; webViewLink: string | null; apoderadoEmails?: string[] } | null
   >(null);
+  const [tipoDocumentoActaGenerada, setTipoDocumentoActaGenerada] = useState<string | null>(null);
+  const [terminandoProceso, setTerminandoProceso] = useState(false);
+  const [terminarProcesoError, setTerminarProcesoError] = useState<string | null>(null);
+  const [terminarProcesoExito, setTerminarProcesoExito] = useState<string | null>(null);
   const [mostrarModalTerminarAudiencia, setMostrarModalTerminarAudiencia] = useState(false);
   const [terminarAudienciaAdvertencias, setTerminarAudienciaAdvertencias] = useState<string[]>([]);
   const [tipoDocumento, setTipoDocumento] = useState("ACTA AUDIENCIA");
@@ -760,6 +772,11 @@ function AttendanceContent() {
   }, [acreencias, mostrarVotacionAcuerdo, porcentajeCalculadoByAcreenciaId, votosAcuerdoByAcreenciaId]);
 
   const formatPctUi = (value: number) => value.toFixed(2).replace(".", ",") + "%";
+  const mostrarBotonTerminarProceso = useMemo(() => {
+    if (!terminarAudienciaResult) return false;
+    const tipo = (tipoDocumentoActaGenerada ?? "").trim().toUpperCase();
+    return TIPOS_ACTA_CON_TERMINACION_PROCESO.has(tipo);
+  }, [terminarAudienciaResult, tipoDocumentoActaGenerada]);
 
   const acreenciasVistasStorageKey = useMemo(() => {
     if (!procesoId) return null;
@@ -1419,6 +1436,9 @@ function AttendanceContent() {
     setTerminandoAudiencia(true);
     setTerminarAudienciaError(null);
     setTerminarAudienciaResult(null);
+    setTipoDocumentoActaGenerada(null);
+    setTerminarProcesoError(null);
+    setTerminarProcesoExito(null);
 
     try {
       if (acreenciaEditandoId && acreenciaDrafts[acreenciaEditandoId]) {
@@ -1579,6 +1599,7 @@ function AttendanceContent() {
         webViewLink: json.webViewLink ?? null,
         apoderadoEmails: json.apoderadoEmails,
       });
+      setTipoDocumentoActaGenerada(tipoDocumento);
       // Reset email sending state when new doc is generated
       setEnviarCorreosResult(null);
       setEnviarCorreosError(null);
@@ -1587,6 +1608,24 @@ function AttendanceContent() {
       setTerminarAudienciaError(msg);
     } finally {
       setTerminandoAudiencia(false);
+    }
+  };
+
+  const terminarProceso = async () => {
+    if (!procesoId || terminandoProceso) return;
+
+    setTerminandoProceso(true);
+    setTerminarProcesoError(null);
+    setTerminarProcesoExito(null);
+
+    try {
+      await updateProgresoByProcesoId(procesoId, { estado: "finalizado" });
+      setTerminarProcesoExito("Proceso marcado como terminado.");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setTerminarProcesoError(msg);
+    } finally {
+      setTerminandoProceso(false);
     }
   };
 
@@ -2044,12 +2083,6 @@ function AttendanceContent() {
             className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white"
           >
             Calendario
-          </Link>
-          <Link
-            href="/finalizacion"
-            className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/80 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-zinc-950 hover:text-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white"
-          >
-            Finalización
           </Link>
           <a
             href="#asistencia"
@@ -2820,6 +2853,29 @@ function AttendanceContent() {
                     Debug fileId: {terminarAudienciaResult.fileId}
                   </p>
                 ) : null}
+
+                {mostrarBotonTerminarProceso && (
+                  <div className="mt-4 border-t border-green-200 pt-4 dark:border-green-500/30">
+                    <button
+                      type="button"
+                      onClick={() => void terminarProceso()}
+                      disabled={terminandoProceso || Boolean(terminarProcesoExito)}
+                      className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {terminandoProceso
+                        ? "Terminando..."
+                        : terminarProcesoExito
+                          ? "Proceso terminado"
+                          : "Terminar proceso"}
+                    </button>
+                    {terminarProcesoError && (
+                      <p className="mt-2 text-red-700 dark:text-red-300">{terminarProcesoError}</p>
+                    )}
+                    {terminarProcesoExito && (
+                      <p className="mt-2 text-emerald-700 dark:text-emerald-300">{terminarProcesoExito}</p>
+                    )}
+                  </div>
+                )}
 
                 {/* Send to apoderados button */}
                 {terminarAudienciaResult.webViewLink && terminarAudienciaResult.apoderadoEmails && terminarAudienciaResult.apoderadoEmails.length > 0 && !enviarCorreosResult && (

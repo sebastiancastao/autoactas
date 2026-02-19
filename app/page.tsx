@@ -27,19 +27,11 @@ const workflowSteps = [
   },
   {
     id: "04",
-    title: "Registrar asistencia",
+    title: "Audiencia",
     description: "Controla asistencia, documentos y decisiones para la audiencia activa.",
     href: "/lista",
     cta: "Abrir Lista",
     badge: "Operacion",
-  },
-  {
-    id: "05",
-    title: "Cerrar proceso",
-    description: "Consolida el resultado final y deja trazabilidad del cierre.",
-    href: "/finalizacion",
-    cta: "Abrir Finalizacion",
-    badge: "Cierre",
   },
 ] as const;
 
@@ -53,16 +45,6 @@ const supportModules = [
     href: "/consulta-publica",
     title: "Consulta publica",
     description: "Visualiza la informacion publicada de apoderados y acreedores.",
-  },
-  {
-    href: "/procesos/export",
-    title: "Exportar Word",
-    description: "Genera resumen documental para procesos seleccionados.",
-  },
-  {
-    href: "/onboarding",
-    title: "Onboarding PDF",
-    description: "Carga documentos iniciales en Drive.",
   },
 ] as const;
 

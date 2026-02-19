@@ -14,6 +14,8 @@ type DeudorRow = Database["public"]["Tables"]["deudores"]["Row"];
 type AcreedorRow = Database["public"]["Tables"]["acreedores"]["Row"];
 type ApoderadoRow = Database["public"]["Tables"]["apoderados"]["Row"];
 type AcreenciaRow = Database["public"]["Tables"]["acreencias"]["Row"];
+type ProgresoRow = Database["public"]["Tables"]["progreso"]["Row"];
+type ProgresoEstado = ProgresoRow["estado"];
 
 type ProcesoDashboardRow = Pick<
   ProcesoRow,
@@ -42,6 +44,16 @@ type AcreenciaDashboardRow = Pick<
   | "total"
   | "porcentaje"
 >;
+type ProgresoDashboardRow = Pick<
+  ProgresoRow,
+  | "id"
+  | "proceso_id"
+  | "estado"
+  | "numero_audiencias"
+  | "fecha_procesos_real"
+  | "fecha_finalizacion"
+  | "updated_at"
+>;
 type UsuarioOwnerDashboardRow = Pick<UsuarioRow, "id" | "auth_id" | "nombre" | "email">;
 
 type DeudorDetalle = {
@@ -58,6 +70,9 @@ type AcreedorDetalle = {
 
 type ProcesoMetricas = {
   proceso: ProcesoDashboardRow;
+  progreso: ProgresoDashboardRow | null;
+  progresoEstado: ProgresoEstado;
+  progresoAvance: number;
   usuarioProcesoLabel: string;
   totalEventos: number;
   eventosRealizados: number;
@@ -77,6 +92,9 @@ const ACREEDOR_SELECT = "id, proceso_id, apoderado_id, nombre, identificacion";
 const APODERADO_SELECT = "id, nombre, email";
 const ACREENCIA_SELECT =
   "id, proceso_id, acreedor_id, naturaleza, prelacion, capital, int_cte, int_mora, otros_cobros_seguros, total, porcentaje";
+const PROGRESO_SELECT_FULL =
+  "id, proceso_id, estado, numero_audiencias, fecha_procesos_real, fecha_finalizacion, updated_at";
+const PROGRESO_SELECT_BASIC = "id, proceso_id, estado, numero_audiencias, updated_at";
 const COP_CURRENCY = new Intl.NumberFormat("es-CO", {
   style: "currency",
   currency: "COP",
@@ -215,6 +233,45 @@ function estadoToneClass(estado: string | null) {
   return "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300";
 }
 
+function formatProgresoEstado(estado: ProgresoEstado) {
+  if (estado === "iniciado") return "Iniciado";
+  if (estado === "finalizado") return "Finalizado";
+  return "No iniciado";
+}
+
+function getProgresoAvance(estado: ProgresoEstado) {
+  if (estado === "finalizado") return 100;
+  if (estado === "iniciado") return 55;
+  return 10;
+}
+
+function progresoToneClass(estado: ProgresoEstado) {
+  if (estado === "finalizado") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300";
+  }
+  if (estado === "iniciado") {
+    return "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300";
+  }
+  return "border-zinc-200 bg-zinc-100 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+}
+
+function progresoBarClass(estado: ProgresoEstado) {
+  if (estado === "finalizado") return "bg-emerald-500";
+  if (estado === "iniciado") return "bg-blue-500";
+  return "bg-zinc-400 dark:bg-zinc-500";
+}
+
+function formatDateLabel(value: string | null | undefined) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString("es-CO", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
 type MetricChipProps = {
   label: string;
   value: number;
@@ -233,6 +290,132 @@ function MetricChip({ label, value, tone = "neutral" }: MetricChipProps) {
     <div className={`rounded-2xl border px-4 py-3 ${toneClass}`}>
       <p className="text-[11px] font-semibold uppercase tracking-[0.2em] opacity-85">{label}</p>
       <p className="mt-1 text-2xl font-semibold tracking-tight">{value}</p>
+    </div>
+  );
+}
+
+type ProgresoChartEntry = {
+  id: ProgresoEstado;
+  label: string;
+  value: number;
+  color: string;
+};
+
+function ProgresoDonutChart({
+  data,
+  total,
+  finalizadoPct,
+}: {
+  data: ProgresoChartEntry[];
+  total: number;
+  finalizadoPct: number;
+}) {
+  const size = 164;
+  const strokeWidth = 16;
+  const center = size / 2;
+  const radius = center - strokeWidth / 2;
+  const circumference = 2 * Math.PI * radius;
+  const segments = data.reduce(
+    (acc, entry) => {
+      if (entry.value <= 0 || total <= 0) return acc;
+      const segmentLength = (entry.value / total) * circumference;
+      return {
+        offset: acc.offset + segmentLength,
+        items: [
+          ...acc.items,
+          {
+            entry,
+            segmentLength,
+            segmentOffset: acc.offset,
+          },
+        ],
+      };
+    },
+    {
+      offset: 0,
+      items: [] as Array<{
+        entry: ProgresoChartEntry;
+        segmentLength: number;
+        segmentOffset: number;
+      }>,
+    },
+  ).items;
+
+  return (
+    <svg viewBox={`0 0 ${size} ${size}`} className="h-40 w-40 shrink-0" role="img" aria-label="Distribucion de progreso">
+      <circle
+        cx={center}
+        cy={center}
+        r={radius}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={strokeWidth}
+        className="text-zinc-200 dark:text-zinc-700"
+      />
+      <g transform={`rotate(-90 ${center} ${center})`}>
+        {segments.map(({ entry, segmentLength, segmentOffset }) => {
+          return (
+            <circle
+              key={entry.id}
+              cx={center}
+              cy={center}
+              r={radius}
+              fill="none"
+              stroke={entry.color}
+              strokeWidth={strokeWidth}
+              strokeDasharray={`${segmentLength} ${circumference}`}
+              strokeDashoffset={-segmentOffset}
+              strokeLinecap="butt"
+            />
+          );
+        })}
+      </g>
+      <text
+        x={center}
+        y={center - 6}
+        textAnchor="middle"
+        className="fill-zinc-900 text-[18px] font-semibold dark:fill-zinc-100"
+      >
+        {finalizadoPct}%
+      </text>
+      <text
+        x={center}
+        y={center + 16}
+        textAnchor="middle"
+        className="fill-zinc-500 text-[11px] dark:fill-zinc-400"
+      >
+        finalizado
+      </text>
+    </svg>
+  );
+}
+
+function ProgresoBarsChart({
+  data,
+  maxValue,
+}: {
+  data: ProgresoChartEntry[];
+  maxValue: number;
+}) {
+  return (
+    <div className="mt-4 grid grid-cols-3 gap-3">
+      {data.map((entry) => {
+        const ratio = maxValue > 0 ? (entry.value / maxValue) * 100 : 0;
+        return (
+          <div key={entry.id} className="rounded-2xl border border-zinc-200 bg-white/70 p-3 dark:border-white/10 dark:bg-white/5">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
+              {entry.label}
+            </p>
+            <p className="mt-1 text-xl font-semibold text-zinc-900 dark:text-zinc-100">{entry.value}</p>
+            <div className="mt-3 h-2.5 rounded-full bg-zinc-200 dark:bg-zinc-800">
+              <div
+                className="h-full rounded-full transition-all"
+                style={{ width: `${ratio}%`, backgroundColor: entry.color }}
+              />
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -389,6 +572,49 @@ export default function DashboardPage() {
         const deudores = (deudoresResponse.data ?? []) as DeudorDashboardRow[];
         const acreedores = (acreedoresResponse.data ?? []) as AcreedorDashboardRow[];
         const acreencias = (acreenciasResponse.data ?? []) as AcreenciaDashboardRow[];
+        let progresos: ProgresoDashboardRow[] = [];
+        const progresosFullResponse = await supabase
+          .from("progreso")
+          .select(PROGRESO_SELECT_FULL)
+          .in("proceso_id", procesoIds)
+          .order("updated_at", { ascending: false });
+
+        if (!progresosFullResponse.error) {
+          progresos = (progresosFullResponse.data ?? []) as ProgresoDashboardRow[];
+        } else {
+          const missingFechaInicio = isMissingColumnError(
+            progresosFullResponse.error,
+            "fecha_procesos_real",
+          );
+          const missingFechaFinal = isMissingColumnError(
+            progresosFullResponse.error,
+            "fecha_finalizacion",
+          );
+
+          if (missingFechaInicio || missingFechaFinal) {
+            const progresosBasicResponse = await supabase
+              .from("progreso")
+              .select(PROGRESO_SELECT_BASIC)
+              .in("proceso_id", procesoIds)
+              .order("updated_at", { ascending: false });
+
+            if (progresosBasicResponse.error) throw progresosBasicResponse.error;
+
+            progresos = ((progresosBasicResponse.data ?? []) as Array<
+              Pick<ProgresoDashboardRow, "id" | "proceso_id" | "estado" | "numero_audiencias" | "updated_at">
+            >).map((row) => ({
+              ...row,
+              fecha_procesos_real: null,
+              fecha_finalizacion: null,
+            }));
+
+            warning = warning
+              ? `${warning} La tabla progreso no expone todas las columnas de fecha en este entorno.`
+              : "La tabla progreso no expone todas las columnas de fecha en este entorno.";
+          } else {
+            throw progresosFullResponse.error;
+          }
+        }
         const usuariosById = new Map<string, UsuarioOwnerDashboardRow>();
         const usuariosByAuthId = new Map<string, UsuarioOwnerDashboardRow>();
 
@@ -479,8 +705,24 @@ export default function DashboardPage() {
           }
         });
 
+        const progresoByProcesoId = new Map<string, ProgresoDashboardRow>();
+        progresos.forEach((progreso) => {
+          if (!progreso.proceso_id) return;
+          if (!progresoByProcesoId.has(progreso.proceso_id)) {
+            // Query is ordered by updated_at desc, keep the most recent row per proceso.
+            progresoByProcesoId.set(progreso.proceso_id, progreso);
+          }
+        });
+
+        if (!canceled) {
+          setSchemaWarning(warning);
+        }
+
         const now = new Date();
         const metricas = procesos.map((proceso) => {
+          const progreso = progresoByProcesoId.get(proceso.id) ?? null;
+          const progresoEstado: ProgresoEstado = progreso?.estado ?? "no_iniciado";
+
           const eventosProceso = [...(eventosByProcesoId.get(proceso.id) ?? [])].sort(compareEventosByDateTime);
 
           const realizados: EventoDashboardRow[] = [];
@@ -528,6 +770,9 @@ export default function DashboardPage() {
 
           return {
             proceso,
+            progreso,
+            progresoEstado,
+            progresoAvance: getProgresoAvance(progresoEstado),
             usuarioProcesoLabel: resolveProcesoUsuarioLabel(
               proceso,
               usuariosById,
@@ -585,6 +830,57 @@ export default function DashboardPage() {
     );
   }, [metricasPorProceso]);
 
+  const resumenProgreso = useMemo(() => {
+    const base = {
+      total: 0,
+      no_iniciado: 0,
+      iniciado: 0,
+      finalizado: 0,
+    };
+
+    const counts = metricasPorProceso.reduce((acc, item) => {
+      acc.total += 1;
+      acc[item.progresoEstado] += 1;
+      return acc;
+    }, base);
+
+    const finalizadoPct =
+      counts.total > 0 ? Math.round((counts.finalizado / counts.total) * 100) : 0;
+
+    return {
+      ...counts,
+      finalizadoPct,
+    };
+  }, [metricasPorProceso]);
+
+  const progresoChartData = useMemo<ProgresoChartEntry[]>(
+    () => [
+      {
+        id: "no_iniciado",
+        label: "No iniciado",
+        value: resumenProgreso.no_iniciado,
+        color: "#94a3b8",
+      },
+      {
+        id: "iniciado",
+        label: "Iniciado",
+        value: resumenProgreso.iniciado,
+        color: "#3b82f6",
+      },
+      {
+        id: "finalizado",
+        label: "Finalizado",
+        value: resumenProgreso.finalizado,
+        color: "#10b981",
+      },
+    ],
+    [resumenProgreso],
+  );
+
+  const maxProgresoChartValue = useMemo(() => {
+    return Math.max(...progresoChartData.map((entry) => entry.value), 1);
+  }, [progresoChartData]);
+
   const usuariosConProcesos = useMemo(() => {
     if (!isAdmin) return 0;
     return new Set(metricasPorProceso.map((item) => item.usuarioProcesoLabel)).size;
@@ -617,8 +913,8 @@ export default function DashboardPage() {
           </h1>
           <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
             {isAdmin
-              ? "Resumen de todos los procesos por usuario y estado de agenda."
-              : "Resumen de tus procesos y estado de agenda: eventos totales, ya realizados y por venir."}
+              ? "Resumen de todos los procesos por usuario, progreso del tramite y estado de agenda."
+              : "Resumen de tus procesos con progreso del tramite y estado de agenda."}
           </p>
           <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
             Usuario: <span className="font-semibold">{usuarioNombre || user.email}</span>
@@ -663,12 +959,77 @@ export default function DashboardPage() {
           </section>
         ) : (
           <>
-            <section className={`mt-6 grid gap-3 sm:grid-cols-2 ${isAdmin ? "xl:grid-cols-5" : "xl:grid-cols-4"}`}>
+            <section
+              className={`mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4 ${isAdmin ? "2xl:grid-cols-8" : "2xl:grid-cols-6"}`}
+            >
               <MetricChip label="Procesos" value={resumenGlobal.procesos} />
               <MetricChip label="Eventos totales" value={resumenGlobal.totalEventos} />
               <MetricChip label="Eventos realizados" value={resumenGlobal.realizados} tone="positive" />
               <MetricChip label="Eventos por venir" value={resumenGlobal.porVenir} tone="warning" />
+              <MetricChip label="No iniciados" value={resumenProgreso.no_iniciado} />
+              <MetricChip label="Iniciados" value={resumenProgreso.iniciado} tone="warning" />
+              <MetricChip label="Finalizados" value={resumenProgreso.finalizado} tone="positive" />
               {isAdmin && <MetricChip label="Usuarios" value={usuariosConProcesos} />}
+            </section>
+
+            <section className="mt-6 grid gap-4 xl:grid-cols-2">
+              <article className="rounded-3xl border border-zinc-200 bg-white/85 p-5 shadow-sm dark:border-white/10 dark:bg-white/5">
+                <h2 className="text-base font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
+                  Overview de progreso
+                </h2>
+                <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                  Distribucion global del estado en la tabla de progreso por proceso.
+                </p>
+
+                <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-center">
+                  <ProgresoDonutChart
+                    data={progresoChartData}
+                    total={resumenProgreso.total}
+                    finalizadoPct={resumenProgreso.finalizadoPct}
+                  />
+                  <div className="grid flex-1 gap-2">
+                    {progresoChartData.map((entry) => (
+                      <div
+                        key={entry.id}
+                        className="flex items-center justify-between rounded-2xl border border-zinc-200 bg-white/75 px-3 py-2 text-sm dark:border-white/10 dark:bg-white/5"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="h-2.5 w-2.5 rounded-full"
+                            style={{ backgroundColor: entry.color }}
+                          />
+                          <span className="text-zinc-600 dark:text-zinc-300">{entry.label}</span>
+                        </div>
+                        <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+                          {entry.value}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mt-4">
+                  <p className="mb-2 text-xs text-zinc-500 dark:text-zinc-400">
+                    Finalizados sobre total: {resumenProgreso.finalizadoPct}%
+                  </p>
+                  <div className="h-2.5 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+                    <div
+                      className="h-full rounded-full bg-emerald-500 transition-all"
+                      style={{ width: `${resumenProgreso.finalizadoPct}%` }}
+                    />
+                  </div>
+                </div>
+              </article>
+
+              <article className="rounded-3xl border border-zinc-200 bg-white/85 p-5 shadow-sm dark:border-white/10 dark:bg-white/5">
+                <h2 className="text-base font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
+                  Grafico de procesos por estado
+                </h2>
+                <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                  Comparativo por cantidad de procesos en No iniciado, Iniciado y Finalizado.
+                </p>
+                <ProgresoBarsChart data={progresoChartData} maxValue={maxProgresoChartValue} />
+              </article>
             </section>
 
             <section className="mt-6 space-y-3">
@@ -690,19 +1051,55 @@ export default function DashboardPage() {
                         Usuario: <span className="font-semibold">{item.usuarioProcesoLabel}</span>
                       </p>
                     </div>
-                    <span
-                      className={`rounded-full border px-3 py-1 text-xs font-semibold ${estadoToneClass(
-                        item.proceso.estado,
-                      )}`}
-                    >
-                      {item.proceso.estado || "Sin estado"}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={`rounded-full border px-3 py-1 text-xs font-semibold ${estadoToneClass(
+                          item.proceso.estado,
+                        )}`}
+                      >
+                        Proceso: {item.proceso.estado || "Sin estado"}
+                      </span>
+                      <span
+                        className={`rounded-full border px-3 py-1 text-xs font-semibold ${progresoToneClass(
+                          item.progresoEstado,
+                        )}`}
+                      >
+                        Progreso: {formatProgresoEstado(item.progresoEstado)}
+                      </span>
+                    </div>
                   </div>
 
                   <div className="mt-4 grid gap-2 sm:grid-cols-3">
                     <MetricChip label="Total" value={item.totalEventos} />
                     <MetricChip label="Realizados" value={item.eventosRealizados} tone="positive" />
                     <MetricChip label="Por venir" value={item.eventosPorVenir} tone="warning" />
+                  </div>
+
+                  <div className="mt-4 rounded-2xl border border-zinc-200 bg-white/70 p-4 dark:border-white/10 dark:bg-white/5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
+                        Avance del progreso
+                      </p>
+                      <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+                        {formatProgresoEstado(item.progresoEstado)} ({item.progresoAvance}%)
+                      </p>
+                    </div>
+                    <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+                      <div
+                        className={`h-full rounded-full transition-all ${progresoBarClass(item.progresoEstado)}`}
+                        style={{ width: `${item.progresoAvance}%` }}
+                      />
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500 dark:text-zinc-400">
+                      <span>Audiencias: {item.progreso?.numero_audiencias ?? 0}</span>
+                      {item.progreso?.fecha_procesos_real && (
+                        <span>Inicio real: {formatDateLabel(item.progreso.fecha_procesos_real)}</span>
+                      )}
+                      {item.progreso?.fecha_finalizacion && (
+                        <span>Finalizacion: {formatDateLabel(item.progreso.fecha_finalizacion)}</span>
+                      )}
+                      {!item.progreso && <span>Sin registro en tabla progreso (asumiendo no iniciado).</span>}
+                    </div>
                   </div>
 
                   <div className="mt-4 grid gap-3 text-sm text-zinc-600 dark:text-zinc-300 md:grid-cols-2">
