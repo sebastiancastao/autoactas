@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -277,12 +278,20 @@ export function Header() {
           <div className="flex min-w-0 items-center gap-3">
             <Link
               href="/"
-              className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/80 px-4 py-1.5 text-sm font-semibold tracking-tight text-zinc-900 shadow-sm transition hover:border-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-100 dark:hover:border-white"
+              aria-label="Inicio"
+              className="inline-flex items-center justify-center text-zinc-900 transition opacity-95 hover:opacity-100 dark:text-zinc-100"
             >
-              <span className="h-2 w-2 rounded-full bg-emerald-500" />
-              AutoActas
+              <Image
+                src="/fundaseer_inverted.png"
+                alt="Fundaseer"
+                width={84}
+                height={84}
+                className="h-16 w-auto object-contain"
+                priority
+              />
+              <span className="sr-only">Inicio</span>
             </Link>
-            <span className="hidden rounded-full border border-zinc-200 bg-white/70 px-3 py-1 text-xs font-medium text-zinc-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300 sm:inline-flex">
+            <span className="hidden rounded-full border border-zinc-200 bg-white/70 px-3 py-1 text-xs font-medium text-zinc-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300 sm:mb-1 sm:inline-flex sm:self-end">
               En esta seccion: {activeLabel}
             </span>
           </div>
