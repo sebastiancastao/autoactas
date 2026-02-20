@@ -98,11 +98,29 @@ function isAcreenciasHistorialDeleteFkError(error: unknown) {
   return code === '23503' && haystack.includes('acreencias_historial_acreencia_id_fkey')
 }
 
+function isApoderadosProcesoFkError(error: unknown) {
+  if (!error || typeof error !== 'object') return false
+  const record = error as Record<string, unknown>
+  const code = typeof record.code === 'string' ? record.code : ''
+  const message = typeof record.message === 'string' ? record.message : ''
+  const details = typeof record.details === 'string' ? record.details : ''
+  const hint = typeof record.hint === 'string' ? record.hint : ''
+  const haystack = `${message} ${details} ${hint}`.toLowerCase()
+  return code === '23503' && haystack.includes('apoderados_proceso_fkey')
+}
+
 function toDeleteProcesoStepError(step: string, error: unknown) {
   if (isAcreenciasHistorialDeleteFkError(error)) {
     return new Error(
       'No se pudo eliminar el proceso porque falta aplicar la migracion '
         + '`supabase/migrations/20260220_fix_acreencias_historial_delete_fk.sql`.',
+    )
+  }
+  if (isApoderadosProcesoFkError(error)) {
+    return new Error(
+      'No se pudo eliminar el proceso porque hay una FK antigua en apoderados. '
+        + 'Aplica la migracion '
+        + '`supabase/migrations/20260220_fix_apoderados_proceso_fk.sql`.',
     )
   }
   return new Error(`No se pudo eliminar el proceso (${step}): ${formatErrorDetails(error)}`)
@@ -540,6 +558,23 @@ export async function deleteProceso(id: string) {
       }
     } else {
       throw toDeleteProcesoStepError('eliminando apoderados', deleteApoderadosError)
+    }
+  }
+
+  // Legacy schema fallback: some databases still keep apoderados.proceso.
+  // If present, null it out so old FK constraints don't block deleting proceso.
+  const { error: detachLegacyApoderadosError } = await supabase
+    .from('apoderados')
+    .update({ proceso: null } as unknown as Partial<Apoderado>)
+    .eq('proceso', id)
+
+  if (detachLegacyApoderadosError) {
+    const missingColumn = getMissingColumnFromError(detachLegacyApoderadosError)
+    if (missingColumn !== 'proceso' && !isMissingRelationError(detachLegacyApoderadosError)) {
+      throw toDeleteProcesoStepError(
+        'desasociando apoderados (columna legado proceso)',
+        detachLegacyApoderadosError,
+      )
     }
   }
 

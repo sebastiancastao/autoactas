@@ -26,6 +26,12 @@ type ListaPickerPosition = {
   width: number
 }
 
+type UsuarioDashboardAccessRow = {
+  nombre: string | null
+  email: string | null
+  rol: string | null
+}
+
 const NAV_LINKS: NavLink[] = [
   { href: '/', label: 'Inicio', match: (pathname) => pathname === '/' },
   { href: '/dashboard', label: 'Dashboard', match: (pathname) => pathname.startsWith('/dashboard') },
@@ -72,6 +78,15 @@ function isMissingColumnError(error: unknown, columnName: string) {
   return (code === 'PGRST204' || code === '42703' || code === 'PGRST200') && message.includes(columnName)
 }
 
+function normalizeIdentityValue(value: string | null | undefined) {
+  return (value ?? '').trim().toLowerCase()
+}
+
+function canSeeDashboard(profile: UsuarioDashboardAccessRow | null) {
+  const normalizedRole = normalizeIdentityValue(profile?.rol)
+  return normalizedRole === 'juan'
+}
+
 export function Header() {
   const { user, signOut } = useAuth()
   const router = useRouter()
@@ -89,9 +104,14 @@ export function Header() {
     left: 0,
     width: 280,
   })
+  const [dashboardAllowed, setDashboardAllowed] = useState(false)
 
   const activeLabel = useMemo(() => getContextLabel(pathname), [pathname])
   const isRegistroRoute = pathname.startsWith('/registro')
+  const navLinks = useMemo(
+    () => NAV_LINKS.filter((item) => item.href !== '/dashboard' || dashboardAllowed),
+    [dashboardAllowed],
+  )
 
   const handleSignOut = async () => {
     await signOut()
@@ -239,6 +259,33 @@ export function Header() {
   }, [user?.id])
 
   useEffect(() => {
+    setDashboardAllowed(false)
+
+    if (!user?.id) return
+
+    let canceled = false
+    ;(async () => {
+      const { data, error } = await supabase
+        .from('usuarios')
+        .select('nombre, email, rol')
+        .eq('auth_id', user.id)
+        .maybeSingle()
+
+      if (error) {
+        console.warn('No se pudo cargar permisos de Dashboard en header:', error)
+        return
+      }
+
+      if (canceled) return
+      setDashboardAllowed(canSeeDashboard((data as UsuarioDashboardAccessRow | null) ?? null))
+    })()
+
+    return () => {
+      canceled = true
+    }
+  }, [user?.id])
+
+  useEffect(() => {
     if (!listaPickerOpen) return
 
     function onMouseDown(event: MouseEvent) {
@@ -317,7 +364,7 @@ export function Header() {
 
         <nav aria-label="Navegacion principal" className="-mx-1 flex overflow-x-auto pb-3 [-webkit-overflow-scrolling:touch]">
           <div className="flex min-w-full gap-2 px-1">
-            {NAV_LINKS.map((item) => {
+            {navLinks.map((item) => {
               const isActive = item.match(pathname)
               const className = `inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-full border px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] transition ${
                 isActive
