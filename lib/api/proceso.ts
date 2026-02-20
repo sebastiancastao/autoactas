@@ -79,6 +79,83 @@ function formatErrorDetails(error: unknown) {
   return String(error)
 }
 
+function isMissingRelationError(error: unknown) {
+  if (!error || typeof error !== 'object') return false
+  const record = error as Record<string, unknown>
+  const code = typeof record.code === 'string' ? record.code : ''
+  const message = typeof record.message === 'string' ? record.message : ''
+  return code === '42P01' || /relation .* does not exist/i.test(message)
+}
+
+function isAcreenciasHistorialDeleteFkError(error: unknown) {
+  if (!error || typeof error !== 'object') return false
+  const record = error as Record<string, unknown>
+  const code = typeof record.code === 'string' ? record.code : ''
+  const message = typeof record.message === 'string' ? record.message : ''
+  const details = typeof record.details === 'string' ? record.details : ''
+  const hint = typeof record.hint === 'string' ? record.hint : ''
+  const haystack = `${message} ${details} ${hint}`.toLowerCase()
+  return code === '23503' && haystack.includes('acreencias_historial_acreencia_id_fkey')
+}
+
+function toDeleteProcesoStepError(step: string, error: unknown) {
+  if (isAcreenciasHistorialDeleteFkError(error)) {
+    return new Error(
+      'No se pudo eliminar el proceso porque falta aplicar la migracion '
+        + '`supabase/migrations/20260220_fix_acreencias_historial_delete_fk.sql`.',
+    )
+  }
+  return new Error(`No se pudo eliminar el proceso (${step}): ${formatErrorDetails(error)}`)
+}
+
+function isForeignKeyConstraintError(error: unknown) {
+  if (!error || typeof error !== 'object') return false
+  const record = error as Record<string, unknown>
+  const code = typeof record.code === 'string' ? record.code : ''
+  const message = typeof record.message === 'string' ? record.message : ''
+  return code === '23503' || /violates foreign key constraint/i.test(message)
+}
+
+type DeleteStepResult = {
+  error: unknown | null
+}
+
+type DeleteProcesoResult = {
+  error: unknown | null
+  deleted: boolean
+}
+
+async function deleteProcesoRow(id: string): Promise<DeleteProcesoResult> {
+  const { data, error } = await supabase
+    .from('proceso')
+    .delete()
+    .eq('id', id)
+    .select('id')
+
+  return {
+    error,
+    deleted: Boolean(data && data.length > 0),
+  }
+}
+
+async function executeDeleteStep(
+  step: string,
+  action: () => Promise<DeleteStepResult>,
+) {
+  const { error } = await action()
+  if (!error) return
+
+  if (isMissingRelationError(error)) {
+    console.warn(
+      `Skipping delete step "${step}" because relation is missing:`,
+      formatErrorDetails(error),
+    )
+    return
+  }
+
+  throw toDeleteProcesoStepError(step, error)
+}
+
 function isSchemaRelationError(error: unknown) {
   if (!error || typeof error !== 'object') return false
   const record = error as Record<string, unknown>
@@ -331,10 +408,166 @@ export async function updateProceso(id: string, proceso: ProcesoUpdate) {
 }
 
 export async function deleteProceso(id: string) {
-  const { error } = await supabase
-    .from('proceso')
-    .delete()
-    .eq('id', id)
+  const initialDelete = await deleteProcesoRow(id)
 
-  if (error) throw error
+  if (!initialDelete.error && initialDelete.deleted) {
+    return
+  }
+
+  if (initialDelete.error && !isForeignKeyConstraintError(initialDelete.error)) {
+    throw toDeleteProcesoStepError('eliminando proceso', initialDelete.error)
+  }
+
+  if (!initialDelete.error && !initialDelete.deleted) {
+    throw new Error(
+      'No se pudo eliminar el proceso. Verifica permisos de borrado o intenta refrescar la página.',
+    )
+  }
+
+  const { data: eventosRows, error: eventosQueryError } = await supabase
+    .from('eventos')
+    .select('id')
+    .eq('proceso_id', id)
+
+  if (eventosQueryError && !isMissingRelationError(eventosQueryError)) {
+    throw toDeleteProcesoStepError('consultando eventos', eventosQueryError)
+  }
+
+  const { data: apoderadosRows, error: apoderadosQueryError } = await supabase
+    .from('apoderados')
+    .select('id')
+    .eq('proceso_id', id)
+
+  if (apoderadosQueryError && !isMissingRelationError(apoderadosQueryError)) {
+    throw toDeleteProcesoStepError('consultando apoderados', apoderadosQueryError)
+  }
+
+  const eventoIds = (eventosRows ?? []).map((row) => row.id)
+  const apoderadoIds = (apoderadosRows ?? []).map((row) => row.id)
+
+  if (eventoIds.length > 0) {
+    await executeDeleteStep('eliminando asistencia por evento', async () => {
+      const { error } = await supabase
+        .from('asistencia')
+        .delete()
+        .in('evento_id', eventoIds)
+      return { error }
+    })
+  }
+
+  if (apoderadoIds.length > 0) {
+    await executeDeleteStep('eliminando asistencia por apoderado', async () => {
+      const { error } = await supabase
+        .from('asistencia')
+        .delete()
+        .in('apoderado_id', apoderadoIds)
+      return { error }
+    })
+  }
+
+  await executeDeleteStep('eliminando asistencia por proceso', async () => {
+    const { error } = await supabase
+      .from('asistencia')
+      .delete()
+      .eq('proceso_id', id)
+    return { error }
+  })
+
+  await executeDeleteStep('eliminando acreencias', async () => {
+    const { error } = await supabase
+      .from('acreencias')
+      .delete()
+      .eq('proceso_id', id)
+    return { error }
+  })
+
+  await executeDeleteStep('eliminando inventario', async () => {
+    const { error } = await supabase
+      .from('inventario')
+      .delete()
+      .eq('proceso_id', id)
+    return { error }
+  })
+
+  await executeDeleteStep('eliminando acreedores', async () => {
+    const { error } = await supabase
+      .from('acreedores')
+      .delete()
+      .eq('proceso_id', id)
+    return { error }
+  })
+
+  await executeDeleteStep('eliminando deudores', async () => {
+    const { error } = await supabase
+      .from('deudores')
+      .delete()
+      .eq('proceso_id', id)
+    return { error }
+  })
+
+  await executeDeleteStep('eliminando archivos de excel', async () => {
+    const { error } = await supabase
+      .from('proceso_excel_archivos')
+      .delete()
+      .eq('proceso_id', id)
+    return { error }
+  })
+
+  const { error: deleteApoderadosError } = await supabase
+    .from('apoderados')
+    .delete()
+    .eq('proceso_id', id)
+
+  if (deleteApoderadosError) {
+    if (isMissingRelationError(deleteApoderadosError)) {
+      console.warn(
+        'Skipping delete step "eliminando apoderados" because relation is missing:',
+        formatErrorDetails(deleteApoderadosError),
+      )
+    } else if (isForeignKeyConstraintError(deleteApoderadosError)) {
+      // Some apoderados can be shared with acreencias from other procesos.
+      // Detach them from this proceso so deleting the proceso can continue.
+      const { error: detachApoderadosError } = await supabase
+        .from('apoderados')
+        .update({ proceso_id: null })
+        .eq('proceso_id', id)
+
+      if (detachApoderadosError) {
+        throw toDeleteProcesoStepError(
+          'desasociando apoderados compartidos',
+          detachApoderadosError,
+        )
+      }
+    } else {
+      throw toDeleteProcesoStepError('eliminando apoderados', deleteApoderadosError)
+    }
+  }
+
+  await executeDeleteStep('eliminando progreso', async () => {
+    const { error } = await supabase
+      .from('progreso')
+      .delete()
+      .eq('proceso_id', id)
+    return { error }
+  })
+
+  await executeDeleteStep('eliminando eventos', async () => {
+    const { error } = await supabase
+      .from('eventos')
+      .delete()
+      .eq('proceso_id', id)
+    return { error }
+  })
+
+  const retryDelete = await deleteProcesoRow(id)
+
+  if (retryDelete.error) {
+    throw toDeleteProcesoStepError('eliminando proceso tras limpiar relaciones', retryDelete.error)
+  }
+
+  if (!retryDelete.deleted) {
+    throw new Error(
+      'No se pudo eliminar el proceso. Verifica permisos de borrado o intenta refrescar la página.',
+    )
+  }
 }

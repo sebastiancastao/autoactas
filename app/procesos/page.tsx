@@ -393,7 +393,8 @@ export default function ProcesosPage() {
 
       console.error("Error deleting proceso:", err);
 
-      alert("Error al eliminar el proceso. Por favor intenta de nuevo.");
+      const message = getErrorMessage(err, "Error al eliminar el proceso. Por favor intenta de nuevo.");
+      alert(message);
 
     } finally {
 
