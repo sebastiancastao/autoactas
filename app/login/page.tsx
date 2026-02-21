@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 
+import { resetPassword } from '@/lib/auth'
 import { useAuth } from '@/lib/auth-context'
 
 function getErrorText(err: unknown) {
@@ -21,6 +22,7 @@ export default function LoginPage() {
   const [capsLockOn, setCapsLockOn] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [sendingReset, setSendingReset] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
 
   const router = useRouter()
@@ -54,6 +56,27 @@ export default function LoginPage() {
 
   const handlePasswordKeyState = (event: React.KeyboardEvent<HTMLInputElement>) => {
     setCapsLockOn(event.getModifierState('CapsLock'))
+  }
+
+  const handleResetPassword = async () => {
+    const normalizedEmail = email.trim().toLowerCase()
+    setError(null)
+    setMessage(null)
+
+    if (!normalizedEmail) {
+      setError('Escribe tu correo para enviarte el enlace de recuperacion.')
+      return
+    }
+
+    setSendingReset(true)
+    try {
+      await resetPassword(normalizedEmail)
+      setMessage('Te enviamos un enlace para restablecer tu contrasena. Revisa tu correo.')
+    } catch (err) {
+      setError(getErrorText(err))
+    } finally {
+      setSendingReset(false)
+    }
   }
 
   return (
@@ -206,6 +229,18 @@ export default function LoginPage() {
               <div className="mt-1 min-h-5 text-[11px] text-zinc-500 dark:text-zinc-400">
                 {capsLockOn ? 'Bloq Mayus activado: revisa la contrasena.' : 'Usa al menos 8 caracteres para mayor seguridad.'}
               </div>
+              {!isSignUp && (
+                <div className="mt-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleResetPassword()}
+                    disabled={sendingReset || loading}
+                    className="text-xs font-medium text-zinc-600 underline underline-offset-2 transition hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50 dark:text-zinc-300 dark:hover:text-white"
+                  >
+                    {sendingReset ? 'Enviando enlace...' : 'Olvide mi contrasena'}
+                  </button>
+                </div>
+              )}
             </div>
 
             <button

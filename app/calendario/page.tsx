@@ -9,6 +9,7 @@ import {
   getEventos,
   getEventosByProceso,
   createEvento,
+  updateEvento as updateEventoApi,
   deleteEvento as deleteEventoApi,
   type Evento,
 } from "@/lib/api/eventos";
@@ -82,7 +83,6 @@ function addDays(date: Date, amount: number) {
 
 const BUSINESS_START_MINUTES = 8 * 60;
 const BUSINESS_END_MINUTES = 17 * 60;
-const BUSINESS_SLOT_MINUTES = 30;
 
 function minutesToHHMM(total: number) {
   const hh = Math.floor(total / 60);
@@ -98,20 +98,35 @@ function normalizeHoraHHMM(value: string | null | undefined) {
   return `${match[1].padStart(2, "0")}:${match[2]}`;
 }
 
-function getBusinessSlotsHHMM() {
-  const out: string[] = [];
-  for (let m = BUSINESS_START_MINUTES; m <= BUSINESS_END_MINUTES; m += BUSINESS_SLOT_MINUTES) {
-    out.push(minutesToHHMM(m));
-  }
-  return out;
+function isWithinBusinessHours(hhmm: string | null | undefined) {
+  const normalized = normalizeHoraHHMM(hhmm);
+  if (!normalized) return false;
+  const [hours, minutes] = normalized.split(":");
+  const total = Number(hours) * 60 + Number(minutes);
+  return total >= BUSINESS_START_MINUTES && total <= BUSINESS_END_MINUTES;
 }
 
-function formatHoraLabel(hhmm: string) {
-  const [hhRaw, mm] = hhmm.split(":");
-  const hh = Number(hhRaw);
-  const meridiem = hh >= 12 ? "PM" : "AM";
-  const hh12 = hh % 12 === 0 ? 12 : hh % 12;
-  return `${hh12}:${mm} ${meridiem}`;
+async function hasUserTimeConflict(params: {
+  userId: string;
+  fechaISO: string;
+  horaHHMM: string;
+  excludeEventoId?: string;
+}) {
+  const hora = `${params.horaHHMM}:00`;
+  let query = supabase
+    .from("eventos")
+    .select("id", { head: true, count: "exact" })
+    .eq("usuario_id", params.userId)
+    .eq("fecha", params.fechaISO)
+    .eq("hora", hora);
+
+  if (params.excludeEventoId) {
+    query = query.neq("id", params.excludeEventoId);
+  }
+
+  const { count, error } = await query;
+  if (error) throw error;
+  return (count ?? 0) > 0;
 }
 
 function startOfWeek(date: Date) {
@@ -211,6 +226,8 @@ function CalendarioContent() {
   const [nuevoProcesoId, setNuevoProcesoId] = useState<string>("");
   const [tituloEditable, setTituloEditable] = useState(false);
   const [eventoSeleccionado, setEventoSeleccionado] = useState<EventoCalendario | null>(null);
+  const [horaDetalleEditable, setHoraDetalleEditable] = useState("09:00");
+  const [guardandoHoraDetalle, setGuardandoHoraDetalle] = useState(false);
 
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
   const [usuarioFiltro, setUsuarioFiltro] = useState<string>("global");
@@ -224,7 +241,6 @@ function CalendarioContent() {
     Record<string, AutoAdmisorioState>
   >({});
   const [guardando, setGuardando] = useState(false);
-  const businessSlots = useMemo(() => getBusinessSlotsHHMM(), []);
 
   const userColorMap = useMemo(() => {
     const map: Record<string, string> = {};
@@ -593,13 +609,25 @@ function CalendarioContent() {
     const horaNormalizada = normalizeHoraHHMM(nuevaHora);
     if (!nuevaFecha || guardando) return;
     if (!shouldAutoNameByProceso && !tituloManual) return;
-    if (!horaNormalizada || !businessSlots.includes(horaNormalizada)) {
-      alert("La hora debe estar entre 08:00 y 17:00, en intervalos de 30 minutos.");
+    if (!horaNormalizada || !isWithinBusinessHours(horaNormalizada)) {
+      alert("La hora debe estar entre 08:00 y 17:00.");
       return;
     }
 
     setGuardando(true);
     try {
+      if (nuevoUsuarioId) {
+        const conflict = await hasUserTimeConflict({
+          userId: nuevoUsuarioId,
+          fechaISO: nuevaFecha,
+          horaHHMM: horaNormalizada,
+        });
+        if (conflict) {
+          alert("Ese usuario ya tiene un evento en esa fecha y hora. Cambia la hora o asigna otro usuario.");
+          return;
+        }
+      }
+
       const titulo = shouldAutoNameByProceso
         ? await buildProcesoEventoTitle(procesoId)
         : tituloManual;
@@ -861,10 +889,61 @@ function CalendarioContent() {
 
   function abrirDetalleEvento(evento: EventoCalendario) {
     setEventoSeleccionado(evento);
+    setHoraDetalleEditable(normalizeHoraHHMM(evento.hora) ?? "09:00");
   }
 
   function cerrarDetalleEvento() {
     setEventoSeleccionado(null);
+    setHoraDetalleEditable("09:00");
+    setGuardandoHoraDetalle(false);
+  }
+
+  async function guardarHoraEventoSeleccionado() {
+    if (!eventoSeleccionado || guardandoHoraDetalle) return;
+    const horaNormalizada = normalizeHoraHHMM(horaDetalleEditable);
+    if (!horaNormalizada || !isWithinBusinessHours(horaNormalizada)) {
+      alert("La hora debe estar entre 08:00 y 17:00.");
+      return;
+    }
+
+    setGuardandoHoraDetalle(true);
+    try {
+      if (eventoSeleccionado.usuarioId) {
+        const conflict = await hasUserTimeConflict({
+          userId: eventoSeleccionado.usuarioId,
+          fechaISO: eventoSeleccionado.fechaISO,
+          horaHHMM: horaNormalizada,
+          excludeEventoId: eventoSeleccionado.id,
+        });
+        if (conflict) {
+          alert("Ese usuario ya tiene un evento en esa fecha y hora. Cambia la hora o asigna otro usuario.");
+          return;
+        }
+      }
+
+      const updated = await updateEventoApi(eventoSeleccionado.id, {
+        hora: `${horaNormalizada}:00`,
+      });
+
+      const horaActualizada = normalizeHoraHHMM(updated.hora) ?? horaNormalizada;
+      const eventoActualizado: EventoCalendario = {
+        id: updated.id,
+        titulo: updated.titulo,
+        fechaISO: updated.fecha,
+        hora: horaActualizada,
+        usuarioId: updated.usuario_id || undefined,
+        procesoId: updated.proceso_id || undefined,
+      };
+
+      setEventos((prev) => prev.map((ev) => (ev.id === updated.id ? eventoActualizado : ev)));
+      setEventoSeleccionado(eventoActualizado);
+      setHoraDetalleEditable(horaActualizada);
+    } catch (error) {
+      console.error("Error updating evento hour:", error);
+      alert("No se pudo actualizar la hora del evento.");
+    } finally {
+      setGuardandoHoraDetalle(false);
+    }
   }
 
   async function eliminarEvento(id: string) {
@@ -1408,17 +1487,15 @@ function CalendarioContent() {
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">Hora</label>
-                <select
+                <input
+                  type="time"
                   value={nuevaHora}
                   onChange={(e) => setNuevaHora(e.target.value)}
-                  className="h-11 w-full cursor-pointer rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                >
-                  {businessSlots.map((slot) => (
-                    <option key={slot} value={slot}>
-                      {formatHoraLabel(slot)}
-                    </option>
-                  ))}
-                </select>
+                  min={minutesToHHMM(BUSINESS_START_MINUTES)}
+                  max={minutesToHHMM(BUSINESS_END_MINUTES)}
+                  step={60}
+                  className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                />
               </div>
             </div>
             <div className="mt-3">
@@ -1500,7 +1577,25 @@ function CalendarioContent() {
 
                 <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-zinc-200 bg-zinc-50 p-3 dark:border-white/10 dark:bg-white/5">
                   <div className="text-xs text-zinc-500 dark:text-zinc-400">Hora</div>
-                  <div className="text-sm font-medium">{eventoSeleccionado.hora || "Sin hora"}</div>
+                  <div className="flex flex-1 min-w-[220px] flex-wrap items-center gap-2">
+                    <input
+                      type="time"
+                      value={horaDetalleEditable}
+                      onChange={(e) => setHoraDetalleEditable(e.target.value)}
+                      min={minutesToHHMM(BUSINESS_START_MINUTES)}
+                      max={minutesToHHMM(BUSINESS_END_MINUTES)}
+                      step={60}
+                      className="h-10 min-w-[130px] rounded-xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void guardarHoraEventoSeleccionado()}
+                      disabled={guardandoHoraDetalle}
+                      className="h-10 rounded-xl border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 shadow-sm transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:bg-white/10"
+                    >
+                      {guardandoHoraDetalle ? "Guardando..." : "Guardar hora"}
+                    </button>
+                  </div>
                 </div>
 
                 {getNombreUsuario(eventoSeleccionado.usuarioId) && (

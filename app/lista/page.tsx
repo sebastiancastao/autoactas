@@ -164,10 +164,44 @@ function minutesToHHMM(total: number) {
   return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
 }
 
+const BUSINESS_START_MINUTES = 8 * 60;
+const BUSINESS_END_MINUTES = 17 * 60;
+
 function getBusinessSlotsHHMM() {
   const out: string[] = [];
-  for (let m = 8 * 60; m <= 17 * 60; m += 30) out.push(minutesToHHMM(m));
+  for (let m = BUSINESS_START_MINUTES; m <= BUSINESS_END_MINUTES; m += 30) out.push(minutesToHHMM(m));
   return out;
+}
+
+function isWithinBusinessHours(hhmm: string | null | undefined) {
+  const normalized = normalizeHoraHHMM(hhmm);
+  if (!normalized) return false;
+  const total = hhmmToMinutes(normalized);
+  if (total === null) return false;
+  return total >= BUSINESS_START_MINUTES && total <= BUSINESS_END_MINUTES;
+}
+
+async function hasUserTimeConflict(params: {
+  userId: string;
+  fechaISO: string;
+  horaHHMM: string;
+  excludeEventoId?: string;
+}) {
+  const hora = `${params.horaHHMM}:00`;
+  let query = supabase
+    .from("eventos")
+    .select("id", { head: true, count: "exact" })
+    .eq("usuario_id", params.userId)
+    .eq("fecha", params.fechaISO)
+    .eq("hora", hora);
+
+  if (params.excludeEventoId) {
+    query = query.neq("id", params.excludeEventoId);
+  }
+
+  const { count, error } = await query;
+  if (error) throw error;
+  return (count ?? 0) > 0;
 }
 
 type AcreedorConApoderadoId = {
@@ -595,7 +629,7 @@ function AttendanceContent() {
 
   // Próxima audiencia
   const [proximaFecha, setProximaFecha] = useState("");
-  const [proximaHora, setProximaHora] = useState("09:30");
+  const [proximaHora, setProximaHora] = useState("09:00");
   const [proximaTitulo, setProximaTitulo] = useState("");
   const [agendando, setAgendando] = useState(false);
   const [agendarError, setAgendarError] = useState<string | null>(null);
@@ -1853,14 +1887,12 @@ function AttendanceContent() {
         setProximaTitulo(pick.titulo ?? "");
         setProximaFecha(pick.fecha);
 
-        const slots = getBusinessSlotsHHMM();
         const horaPick = (pick as any).horaHHMM as string | null;
-        if (horaPick && slots.includes(horaPick)) {
+        if (horaPick && isWithinBusinessHours(horaPick)) {
           setProximaHora(horaPick);
         } else if (horaPick) {
-          // Keep UI consistent with allowed schedule window.
-          setProximaHora(slots[0] ?? "08:00");
-          setEventoSiguienteError(`El evento existente tiene hora ${horaPick} fuera del horario 8:00-17:00. Ajusta antes de guardar.`);
+          setProximaHora(minutesToHHMM(BUSINESS_START_MINUTES));
+          setEventoSiguienteError(`El evento existente tiene hora ${horaPick} fuera del horario 08:00-17:00. Ajusta antes de guardar.`);
         }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -1890,13 +1922,31 @@ function AttendanceContent() {
     setAgendarExito(null);
 
     try {
+      const horaNormalizada = normalizeHoraHHMM(proximaHora);
+      if (!horaNormalizada || !isWithinBusinessHours(horaNormalizada)) {
+        throw new Error("La hora debe estar entre 08:00 y 17:00.");
+      }
+
+      const currentUserId = user?.id ?? null;
+      if (currentUserId) {
+        const conflict = await hasUserTimeConflict({
+          userId: currentUserId,
+          fechaISO: proximaFecha,
+          horaHHMM: horaNormalizada,
+          excludeEventoId: eventoSiguienteId ?? undefined,
+        });
+        if (conflict) {
+          throw new Error("Ese usuario ya tiene un evento en esa fecha y hora. Cambia la hora.");
+        }
+      }
+
       const tituloEvento = proximaTitulo.trim() || `Audiencia - ${numeroProceso || procesoId}`;
 
       const payloadBase = {
         titulo: tituloEvento,
         descripcion: `Proxima audiencia programada desde lista de asistencia.`,
         fecha: proximaFecha,
-        hora: proximaHora ? `${proximaHora}:00` : null,
+        hora: `${horaNormalizada}:00`,
         fecha_fin: null,
         hora_fin: null,
         usuario_id: user?.id ?? null,
@@ -1916,7 +1966,7 @@ function AttendanceContent() {
       }
 
       // Format time for display (24h -> 12h)
-      const [hh, mm] = proximaHora.split(":");
+      const [hh, mm] = horaNormalizada.split(":");
       const h24 = Number(hh);
       const meridiem = h24 >= 12 ? "PM" : "AM";
       const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
@@ -2222,31 +2272,15 @@ function AttendanceContent() {
                   Próxima Hora
                   <span className="ml-1 text-zinc-400 dark:text-zinc-500">(8 AM – 5 PM)</span>
                 </label>
-                <select
+                <input
+                  type="time"
                   value={proximaHora}
                   onChange={(e) => setProximaHora(e.target.value)}
-                  className="h-11 w-full cursor-pointer rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                >
-                  <option value="08:00">8:00 AM</option>
-                  <option value="08:30">8:30 AM</option>
-                  <option value="09:00">9:00 AM</option>
-                  <option value="09:30">9:30 AM</option>
-                  <option value="10:00">10:00 AM</option>
-                  <option value="10:30">10:30 AM</option>
-                  <option value="11:00">11:00 AM</option>
-                  <option value="11:30">11:30 AM</option>
-                  <option value="12:00">12:00 PM</option>
-                  <option value="12:30">12:30 PM</option>
-                  <option value="13:00">1:00 PM</option>
-                  <option value="13:30">1:30 PM</option>
-                  <option value="14:00">2:00 PM</option>
-                  <option value="14:30">2:30 PM</option>
-                  <option value="15:00">3:00 PM</option>
-                  <option value="15:30">3:30 PM</option>
-                  <option value="16:00">4:00 PM</option>
-                  <option value="16:30">4:30 PM</option>
-                  <option value="17:00">5:00 PM</option>
-                </select>
+                  min={minutesToHHMM(BUSINESS_START_MINUTES)}
+                  max={minutesToHHMM(BUSINESS_END_MINUTES)}
+                  step={60}
+                  className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                />
               </div>
             </div>
 
@@ -3450,31 +3484,15 @@ function AttendanceContent() {
                 <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
                   Hora
                 </label>
-                <select
+                <input
+                  type="time"
                   value={proximaHora}
                   onChange={(e) => setProximaHora(e.target.value)}
-                  className="h-11 w-full cursor-pointer rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                >
-                  <option value="08:00">8:00 AM</option>
-                  <option value="08:30">8:30 AM</option>
-                  <option value="09:00">9:00 AM</option>
-                  <option value="09:30">9:30 AM</option>
-                  <option value="10:00">10:00 AM</option>
-                  <option value="10:30">10:30 AM</option>
-                  <option value="11:00">11:00 AM</option>
-                  <option value="11:30">11:30 AM</option>
-                  <option value="12:00">12:00 PM</option>
-                  <option value="12:30">12:30 PM</option>
-                  <option value="13:00">1:00 PM</option>
-                  <option value="13:30">1:30 PM</option>
-                  <option value="14:00">2:00 PM</option>
-                  <option value="14:30">2:30 PM</option>
-                  <option value="15:00">3:00 PM</option>
-                  <option value="15:30">3:30 PM</option>
-                  <option value="16:00">4:00 PM</option>
-                  <option value="16:30">4:30 PM</option>
-                  <option value="17:00">5:00 PM</option>
-                </select>
+                  min={minutesToHHMM(BUSINESS_START_MINUTES)}
+                  max={minutesToHHMM(BUSINESS_END_MINUTES)}
+                  step={60}
+                  className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                />
               </div>
             </div>
 
