@@ -44,6 +44,7 @@ export default function RegistroForm({ initialProcesoId, focusSection }: Registr
     updateProgresoOnSubmit: false,
   });
   const modalCreationRef = useRef<FocusSection | null>(null);
+  const appliedApoderadoQueryRef = useRef<string | null>(null);
   const {
     acreedoresForm,
     deudoresForm,
@@ -140,6 +141,7 @@ export default function RegistroForm({ initialProcesoId, focusSection }: Registr
 
     if (!apoderadoIdParam && !apoderadoNameParam) {
       modalCreationRef.current = null;
+      appliedApoderadoQueryRef.current = null;
       return;
     }
 
@@ -151,6 +153,13 @@ export default function RegistroForm({ initialProcesoId, focusSection }: Registr
     }
 
     const needsCreation = needsApoderadoCreation;
+    const querySignature = [
+      normalizedFocusSection,
+      apoderadoIdParam ?? "",
+      apoderadoNameParam ?? "",
+    ].join("|");
+    const alreadyAppliedForSignature =
+      appliedApoderadoQueryRef.current === querySignature;
 
     // When apoderadoIdParam is provided, use it directly even if not found in list
     const patch = {
@@ -167,9 +176,18 @@ export default function RegistroForm({ initialProcesoId, focusSection }: Registr
       return;
     }
 
-    const rowUpdated =
+    const rowDiffersFromQuery =
       primerFila.apoderadoId !== patch.apoderadoId ||
       primerFila.apoderadoNombre !== patch.apoderadoNombre;
+
+    // If this query signature was already applied once, do not force-override
+    // a manual change made by the user in the row.
+    if (alreadyAppliedForSignature && rowDiffersFromQuery) {
+      return;
+    }
+
+    const rowUpdated =
+      rowDiffersFromQuery;
 
     if (rowUpdated) {
       if (isAcreedor) {
@@ -200,6 +218,8 @@ export default function RegistroForm({ initialProcesoId, focusSection }: Registr
       });
     }
 
+    appliedApoderadoQueryRef.current = querySignature;
+
     if (!needsCreation) {
       modalCreationRef.current = null;
     }
@@ -221,6 +241,11 @@ export default function RegistroForm({ initialProcesoId, focusSection }: Registr
 
   useEffect(() => {
     if (typeof window === "undefined" || !normalizedFocusSection) {
+      return;
+    }
+
+    // Canonicalize only when URL came with apoderadoName (without id).
+    if (!apoderadoNameParam || apoderadoIdParam) {
       return;
     }
 
@@ -256,6 +281,8 @@ export default function RegistroForm({ initialProcesoId, focusSection }: Registr
     });
   }, [
     normalizedFocusSection,
+    apoderadoNameParam,
+    apoderadoIdParam,
     deudoresForm,
     acreedoresForm,
     router,
