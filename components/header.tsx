@@ -12,6 +12,7 @@ type NavLink = {
   href: string
   label: string
   match: (pathname: string) => boolean
+  adminOnly?: boolean
 }
 
 type ListaProcesoOption = {
@@ -39,6 +40,7 @@ const NAV_LINKS: NavLink[] = [
   { href: '/calendario', label: 'Calendario', match: (pathname) => pathname.startsWith('/calendario') },
   { href: '/inicializacion', label: 'Inicializacion', match: (pathname) => pathname.startsWith('/inicializacion') },
   { href: '/lista', label: 'Audiencia', match: (pathname) => pathname.startsWith('/lista') },
+  { href: '/admin/usuarios', label: 'Usuarios', match: (pathname) => pathname.startsWith('/admin/usuarios'), adminOnly: true },
 ]
 
 function getContextLabel(pathname: string) {
@@ -105,12 +107,17 @@ export function Header() {
     width: 280,
   })
   const [dashboardAllowed, setDashboardAllowed] = useState(false)
+  const [isAdmin, setIsAdmin] = useState(false)
 
   const activeLabel = useMemo(() => getContextLabel(pathname), [pathname])
   const isRegistroRoute = pathname.startsWith('/registro')
   const navLinks = useMemo(
-    () => NAV_LINKS.filter((item) => item.href !== '/dashboard' || dashboardAllowed),
-    [dashboardAllowed],
+    () => NAV_LINKS.filter((item) => {
+      if (item.href === '/dashboard' && !dashboardAllowed) return false
+      if (item.adminOnly && !isAdmin) return false
+      return true
+    }),
+    [dashboardAllowed, isAdmin],
   )
 
   const handleSignOut = async () => {
@@ -260,6 +267,7 @@ export function Header() {
 
   useEffect(() => {
     setDashboardAllowed(false)
+    setIsAdmin(false)
 
     if (!user?.id) return
 
@@ -277,7 +285,9 @@ export function Header() {
       }
 
       if (canceled) return
-      setDashboardAllowed(canSeeDashboard((data as UsuarioDashboardAccessRow | null) ?? null))
+      const profile = (data as UsuarioDashboardAccessRow | null) ?? null
+      setDashboardAllowed(canSeeDashboard(profile))
+      setIsAdmin(normalizeIdentityValue(profile?.rol) === 'admin')
     })()
 
     return () => {
