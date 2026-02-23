@@ -1279,9 +1279,9 @@ function CalendarioContent() {
                                   href={autoState.result.webViewLink}
                                   target="_blank"
                                   rel="noreferrer"
-                                  className="text-[11px] font-semibold text-zinc-700 underline underline-offset-2 dark:text-zinc-200"
+                                  className="text-[11px] font-semibold text-emerald-700 underline underline-offset-2 dark:text-emerald-400"
                                 >
-                                  Abrir auto admisorio
+                                  Editar en Google Docs
                                 </a>
                               )}
                               {canCrearAutoAdmisorio &&
@@ -1417,9 +1417,9 @@ function CalendarioContent() {
                               target="_blank"
                               rel="noreferrer"
                               onClick={(e) => e.stopPropagation()}
-                              className="text-[11px] font-semibold text-zinc-700 underline underline-offset-2 dark:text-zinc-200"
+                              className="text-[11px] font-semibold text-emerald-700 underline underline-offset-2 dark:text-emerald-400"
                             >
-                              Abrir auto admisorio
+                              Editar en Google Docs
                             </a>
                           )}
                           {canCrearAutoAdmisorio &&

@@ -82,6 +82,7 @@ type ProcesoMetricas = {
   deudores: DeudorDetalle[];
   acreedores: AcreedorDetalle[];
   totalAcreenciasProceso: number;
+  eventos: EventoDashboardRow[];
 };
 
 const PROCESO_SELECT =
@@ -787,6 +788,7 @@ export default function DashboardPage() {
             deudores: deudoresProceso,
             acreedores: acreedoresProceso,
             totalAcreenciasProceso,
+            eventos: eventosProceso,
           };
         });
 
@@ -886,6 +888,65 @@ export default function DashboardPage() {
     return new Set(metricasPorProceso.map((item) => item.usuarioProcesoLabel)).size;
   }, [isAdmin, metricasPorProceso]);
 
+  const resumenPorUsuario = useMemo(() => {
+    if (!isAdmin) return [];
+
+    const now = new Date();
+
+    const startOfWeek = new Date(now);
+    startOfWeek.setHours(0, 0, 0, 0);
+    const dow = startOfWeek.getDay();
+    startOfWeek.setDate(startOfWeek.getDate() - (dow === 0 ? 6 : dow - 1));
+
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(endOfWeek.getDate() + 6);
+    endOfWeek.setHours(23, 59, 59, 999);
+
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+
+    const byUser = new Map<string, {
+      label: string;
+      eventosSemana: number;
+      eventosMes: number;
+      eventosRealizados: number;
+      eventosPorVenir: number;
+      eventosTotal: number;
+    }>();
+
+    for (const item of metricasPorProceso) {
+      const label = item.usuarioProcesoLabel;
+      const entry = byUser.get(label) ?? {
+        label,
+        eventosSemana: 0,
+        eventosMes: 0,
+        eventosRealizados: item.eventosRealizados,
+        eventosPorVenir: item.eventosPorVenir,
+        eventosTotal: item.totalEventos,
+      };
+
+      if (byUser.has(label)) {
+        entry.eventosRealizados += item.eventosRealizados;
+        entry.eventosPorVenir += item.eventosPorVenir;
+        entry.eventosTotal += item.totalEventos;
+      }
+
+      for (const evento of item.eventos) {
+        const eventDate = toEventDate(evento.fecha, evento.hora, "start");
+        if (!eventDate) continue;
+        const t = eventDate.getTime();
+        if (t >= startOfWeek.getTime() && t <= endOfWeek.getTime()) entry.eventosSemana++;
+        if (t >= startOfMonth.getTime() && t <= endOfMonth.getTime()) entry.eventosMes++;
+      }
+
+      byUser.set(label, entry);
+    }
+
+    return Array.from(byUser.values()).sort((a, b) =>
+      a.label.localeCompare(b.label, "es", { sensitivity: "base" }),
+    );
+  }, [isAdmin, metricasPorProceso]);
+
   if (!user) {
     return (
       <div className="min-h-screen bg-zinc-50 text-zinc-950 dark:bg-black dark:text-zinc-50">
@@ -971,6 +1032,43 @@ export default function DashboardPage() {
               <MetricChip label="Finalizados" value={resumenProgreso.finalizado} tone="positive" />
               {isAdmin && <MetricChip label="Usuarios" value={usuariosConProcesos} />}
             </section>
+
+            {isAdmin && resumenPorUsuario.length > 0 && (
+              <section className="mt-6 rounded-3xl border border-zinc-200 bg-white/85 p-5 shadow-sm dark:border-white/10 dark:bg-white/5">
+                <h2 className="text-base font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
+                  Actividad por usuario
+                </h2>
+                <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                  Eventos de cada usuario en la semana y mes actuales.
+                </p>
+                <div className="mt-4 overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-zinc-200 dark:border-white/10">
+                        <th className="pb-2 pr-4 text-left text-[11px] font-semibold uppercase tracking-[0.15em] text-zinc-500 dark:text-zinc-400">Usuario</th>
+                        <th className="pb-2 px-3 text-right text-[11px] font-semibold uppercase tracking-[0.15em] text-zinc-500 dark:text-zinc-400">Esta semana</th>
+                        <th className="pb-2 px-3 text-right text-[11px] font-semibold uppercase tracking-[0.15em] text-zinc-500 dark:text-zinc-400">Este mes</th>
+                        <th className="pb-2 px-3 text-right text-[11px] font-semibold uppercase tracking-[0.15em] text-emerald-600 dark:text-emerald-400">Realizados</th>
+                        <th className="pb-2 px-3 text-right text-[11px] font-semibold uppercase tracking-[0.15em] text-amber-600 dark:text-amber-400">Por venir</th>
+                        <th className="pb-2 pl-3 text-right text-[11px] font-semibold uppercase tracking-[0.15em] text-zinc-500 dark:text-zinc-400">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-100 dark:divide-white/5">
+                      {resumenPorUsuario.map((entry) => (
+                        <tr key={entry.label}>
+                          <td className="py-3 pr-4 font-medium text-zinc-900 dark:text-zinc-100">{entry.label}</td>
+                          <td className="py-3 px-3 text-right tabular-nums text-zinc-700 dark:text-zinc-300">{entry.eventosSemana}</td>
+                          <td className="py-3 px-3 text-right tabular-nums text-zinc-700 dark:text-zinc-300">{entry.eventosMes}</td>
+                          <td className="py-3 px-3 text-right tabular-nums text-emerald-600 dark:text-emerald-400">{entry.eventosRealizados}</td>
+                          <td className="py-3 px-3 text-right tabular-nums text-amber-600 dark:text-amber-400">{entry.eventosPorVenir}</td>
+                          <td className="py-3 pl-3 text-right tabular-nums font-semibold text-zinc-900 dark:text-zinc-100">{entry.eventosTotal}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            )}
 
             <section className="mt-6 grid gap-4 xl:grid-cols-2">
               <article className="rounded-3xl border border-zinc-200 bg-white/85 p-5 shadow-sm dark:border-white/10 dark:bg-white/5">

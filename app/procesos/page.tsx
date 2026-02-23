@@ -1751,10 +1751,10 @@ export default function ProcesosPage() {
                                 href={autoState.result.webViewLink}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="font-semibold underline underline-offset-2"
+                                className="font-semibold text-emerald-700 underline underline-offset-2 dark:text-emerald-400"
                                 onClick={(e) => e.stopPropagation()}
                               >
-                                Abrir en Drive
+                                Editar en Google Docs
                               </a>
                             </div>
 

@@ -618,9 +618,9 @@ export default function InicializacionPage() {
                           href={autoState.result.webViewLink}
                           target="_blank"
                           rel="noreferrer"
-                          className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-zinc-700 transition hover:border-zinc-900 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white"
+                          className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700 transition hover:border-emerald-500 hover:bg-emerald-100 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:border-emerald-700"
                         >
-                          Abrir en Drive
+                          Editar en Google Docs
                         </a>
                       )}
 
