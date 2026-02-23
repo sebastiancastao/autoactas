@@ -14,7 +14,6 @@ import {
   updateProceso,
 } from "@/lib/api/proceso";
 import { updateProgresoByProcesoId } from "@/lib/api/progreso";
-import { createGravityLead } from "@/lib/api/gravity-forms";
 import {
   getDigitCount,
   isNitIdentification,
@@ -54,6 +53,7 @@ type ObligacionFormRow = {
   interesCte: string;
   interesMora: string;
   otros: string;
+  diasMora: string;
 };
 
 type AcreedorFormRow = DeudorFormRow & {
@@ -131,6 +131,7 @@ function createObligacionRow(id: string = uid()): ObligacionFormRow {
     interesCte: "",
     interesMora: "",
     otros: "",
+    diasMora: "",
   };
 }
 
@@ -170,86 +171,7 @@ function parseOptionalNumber(value: string) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function trimOrNull(value: string) {
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
 
-function selectPrimaryAcreedor(
-  acreedores: AcreedorFormRow[],
-  selectedAcreedorId: string,
-) {
-  const selected = acreedores.find(
-    (row) => row.id === selectedAcreedorId && row.nombre.trim().length > 0,
-  );
-  if (selected) return selected;
-  return acreedores.find((row) => row.nombre.trim().length > 0) ?? null;
-}
-
-function buildGravityLeadPayload(params: {
-  procesoId: string;
-  numeroProceso: string;
-  fechaProceso: string;
-  estado: string;
-  tipoProceso: string;
-  juzgado: string;
-  descripcion: string;
-  deudores: DeudorFormRow[];
-  acreedores: AcreedorFormRow[];
-  selectedAcreedorId: string;
-  createdByAuthId: string | null;
-  createdByEmail: string | null;
-}) {
-  const primaryDeudor =
-    params.deudores.find((row) => row.nombre.trim().length > 0) ?? null;
-  const primaryAcreedor = selectPrimaryAcreedor(
-    params.acreedores,
-    params.selectedAcreedorId,
-  );
-  const acreedoresCount = params.acreedores.filter(
-    (row) => row.nombre.trim().length > 0,
-  ).length;
-
-  return {
-    procesoId: params.procesoId,
-    numeroProceso: params.numeroProceso.trim(),
-    fechaProceso: params.fechaProceso,
-    estado: trimOrNull(params.estado),
-    tipoProceso: trimOrNull(params.tipoProceso),
-    juzgado: trimOrNull(params.juzgado),
-    descripcion: trimOrNull(params.descripcion),
-    acreedoresCount,
-    createdAt: new Date().toISOString(),
-    createdByAuthId: params.createdByAuthId,
-    createdByEmail: params.createdByEmail,
-    deudor: primaryDeudor
-      ? {
-          nombre: trimOrNull(primaryDeudor.nombre),
-          identificacion: trimOrNull(primaryDeudor.identificacion),
-          tipoIdentificacion: trimOrNull(primaryDeudor.tipoIdentificacion),
-          email: trimOrNull(primaryDeudor.email),
-          telefono: trimOrNull(primaryDeudor.telefono),
-          direccion: trimOrNull(primaryDeudor.direccion),
-          apoderadoId: trimOrNull(primaryDeudor.apoderadoId),
-          apoderadoNombre: trimOrNull(primaryDeudor.apoderadoNombre),
-        }
-      : null,
-    acreedorPrincipal: primaryAcreedor
-      ? {
-          nombre: trimOrNull(primaryAcreedor.nombre),
-          identificacion: trimOrNull(primaryAcreedor.identificacion),
-          tipoIdentificacion: trimOrNull(primaryAcreedor.tipoIdentificacion),
-          email: trimOrNull(primaryAcreedor.email),
-          telefono: trimOrNull(primaryAcreedor.telefono),
-          direccion: trimOrNull(primaryAcreedor.direccion),
-          apoderadoId: trimOrNull(primaryAcreedor.apoderadoId),
-          apoderadoNombre: trimOrNull(primaryAcreedor.apoderadoNombre),
-          monto: trimOrNull(primaryAcreedor.monto),
-          tipoAcreencia: trimOrNull(primaryAcreedor.tipoAcreencia),
-        }
-      : null,
-  } satisfies Record<string, unknown>;
-}
 
 function computeObligacionTotal(obligacion: ObligacionFormRow) {
   return obligationAmountFields.reduce(
@@ -412,6 +334,8 @@ function mapAcreedoresToFormRows(
                 acreenciaFromRelation.otros_cobros_seguros != null
                   ? acreenciaFromRelation.otros_cobros_seguros.toString()
                   : "",
+              diasMora:
+                acreenciaFromRelation.dias_mora != null ? acreenciaFromRelation.dias_mora.toString() : "",
             },
           ]
         : [];
@@ -426,6 +350,7 @@ function mapAcreedoresToFormRows(
           interesCte: "",
           interesMora: "",
           otros: "",
+          diasMora: "",
         })) ?? [];
 
       return {
@@ -936,6 +861,9 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
       const prelacion =
         fila.obligaciones.find((obligacion) => obligacion.prelacion.trim())?.prelacion.trim() ||
         null;
+      const diasMoraRaw =
+        fila.obligaciones.find((obligacion) => obligacion.diasMora.trim())?.diasMora.trim() || null;
+      const diasMora = diasMoraRaw != null ? parseOptionalNumber(diasMoraRaw) : null;
 
       const hasCapital = fila.obligaciones.some((obligacion) => obligacion.capital.trim() !== "");
       const hasIntCte = fila.obligaciones.some((obligacion) => obligacion.interesCte.trim() !== "");
@@ -946,7 +874,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
       const hasAnyComponente = hasCapital || hasIntCte || hasIntMora || hasOtros;
 
       // Avoid creating empty acreencias rows when no acreencia data was provided.
-      if (!hasAnyMeta && !hasAnyComponente && montoManual == null) {
+      if (!hasAnyMeta && !hasAnyComponente && montoManual == null && diasMora == null) {
         return [];
       }
 
@@ -979,6 +907,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
           otros_cobros_seguros: otros,
           total,
           porcentaje: 0,
+          dias_mora: diasMora,
         },
       ];
     });
@@ -1188,36 +1117,6 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
         }
       }
 
-      let gravityLeadError: string | null = null;
-      if (!isEditing) {
-        try {
-          const leadPayload = buildGravityLeadPayload({
-            procesoId: savedProceso.id,
-            numeroProceso,
-            fechaProceso: fechaprocesos,
-            estado,
-            tipoProceso,
-            juzgado,
-            descripcion,
-            deudores: deudoresForm,
-            acreedores: acreedoresForm,
-            selectedAcreedorId,
-            createdByAuthId: user?.id ?? null,
-            createdByEmail: user?.email ?? null,
-          });
-          await createGravityLead({ lead: leadPayload });
-        } catch (leadError) {
-          gravityLeadError = getErrorMessage(
-            leadError,
-            "No se pudo sincronizar el lead con Gravity Forms.",
-          );
-          console.error(
-            "Gravity Forms lead sync failed:",
-            formatErrorForLog(leadError),
-          );
-        }
-      }
-
       onSaveSuccess?.(savedProceso, { isEditing });
 
       if (isEditing) {
@@ -1225,11 +1124,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
         setExito("Proceso actualizado exitosamente");
       } else {
         resetFormFields();
-        setExito(
-          gravityLeadError
-            ? `Proceso creado exitosamente, pero el lead de Gravity Forms no se pudo crear: ${gravityLeadError}`
-            : "Proceso creado exitosamente",
-        );
+        setExito("Proceso creado exitosamente");
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : (err as { message?: string })?.message || String(err);

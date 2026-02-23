@@ -131,6 +131,7 @@ type AcreenciaRow = {
   total?: number | null;
   porcentaje?: number | null;
   voto?: string | null;
+  dias_mora?: number | null;
 };
 
 type TerminarAudienciaPayload = {
@@ -1604,8 +1605,8 @@ function createExcelDocTable(table: ExcelDocTable) {
 }
 
 function createAcreenciasTable(acreencias: AcreenciaRow[]) {
-  const headers = ["ACREEDOR", "NATURALEZA", "PRELACION", "CAPITAL", "INT. CTE.", "INT. MORA", "OTROS COBROS/ SEGUROS", "TOTAL", "%"];
-  const columnWidths = [18, 10, 8, 11, 9, 9, 14, 13, 8];
+  const headers = ["ACREEDOR", "NATURALEZA", "PRELACION", "CAPITAL", "INT. CTE.", "INT. MORA", "DIAS DE MORA", "OTROS COBROS/ SEGUROS", "TOTAL", "%"];
+  const columnWidths = [16, 9, 7, 10, 8, 8, 8, 13, 13, 8];
   const tableWidthTwip = convertInchesToTwip(11 - (0.6 * 2) - 1.75); // 11" page - margins - a bit of slack
   const columnWidthsTwip = columnWidths.map((pct) => Math.max(120, Math.round((tableWidthTwip * pct) / 100)));
   const twipSum = columnWidthsTwip.reduce((acc, v) => acc + v, 0);
@@ -1671,6 +1672,10 @@ function createAcreenciasTable(acreencias: AcreenciaRow[]) {
             borders: tableBorders,
           }),
           new TableCell({
+            children: [new Paragraph({ children: [new TextRun({ text: a.dias_mora != null ? String(a.dias_mora) : "—", size: 18 })], alignment: AlignmentType.RIGHT })],
+            borders: tableBorders,
+          }),
+          new TableCell({
             children: [new Paragraph({ children: [new TextRun({ text: formatCurrency(a.otros), size: 18 })], alignment: AlignmentType.RIGHT })],
             borders: tableBorders,
           }),
@@ -1711,6 +1716,7 @@ function createAcreenciasTable(acreencias: AcreenciaRow[]) {
         borders: tableBorders,
         shading: { fill: "E0E0E0" },
       }),
+      new TableCell({ children: [new Paragraph("")], borders: tableBorders, shading: { fill: "E0E0E0" } }),
       new TableCell({
         children: [new Paragraph({ children: [new TextRun({ text: formatCurrency(totalOtros), bold: true, size: 18 })], alignment: AlignmentType.RIGHT })],
         borders: tableBorders,

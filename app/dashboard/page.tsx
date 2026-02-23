@@ -288,9 +288,9 @@ function MetricChip({ label, value, tone = "neutral" }: MetricChipProps) {
         : "border-zinc-200 bg-white/80 text-zinc-700 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200";
 
   return (
-    <div className={`rounded-2xl border px-4 py-3 ${toneClass}`}>
+    <div className={`rounded-2xl border px-3 py-2.5 sm:px-4 sm:py-3 ${toneClass}`}>
       <p className="text-[11px] font-semibold uppercase tracking-[0.2em] opacity-85">{label}</p>
-      <p className="mt-1 text-2xl font-semibold tracking-tight">{value}</p>
+      <p className="mt-1 text-xl font-semibold tracking-tight sm:text-2xl">{value}</p>
     </div>
   );
 }
@@ -399,7 +399,7 @@ function ProgresoBarsChart({
   maxValue: number;
 }) {
   return (
-    <div className="mt-4 grid grid-cols-3 gap-3">
+    <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
       {data.map((entry) => {
         const ratio = maxValue > 0 ? (entry.value / maxValue) * 100 : 0;
         return (
@@ -963,13 +963,13 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-zinc-50 text-zinc-950 dark:bg-black dark:text-zinc-50">
       <div className="pointer-events-none fixed inset-x-0 top-0 h-40 bg-gradient-to-b from-white/70 to-transparent dark:from-zinc-900/60" />
 
-      <main className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8 xl:max-w-[90rem] 2xl:max-w-[110rem]">
-        <header className="rounded-3xl border border-zinc-200 bg-white/85 p-6 shadow-sm dark:border-white/10 dark:bg-white/5">
+      <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-8 sm:py-10 xl:max-w-[90rem] 2xl:max-w-[110rem]">
+        <header className="rounded-3xl border border-zinc-200 bg-white/85 p-4 shadow-sm sm:p-6 dark:border-white/10 dark:bg-white/5">
           <div className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/70 px-3 py-1 text-xs text-zinc-600 shadow-sm dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
             <span className="h-2 w-2 rounded-full bg-emerald-500" />
             Dashboard
           </div>
-          <h1 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">
+          <h1 className="mt-4 text-2xl font-semibold tracking-tight sm:text-3xl sm:text-4xl">
             Dashboard de procesos por usuario
           </h1>
           <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
@@ -1021,7 +1021,7 @@ export default function DashboardPage() {
         ) : (
           <>
             <section
-              className={`mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4 ${isAdmin ? "2xl:grid-cols-8" : "2xl:grid-cols-6"}`}
+              className={`mt-6 grid grid-cols-2 gap-3 xl:grid-cols-4 ${isAdmin ? "2xl:grid-cols-8" : "2xl:grid-cols-6"}`}
             >
               <MetricChip label="Procesos" value={resumenGlobal.procesos} />
               <MetricChip label="Eventos totales" value={resumenGlobal.totalEventos} />
@@ -1034,7 +1034,7 @@ export default function DashboardPage() {
             </section>
 
             {isAdmin && resumenPorUsuario.length > 0 && (
-              <section className="mt-6 rounded-3xl border border-zinc-200 bg-white/85 p-5 shadow-sm dark:border-white/10 dark:bg-white/5">
+              <section className="mt-6 rounded-3xl border border-zinc-200 bg-white/85 p-4 shadow-sm sm:p-5 dark:border-white/10 dark:bg-white/5">
                 <h2 className="text-base font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
                   Actividad por usuario
                 </h2>
@@ -1070,8 +1070,8 @@ export default function DashboardPage() {
               </section>
             )}
 
-            <section className="mt-6 grid gap-4 xl:grid-cols-2">
-              <article className="rounded-3xl border border-zinc-200 bg-white/85 p-5 shadow-sm dark:border-white/10 dark:bg-white/5">
+            <section className="mt-6 grid gap-4 lg:grid-cols-2">
+              <article className="rounded-3xl border border-zinc-200 bg-white/85 p-4 shadow-sm sm:p-5 dark:border-white/10 dark:bg-white/5">
                 <h2 className="text-base font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
                   Overview de progreso
                 </h2>
@@ -1079,13 +1079,13 @@ export default function DashboardPage() {
                   Distribucion global del estado en la tabla de progreso por proceso.
                 </p>
 
-                <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-center">
+                <div className="mt-4 flex flex-col items-center gap-4 sm:flex-row sm:items-center">
                   <ProgresoDonutChart
                     data={progresoChartData}
                     total={resumenProgreso.total}
                     finalizadoPct={resumenProgreso.finalizadoPct}
                   />
-                  <div className="grid flex-1 gap-2">
+                  <div className="grid w-full flex-1 gap-2">
                     {progresoChartData.map((entry) => (
                       <div
                         key={entry.id}
@@ -1119,7 +1119,7 @@ export default function DashboardPage() {
                 </div>
               </article>
 
-              <article className="rounded-3xl border border-zinc-200 bg-white/85 p-5 shadow-sm dark:border-white/10 dark:bg-white/5">
+              <article className="rounded-3xl border border-zinc-200 bg-white/85 p-4 shadow-sm sm:p-5 dark:border-white/10 dark:bg-white/5">
                 <h2 className="text-base font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
                   Grafico de procesos por estado
                 </h2>
@@ -1134,7 +1134,7 @@ export default function DashboardPage() {
               {metricasPorProceso.map((item) => (
                 <article
                   key={item.proceso.id}
-                  className="rounded-3xl border border-zinc-200 bg-white/85 p-5 shadow-sm dark:border-white/10 dark:bg-white/5"
+                  className="rounded-3xl border border-zinc-200 bg-white/85 p-4 shadow-sm sm:p-5 dark:border-white/10 dark:bg-white/5"
                 >
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -1167,7 +1167,7 @@ export default function DashboardPage() {
                     </div>
                   </div>
 
-                  <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                  <div className="mt-4 grid grid-cols-3 gap-2">
                     <MetricChip label="Total" value={item.totalEventos} />
                     <MetricChip label="Realizados" value={item.eventosRealizados} tone="positive" />
                     <MetricChip label="Por venir" value={item.eventosPorVenir} tone="warning" />
@@ -1215,7 +1215,7 @@ export default function DashboardPage() {
                     </p>
                   </div>
 
-                  <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                  <div className="mt-4 grid gap-4 md:grid-cols-2">
                     <section className="rounded-2xl border border-zinc-200 bg-white/70 p-4 dark:border-white/10 dark:bg-white/5">
                       <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Deudores y apoderados</h3>
                       {item.deudores.length === 0 ? (

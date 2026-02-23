@@ -5,11 +5,11 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
 
 import { getProcesoWithRelations } from "@/lib/api/proceso";
-import { getApoderadosByIds } from "@/lib/api/apoderados";
+import { getApoderadosByIds, getApoderadosByProceso, getApoderadoById } from "@/lib/api/apoderados";
 import { getDeudoresByProceso } from "@/lib/api/deudores";
 import { createAsistenciasBulk } from "@/lib/api/asistencia";
 import { getAcreenciasByProceso, getAcreenciasHistorialByProceso, updateAcreencia } from "@/lib/api/acreencias";
-import { createEvento, updateEvento } from "@/lib/api/eventos";
+import { createEvento, updateEvento, getEventosByProceso } from "@/lib/api/eventos";
 import { updateProgresoByProcesoId } from "@/lib/api/progreso";
 import type { Acreedor, Acreencia, Apoderado, AsistenciaInsert } from "@/lib/database.types";
 import { supabase } from "@/lib/supabase";
@@ -322,6 +322,7 @@ type AcreenciaDraft = {
   otros_cobros_seguros: string;
   total: string;
   porcentaje: string;
+  dias_mora: string;
 };
 
 type AcreenciaSnapshot = {
@@ -362,6 +363,57 @@ type InasistenciaDisclaimerItem = {
   nombre: string;
   eventosAusentes: number;
 };
+
+function normalizeLabel(value: string | null | undefined, fallback: string) {
+  const normalized = (value ?? "").replace(/\s+/g, " ").trim();
+  return normalized || fallback;
+}
+
+function buildAcronimo(nombre: string | null | undefined) {
+  const normalized = normalizeLabel(nombre, "SIN APODERADO");
+  const words = normalized
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean);
+  const initials = words.map((word) => word[0]?.toUpperCase() ?? "").join("");
+  return initials || "SA";
+}
+
+async function buildProcesoEventoTitle(procesoId: string): Promise<string> {
+  const [deudoresProceso, eventosProceso] = await Promise.all([
+    getDeudoresByProceso(procesoId).catch(() => []),
+    getEventosByProceso(procesoId).catch(() => null),
+  ]);
+
+  const deudorPrincipal = deudoresProceso.find((d) => (d.nombre ?? "").trim().length > 0);
+  const deudorNombre = normalizeLabel(deudorPrincipal?.nombre, "SIN DEUDOR");
+
+  let apoderadoNombre = "";
+  if (deudorPrincipal?.apoderado_id) {
+    try {
+      const apoderado = await getApoderadoById(deudorPrincipal.apoderado_id);
+      apoderadoNombre = apoderado?.nombre ?? "";
+    } catch {
+      // ignore
+    }
+  }
+  if (!apoderadoNombre) {
+    try {
+      const apoderadosProceso = await getApoderadosByProceso(procesoId);
+      apoderadoNombre =
+        apoderadosProceso.find((a) => (a.nombre ?? "").trim().length > 0)?.nombre ?? "";
+    } catch {
+      // ignore
+    }
+  }
+
+  const apoderadoAcronimo = buildAcronimo(apoderadoNombre);
+  const eventosExistentes = Array.isArray(eventosProceso) ? eventosProceso.length : 0;
+  const numeroEvento = eventosExistentes + 1;
+
+  return `AUD INSOLVENCIA ${deudorNombre}- ${apoderadoAcronimo}-${numeroEvento}`;
+}
 
 function normalizarNumero(valor: string) {
   return valor.replace(",", ".").trim();
@@ -561,13 +613,14 @@ function AttendanceContent() {
       try {
         const { data: usuario, error: usuarioError } = await supabase
           .from("usuarios")
-          .select("nombre, email, identificacion")
+          .select("id, nombre, email, identificacion")
           .eq("auth_id", authId)
           .maybeSingle();
 
         if (usuarioError) throw usuarioError;
         if (canceled) return;
 
+        if (usuario?.id) setOperadorUsuarioId(usuario.id);
         if (shouldSetNombre && usuario?.nombre) setOperadorNombre(usuario.nombre);
         if (shouldSetEmail && usuario?.email) setOperadorEmail(usuario.email);
         if (shouldSetIdentificacion && usuario?.identificacion) {
@@ -602,6 +655,7 @@ function AttendanceContent() {
         const usuarioId = evento?.usuario_id ?? null;
         const eventoHora = normalizeHoraHHMM(evento?.hora ?? null);
         if (eventoHora && !canceled) setHora(eventoHora);
+        if (usuarioId && !canceled) setOperadorUsuarioId(usuarioId);
         if (!usuarioId) return;
 
         const { data: usuario, error: usuarioError } = await supabase
@@ -626,6 +680,8 @@ function AttendanceContent() {
       canceled = true;
     };
   }, [eventoId]);
+
+  const [operadorUsuarioId, setOperadorUsuarioId] = useState<string | null>(null);
 
   // Próxima audiencia
   const [proximaFecha, setProximaFecha] = useState("");
@@ -1172,6 +1228,7 @@ function AttendanceContent() {
         otros_cobros_seguros: toFixedOrEmpty(acreencia.otros_cobros_seguros),
         total: toFixedOrEmpty(acreencia.total),
         porcentaje: toFixedOrEmpty(acreencia.porcentaje),
+        dias_mora: toFixedOrEmpty(acreencia.dias_mora),
       },
     }));
   };
@@ -1215,6 +1272,7 @@ function AttendanceContent() {
         otros_cobros_seguros: toNumberOrNull(draft.otros_cobros_seguros),
         total: toNumberOrNull(draft.total),
         porcentaje,
+        dias_mora: toNumberOrNull(draft.dias_mora),
       });
 
       setAcreencias((prev) =>
@@ -1256,6 +1314,7 @@ function AttendanceContent() {
           otros_cobros_seguros: toFixedOrEmpty(snapshotAnterior.otros_cobros_seguros),
         }),
         porcentaje: toFixedOrEmpty(snapshotAnterior.porcentaje),
+        dias_mora: "",
       },
     }));
   };
@@ -1502,6 +1561,7 @@ function AttendanceContent() {
         total: a.total ?? null,
         porcentaje: porcentajeCalculadoByAcreenciaId.byAcreenciaId.get(a.id) ?? null,
         voto: mostrarVotacionAcuerdo ? (votosAcuerdoByAcreenciaId[a.id] || null) : null,
+        dias_mora: a.dias_mora ?? null,
       }));
 
       let excelArchivoPayload: ProcesoExcelArchivoPayload | null = null;
@@ -1856,7 +1916,7 @@ function AttendanceContent() {
       setEventoSiguienteError(null);
       try {
         const todayKey = formatBogotaDateKey(new Date());
-        const { data, error } = await supabase
+        let query = supabase
           .from("eventos")
           .select("id, titulo, fecha, hora, tipo, completado")
           .eq("proceso_id", procesoId)
@@ -1865,6 +1925,12 @@ function AttendanceContent() {
           .order("fecha", { ascending: true })
           .order("hora", { ascending: true })
           .limit(10);
+
+        if (eventoId) {
+          query = query.neq("id", eventoId);
+        }
+
+        const { data, error } = await query;
 
         if (error) throw error;
 
@@ -1905,7 +1971,7 @@ function AttendanceContent() {
     return () => {
       canceled = true;
     };
-  }, [procesoId]);
+  }, [procesoId, eventoId]);
 
   useEffect(() => {
     if (autoSugerido) return;
@@ -1927,10 +1993,9 @@ function AttendanceContent() {
         throw new Error("La hora debe estar entre 08:00 y 17:00.");
       }
 
-      const currentUserId = user?.id ?? null;
-      if (currentUserId) {
+      if (operadorUsuarioId) {
         const conflict = await hasUserTimeConflict({
-          userId: currentUserId,
+          userId: operadorUsuarioId,
           fechaISO: proximaFecha,
           horaHHMM: horaNormalizada,
           excludeEventoId: eventoSiguienteId ?? undefined,
@@ -1940,7 +2005,7 @@ function AttendanceContent() {
         }
       }
 
-      const tituloEvento = proximaTitulo.trim() || `Audiencia - ${numeroProceso || procesoId}`;
+      const tituloEvento = proximaTitulo.trim() || await buildProcesoEventoTitle(procesoId);
 
       const payloadBase = {
         titulo: tituloEvento,
@@ -1949,7 +2014,7 @@ function AttendanceContent() {
         hora: `${horaNormalizada}:00`,
         fecha_fin: null,
         hora_fin: null,
-        usuario_id: user?.id ?? null,
+        usuario_id: operadorUsuarioId,
         proceso_id: procesoId,
         tipo: "audiencia",
         color: "#f59e0b",
@@ -1975,8 +2040,8 @@ function AttendanceContent() {
       const accion = eventoSiguienteId ? "actualizado" : "agendado";
       setAgendarExito(`Evento "${tituloEvento}" ${accion} para ${proximaFecha} a las ${horaDisplay}.`);
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setAgendarError(msg);
+      console.error("[agendarProximaAudiencia] error:", e);
+      setAgendarError(toErrorMessage(e));
     } finally {
       setAgendando(false);
     }
@@ -2084,7 +2149,7 @@ function AttendanceContent() {
           </div>
 
           <h1 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">
-            Llamado a Lista
+            Audiencia
           </h1>
 
           <p className="mt-2 max-w-2xl text-zinc-600 dark:text-zinc-300">
@@ -3024,6 +3089,7 @@ function AttendanceContent() {
                       <th className="pb-3 pr-4">Otros</th>
                       <th className="pb-3 pr-4">Total</th>
                       <th className="pb-3 pr-4">%</th>
+                      <th className="pb-3 pr-4">Días de mora</th>
                       <th className="pb-3 pr-0">Acción</th>
                     </tr>
                   </thead>
@@ -3281,6 +3347,23 @@ function AttendanceContent() {
                               />
                             ) : (
                               <div>{formatPorcentaje(porcentajeCalculado)}</div>
+                            )}
+                          </td>
+                          <td className="py-3 pr-4">
+                            {editando ? (
+                              <input
+                                type="number"
+                                value={draft?.dias_mora ?? ""}
+                                onChange={(e) =>
+                                  onChangeAcreenciaDraft(acreencia.id, { dias_mora: e.target.value })
+                                }
+                                min="0"
+                                step="1"
+                                className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none focus:border-zinc-950 dark:border-white/10 dark:bg-white/5 dark:text-zinc-50 dark:focus:border-white"
+                                placeholder="0"
+                              />
+                            ) : (
+                              <div>{acreencia.dias_mora ?? "—"}</div>
                             )}
                           </td>
                           <td className="py-3 pr-0">

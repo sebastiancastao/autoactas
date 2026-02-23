@@ -288,6 +288,7 @@ export interface Database {
           otros_cobros_seguros: number | null
           total: number | null
           porcentaje: number | null
+          dias_mora: number | null
           created_at: string
           updated_at: string
         }
@@ -304,6 +305,7 @@ export interface Database {
           otros_cobros_seguros?: number | null
           total?: number | null
           porcentaje?: number | null
+          dias_mora?: number | null
           created_at?: string
           updated_at?: string
         }
@@ -320,6 +322,7 @@ export interface Database {
           otros_cobros_seguros?: number | null
           total?: number | null
           porcentaje?: number | null
+          dias_mora?: number | null
           created_at?: string
           updated_at?: string
         }
