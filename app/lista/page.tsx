@@ -1549,7 +1549,15 @@ function AttendanceContent() {
       }
 
       const asistenciaPayload = buildAsistenciaPayload();
-      const acreenciasPayload = acreencias.map((a) => ({
+
+      // Build a set of apoderado IDs that are present in the llamado a lista
+      const apoderadosPresentesIds = new Set(
+        asistentes
+          .filter((a) => a.estado === "Presente" && a.apoderadoId)
+          .map((a) => a.apoderadoId!)
+      );
+
+      const acreenciasRaw = acreencias.map((a) => ({
         acreedor: a.acreedores?.nombre ?? null,
         apoderado: a.apoderados?.nombre ?? null,
         naturaleza: a.naturaleza ?? null,
@@ -1562,7 +1570,18 @@ function AttendanceContent() {
         porcentaje: porcentajeCalculadoByAcreenciaId.byAcreenciaId.get(a.id) ?? null,
         voto: mostrarVotacionAcuerdo ? (votosAcuerdoByAcreenciaId[a.id] || null) : null,
         dias_mora: a.dias_mora ?? null,
+        _presente: apoderadosPresentesIds.has(a.apoderado_id),
       }));
+
+      // If at least one acreencia is present and at least one is absent, sort presentes first
+      const hayAlgunoPresente = acreenciasRaw.some((a) => a._presente);
+      const hayAlgunoAusente = acreenciasRaw.some((a) => !a._presente);
+      const acreenciasOrdenadas =
+        hayAlgunoPresente && hayAlgunoAusente
+          ? [...acreenciasRaw].sort((a, b) => (a._presente === b._presente ? 0 : a._presente ? -1 : 1))
+          : acreenciasRaw;
+
+      const acreenciasPayload = acreenciasOrdenadas.map(({ _presente: _p, ...rest }) => rest);
 
       let excelArchivoPayload: ProcesoExcelArchivoPayload | null = null;
       if (procesoId) {

@@ -1748,10 +1748,8 @@ function createAcreenciasTable(acreencias: AcreenciaRow[]) {
 function buildAsistentesParagraphs(asistentes: Asistente[]): Paragraph[] {
   const paragraphs: Paragraph[] = [];
 
-  // Filter only present attendees (Presentes)
-  const presentes = asistentes.filter((a) => a.estado === "Presente");
-
-  presentes.forEach((asistente) => {
+  asistentes.forEach((asistente) => {
+    const ausente = asistente.estado !== "Presente";
     const parts: TextRun[] = [];
 
     if (asistente.categoria === "Apoderado") {
@@ -1782,6 +1780,7 @@ function buildAsistentesParagraphs(asistentes: Asistente[]): Paragraph[] {
         parts.push(new TextRun({ text: calidad }));
       }
       parts.push(new TextRun({ text: "." }));
+      if (ausente) parts.push(new TextRun({ text: " (AUSENTE)", bold: true }));
     } else if (asistente.categoria === "Acreedor") {
       // Entity format with NIT
       if (asistente.nit) {
@@ -1792,11 +1791,12 @@ function buildAsistentesParagraphs(asistentes: Asistente[]): Paragraph[] {
       } else {
         parts.push(new TextRun({ text: asistente.nombre.toUpperCase(), bold: true }));
         if (asistente.identificacion) {
-          parts.push(new TextRun({ text: ", identificado con cÃ©dula de ciudadanÃ­a No. " }));
+          parts.push(new TextRun({ text: ", identificado con cédula de ciudadanía No. " }));
           parts.push(new TextRun({ text: asistente.identificacion }));
         }
         parts.push(new TextRun({ text: "." }));
       }
+      if (ausente) parts.push(new TextRun({ text: " (AUSENTE)", bold: true }));
     }
 
     if (parts.length > 0) {
@@ -2224,14 +2224,19 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
     spacing: { after: 300 },
   }));
 
-  // First: Apoderado del Deudor (if present)
-  // Asistentes section: include only acreedores and apoderados de acreedores.
-  const asistentesAcreedores = payload.asistentes.filter((a) => {
-    if (a.estado !== "Presente") return false;
-    if (a.categoria === "Acreedor") return true;
-    if (a.categoria !== "Apoderado") return false;
-    return String(a.calidadApoderadoDe ?? "").toLowerCase().includes("acreedor");
-  });
+  // Asistentes section: include acreedores and apoderados de acreedores (present AND absent).
+  // Present ones go first, absent ones after.
+  const asistentesAcreedores = payload.asistentes
+    .filter((a) => {
+      if (a.categoria === "Acreedor") return true;
+      if (a.categoria !== "Apoderado") return false;
+      return String(a.calidadApoderadoDe ?? "").toLowerCase().includes("acreedor");
+    })
+    .sort((a, b) => {
+      const aPresente = a.estado === "Presente" ? 0 : 1;
+      const bPresente = b.estado === "Presente" ? 0 : 1;
+      return aPresente - bPresente;
+    });
   const asistentesParagraphs = buildAsistentesParagraphs(asistentesAcreedores);
   sections.push(...asistentesParagraphs);
 

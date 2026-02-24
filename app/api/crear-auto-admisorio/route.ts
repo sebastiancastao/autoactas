@@ -322,6 +322,21 @@ function bulletItem(reference: string, text: string): Paragraph {
   });
 }
 
+function indentedParagraph(
+  text: string,
+  opts?: { leftInches?: number; rightInches?: number; bold?: boolean; spacingAfter?: number },
+): Paragraph {
+  return new Paragraph({
+    alignment: AlignmentType.JUSTIFIED,
+    spacing: { after: opts?.spacingAfter ?? 120 },
+    indent: {
+      ...(typeof opts?.leftInches === "number" ? { left: convertInchesToTwip(opts.leftInches) } : {}),
+      ...(typeof opts?.rightInches === "number" ? { right: convertInchesToTwip(opts.rightInches) } : {}),
+    },
+    children: [new TextRun({ text, font: FONT, size: SIZE_11, bold: opts?.bold ?? false })],
+  });
+}
+
 export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => null)) as Payload | null;
@@ -521,7 +536,10 @@ export async function POST(req: Request) {
 
             // --- INTRO ---
             bodyParagraph(
-              "EL SUSCRITO CONCILIADOR, designado por el Centro de Conciliación FUNDASEER, teniendo en cuenta que la aceptación del encargo es obligatoria y que no pesa sobre mi ningún impedimento para adelantar el presente Trámite de Insolvencia de la Persona Natural No Comerciante en uso de las atribuciones consagradas en la Ley 1564 de 2012, en particular por el Artículo 541 y S. S. de la misma ley,"
+              "El suscrito Conciliador Extrajudicial en Derecho y Operador en Insolvencias,"
+            ),
+            bodyParagraph(
+              "designado por el Centro de Conciliación FUNDASEER, en uso de las facultades conferidas por la Ley 1564 de 2012 —Código General del Proceso— modificada por la Ley 2445 de 2025, y en especial por lo dispuesto en sus artículos 531 a 574, procede a resolver sobre la solicitud de negociación de deudas presentada de conformidad con las siguientes:"
             ),
 
             emptyLine(),
@@ -532,33 +550,42 @@ export async function POST(req: Request) {
             emptyLine(),
 
             bodyParagraph(
-              "Evaluados los documentos suministrados por la parte deudora, se establece que cumple con los requisitos exigidos por la ley para ser admitida al trámite de negociación de deudas, por lo siguiente:"
-            ),
-
-            // Numbered items 1-5
-            numberedItem(
-              NUMBERED_CONSIDERACIONES,
-              "La parte deudora se encuentra dentro de los parámetros establecidos en el artículo 532 del Código general del proceso, modificado por la ley 2445 de 2025. Esto se comprueba mediante la declaración juramentada de la parte deudora mediante la revisión de la información aportada."
+              "Evaluados los documentos suministrados por la parte deudora, se establece que cumple con los requisitos exigidos por la ley para ser admitida al trámite de negociación de deudas, en atención a lo siguiente:"
             ),
 
             numberedItem(
               NUMBERED_CONSIDERACIONES,
-              "Cumple con todos los supuestos de insolvencia."
+              "La parte deudora se encuentra dentro de los parámetros establecidos en el artículo 532 del Código General del Proceso, modificado por la Ley 2445 de 2025, lo cual se comprueba mediante declaración juramentada y revisión de la información aportada."
             ),
 
             numberedItem(
               NUMBERED_CONSIDERACIONES,
-              `Que este Centro de Conciliación es competente en razón al domicilio de la parte interesada ya que su domicilio se encuentra en la ciudad de ${ciudad}.`
+              "Se configuran los supuestos de insolvencia previstos en el artículo 538 del C.G.P., toda vez que la parte deudora: es persona natural no comerciante, se encuentra en cesación de pagos con múltiples obligaciones vencidas por más de noventa (90) días, frente a varios acreedores y el valor de dichas obligaciones representa más del treinta por ciento (30%) del pasivo total."
             ),
 
             numberedItem(
               NUMBERED_CONSIDERACIONES,
-              "Conforme al análisis de cumplimiento, se concluye que la parte deudora ha cumplido con todos los requisitos de la solicitud de trámite de negociación de deudas del artículo 539 del C. G. P."
+              "La parte deudora allegó la relación completa de acreedores conforme al orden de prelación de créditos establecido en los artículos 2488 y siguientes del Código Civil."
             ),
 
             numberedItem(
               NUMBERED_CONSIDERACIONES,
-              "Dando cumplimiento al artículo 536 de la Ley 1564 de 2012, se concluye que los interesados cumplieron oportunamente, con la obligación de cancelar, en su totalidad, las costas del presente trámite."
+              "Conforme al artículo 539 del C.G.P., la parte deudora ha cumplido con los requisitos de la solicitud de negociación de deudas, anexando la información sobre obligaciones, bienes y procesos judiciales en curso."
+            ),
+
+            numberedItem(
+              NUMBERED_CONSIDERACIONES,
+              `Este Centro de Conciliación es competente en razón al domicilio de la parte deudora, ubicado en la ciudad de ${ciudad} (art. 535 C.G.P.).`
+            ),
+
+            numberedItem(
+              NUMBERED_CONSIDERACIONES,
+              "Dando cumplimiento al artículo 536 del C.G.P., se verificó que fueron canceladas en su totalidad las costas correspondientes al presente trámite."
+            ),
+
+            numberedItem(
+              NUMBERED_CONSIDERACIONES,
+              "En mérito de lo expuesto y con fundamento en los artículos 531 a 574 del Código General del Proceso, se concluye que procede la admisión de la solicitud de negociación de deudas."
             ),
 
             emptyLine(),
@@ -576,9 +603,9 @@ export async function POST(req: Request) {
             numberedMixed(NUMBERED_RESUELVE, [
               { text: "Certificar el cumplimiento de todos los requisitos de Procedibilidad " },
               { text: "Y DECLARAR ABIERTO", bold: true },
-              { text: `, el presente Trámite de Negociación de Deudas de Persona Natural no Comerciante del señor ` },
+              { text: ", el presente Trámite de Negociación de Deudas de Persona Natural no Comerciante del señor " },
               { text: `  ${deudorNombre} `, bold: true },
-              { text: `quien se identifica con la cédula de ciudadanía No. ${deudorIdentificacion}` },
+              { text: `quien se identifica con la cédula de ciudadanía No. ${deudorIdentificacion}.` },
             ]),
 
             // 2. Fijar fecha...
@@ -587,16 +614,19 @@ export async function POST(req: Request) {
               { text: `, ${fechaAudienciaTexto}.` },
             ]),
 
-            // 3. Comunicar...
             numberedItem(
               NUMBERED_RESUELVE,
-              "Comunicar a los despachos judiciales, centrales de riesgo y entidades administrativas de la suspensión de los procesos en curso en razón a la admisión del PROCEDIMIENTO DE NEGOCIACIÓN DE DEUDAS."
+              `ORDENAR al deudor, señor ${deudorNombre}, que dentro de los cinco (5) días siguientes a la aceptación del trámite de negociación de deudas, presente una relación actualizada de cada una de sus obligaciones, bienes y procesos judiciales, incluyendo la totalidad de acreencias causadas hasta el día inmediatamente anterior a la aceptación, conforme a la prelación de créditos establecida en el Código Civil, normas concordantes y jurisprudencia constitucional. La ausencia de esta actualización se tendrá como manifestación de que la relación presentada con la solicitud no ha variado. Cualquier cambio relevante de la situación del deudor que suceda entre la aceptación de la negociación de deudas y la apertura de la liquidación patrimonial, en relación con su crisis económica, deberá ser comunicado a los acreedores a través del conciliador, a efecto de que aquellos lo puedan tener en cuenta al momento de tomar las decisiones que les correspondan. Igualmente, deberá informar cualquier cambio de domicilio, residencia o direcciones física y electrónica de notificación.`
             ),
 
-            // 4. Sobre los efectos...
             numberedItem(
               NUMBERED_RESUELVE,
-              "Sobre los efectos de la aceptación de su trámite de insolvencia, en especial, su deber de actualizar dentro de los cinco (5) días siguientes a la admisión de este trámite la información presentada en su solicitud."
+              "NOTIFICAR al deudor y a los acreedores señalados en la solicitud, en las direcciones físicas o electrónicas suministradas."
+            ),
+
+            numberedItem(
+              NUMBERED_RESUELVE,
+              "COMUNICAR esta decisión a la DIAN, Secretaría de Hacienda Municipal y Departamental, y a la Unidad de Gestión Pensional y Parafiscales (UGPP); así como a las autoridades jurisdiccionales y administrativas, empresas de servicios públicos, pagadores y particulares que adelanten procesos civiles de cobranza, a fin de que se sujeten a los efectos de esta providencia."
             ),
 
             // 5. Gastos de administración...
@@ -627,16 +657,97 @@ export async function POST(req: Request) {
               "Las cuotas alimentarias subsiguientes que deberá de seguir sufragando a favor de sus hijos, si los tienen."
             ),
 
-            // 6. Advertir parte convocante...
             numberedItem(
               NUMBERED_RESUELVE,
-              "Advertir a la parte convocante que de conformidad con el artículo 549 del Código General del Proceso, el incumplimiento en el pago de los gastos de administración será causal de fracaso del Procedimiento de Negociación de Deudas que se celebrará en la fecha ya indicada."
+              "ADVERTIR a la parte convocante que de conformidad con el artículo 549 del Código General del Proceso, el incumplimiento en el pago de los gastos de administración será causal de fracaso del Procedimiento de Negociación de Deudas que se celebrará en la fecha ya indicada."
             ),
 
-            // 7. Advertir al deudor...
             numberedItem(
               NUMBERED_RESUELVE,
-              "Advertir al deudor que le está prohibido otorgar garantías o la adquisición de nuevos créditos sin el consentimiento de los acreedores que representen la mitad más uno del valor de los pasivos."
+              "ADVERTIR a los acreedores, de conformidad con lo ordenado en el artículo 545 del Código General del Proceso, modificado por la Ley 2445 de 2025, que a partir de la aceptación de la solicitud de negociación de deudas:"
+            ),
+
+            indentedParagraph(
+              "6.1 Se prohíbe al deudor realizar pagos, compensaciones, daciones en pago, arreglos, desistimientos, allanamientos, terminaciones unilaterales o de mutuo acuerdo de procesos en curso, así como conciliaciones o transacciones respecto de obligaciones causadas con anterioridad a la aceptación de la solicitud, o sobre bienes que para ese momento formen parte de su patrimonio. Igualmente, los acreedores no podrán ejecutar las garantías constituidas sobre dichos bienes.",
+              { leftInches: 0.5 }
+            ),
+
+            indentedParagraph(
+              "6.2 No podrán iniciarse contra el deudor nuevos procesos o trámites, públicos o privados, de ejecución, jurisdicción coactiva, cobro de obligaciones dinerarias, ejecución especial o restitución de bienes por mora en el pago de cánones. En consecuencia, se suspenderán los procesos en curso a la fecha de aceptación de la solicitud. La suspensión incluirá la ejecución aún no practicada en su totalidad de medidas cautelares previamente decretadas sobre bienes, derechos o emolumentos del deudor, incluyendo aquellos que este tenga por recibir, ya sea personalmente, en cuentas bancarias o a través de productos financieros, así como los actos preparatorios para el perfeccionamiento de dichas medidas.",
+              { leftInches: 0.5 }
+            ),
+
+            indentedParagraph(
+              "6.3 No podrán iniciarse contra el deudor nuevos procesos o trámites, públicos o privados, de ejecución, jurisdicción coactiva, cobro de obligaciones dinerarias, ejecución especial o restitución de bienes por mora en el pago de cánones. En consecuencia, se suspenderán los procesos en curso a la fecha de aceptación de la solicitud. La suspensión incluirá la ejecución aún no practicada en su totalidad de medidas cautelares previamente decretadas sobre bienes, derechos o emolumentos del deudor, incluyendo aquellos que este tenga por recibir, ya sea personalmente, en cuentas bancarias o a través de productos financieros, así como los actos preparatorios para el perfeccionamiento de dichas medidas.",
+              { leftInches: 0.5 }
+            ),
+
+            indentedParagraph(
+              "6.4 Toda actuación judicial o extrajudicial de cobro realizada luego de la aceptación del trámite, y habiendo sido comunicado directamente el acreedor titular o cesionario sobre la admisión del deudor a un procedimiento de insolvencia, acarreará las siguientes sanciones progresivas:",
+              { leftInches: 0.5 }
+            ),
+
+            indentedParagraph("PRIMERA OCASIÓN: llamado de atención.", { leftInches: 0.8 }),
+            indentedParagraph("SEGUNDA OCASIÓN: amonestación formal.", { leftInches: 0.8 }),
+            indentedParagraph("TERCERA OCASIÓN: postergación del pago de las acreencias calificadas o por calificar a favor del acreedor.", { leftInches: 0.8 }),
+            indentedParagraph(
+              "CUARTA Y SIGUIENTES OCASIONES: remisión de queja, con pruebas, a la Superintendencia Financiera o a la Superintendencia de Industria y Comercio, según corresponda, para que se imponga una multa del 10 % del valor del crédito cobrado, incluidos intereses, conforme a la Ley 2300 de 2023, sin perjuicio de los límites previstos en el artículo 18 de la Ley Estatutaria 1266 de 2008.",
+              { leftInches: 0.8 }
+            ),
+
+            indentedParagraph(
+              "6.5 No podrá suspenderse la prestación de servicios públicos domiciliarios, ni en la residencia habitual ni en el lugar de trabajo del deudor, por mora en obligaciones causadas con anterioridad a la aceptación de la solicitud. En caso de que se haya suspendido el servicio, este deberá restablecerse de manera inmediata, y los valores causados posteriormente se tratarán como gastos de administración.",
+              { leftInches: 0.5 }
+            ),
+
+            indentedParagraph(
+              "6.6 La regla anterior será aplicable a todo contrato de tracto sucesivo, tales como arrendamientos, servicios de educación, salud, administración de propiedad horizontal y similares. La desatención a esta obligación generará igualmente las sanciones descritas en el numeral 6.4.",
+              { leftInches: 0.5 }
+            ),
+
+            numberedItem(
+              NUMBERED_RESUELVE,
+              "ORDENAR desde la fecha de esta acta, la suspensión de todo tipo de pagos, descuentos automáticos, descuentos de nómina o de productos financieros, libranzas, retenciones o cualquier otra forma de prerrogativa relacionada con el pago o abono automático o directo del acreedor o de mandatario suyo que se haya pactado contractualmente o que disponga la ley, excepto los relacionados con las obligaciones alimentarias del deudor. Los actos que se ejecuten en contravención a esta disposición serán ineficaces de pleno derecho. Esta sanción será puesta en conocimiento del pagador y del acreedor correspondiente por el conciliador, junto con la orden de devolución inmediata al deudor de las sumas pagadas o descontadas. Para tal efecto, el pagador y el acreedor serán solidariamente responsables a partir del momento en que hayan recibido la comunicación. Además, se impondrán las sanciones establecidas en el numeral 6.4 de esta providencia."
+            ),
+
+            numberedItem(
+              NUMBERED_RESUELVE,
+              "ORDENAR a todos los acreedores la suspensión inmediata de cualquier forma de cobro o actuación judicial, extrajudicial, directa o indirecta contra el deudor, desde la fecha de aceptación del trámite de negociación de deudas. Esta prohibición incluye gestiones telefónicas, domiciliarias, comunicaciones digitales, reportes intimidatorios o cualquier otra medida dirigida a presionar el pago de obligaciones incluidas en el trámite."
+            ),
+
+            numberedItem(
+              NUMBERED_RESUELVE,
+              "ADVERTIR al deudor que no podrá iniciar un nuevo trámite de insolvencia hasta que se cumpla el término previsto en el artículo 574 del Código General del Proceso, conforme a la ley vigente."
+            ),
+
+            numberedItem(
+              NUMBERED_RESUELVE,
+              "NOTIFICAR a las partes que, a partir de la presente decisión, se interrumpirá el término de prescripción y no operará la caducidad de las acciones respecto de los créditos que contra el deudor se hubieren hecho exigibles antes de la iniciación de dicho trámite."
+            ),
+
+            numberedItem(
+              NUMBERED_RESUELVE,
+              "ADVERTIR que el pago de impuestos prediales, cuotas de administración, servicios públicos y cualquier otra tasa o contribución necesarios para obtener la paz y salvo en la enajenación de inmuebles o cualquier otro bien sujeto a registro, solo podrá exigirse respecto de aquellas acreencias causadas con posterioridad a la aceptación de la solicitud. Las restantes quedarán sujetas a los términos del acuerdo o a las resultas del procedimiento de liquidación patrimonial. Este tratamiento se aplicará a toda obligación propter rem que afecte los bienes del deudor."
+            ),
+
+            numberedItem(
+              NUMBERED_RESUELVE,
+              "INFORMAR a las entidades que administran bases de datos de carácter financiero, crediticio, comercial y de servicios sobre la aceptación de esta solicitud, en los términos del artículo 573 del Código General del Proceso."
+            ),
+
+            numberedItem(
+              NUMBERED_RESUELVE,
+              "LA PERSONA SOLICITANTE podrá retirar su solicitud de negociación mientras no se hubiere hecho efectivo ninguno de los efectos previstos en los numerales 1 y 2 del artículo 545 de la Ley 2445 de 2025, y podrá desistir expresamente del procedimiento mientras no se haya aprobado el acuerdo. Al desistimiento se aplicarán, en lo pertinente, los artículos 314 a 316 del Código General del Proceso, pero no habrá lugar a condena en costas, y su aceptación conllevará la reanudación inmediata de los procedimientos de ejecución suspendidos, para lo cual el conciliador oficiará con destino a los funcionarios y particulares correspondientes, al día siguiente de que esta se produzca. La indemnización de perjuicios que pretendan los acreedores se tramitará ante el juez del proceso suspendido o, en su defecto, ante el que señala el artículo 534 de la Ley 2445 de 2025."
+            ),
+
+            numberedItem(
+              NUMBERED_RESUELVE,
+              "ORDENAR la inscripción del presente auto en los folios de matrícula inmobiliaria de los bienes sujetos a registro público de propiedad del deudor."
+            ),
+
+            numberedItem(
+              NUMBERED_RESUELVE,
+              "LAS CONTROVERSIAS relacionadas con la aceptación de la solicitud de negociación de deudas solamente se podrán proponer al iniciarse la primera sesión de la audiencia correspondiente."
             ),
 
             emptyLine(),
