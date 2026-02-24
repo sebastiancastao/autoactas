@@ -1811,6 +1811,35 @@ function buildAsistentesParagraphs(asistentes: Asistente[]): Paragraph[] {
   return paragraphs;
 }
 
+function getBlackHeadingDocStyles() {
+  return {
+    default: {
+      document: {
+        run: {
+          font: {
+            ascii: "Century Gothic",
+            hAnsi: "Century Gothic",
+            cs: "Century Gothic",
+            eastAsia: "Century Gothic",
+          },
+        },
+      },
+      heading1: {
+        run: {
+          color: "000000",
+          size: 32,
+        },
+      },
+      heading2: {
+        run: {
+          color: "000000",
+          size: 26,
+        },
+      },
+    },
+  };
+}
+
 async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: EventoContext | null) {
   const ciudad = payload.ciudad || "Cali";
   const horaActa = resolveHoraActa(eventoContext?.horaHHMM ?? payload.hora);
@@ -1992,20 +2021,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
     };
 
     const doc = new Document({
-      styles: {
-        default: {
-          document: {
-            run: {
-              font: {
-                ascii: "Century Gothic",
-                hAnsi: "Century Gothic",
-                cs: "Century Gothic",
-                eastAsia: "Century Gothic",
-              },
-            },
-          },
-        },
-      },
+      styles: getBlackHeadingDocStyles(),
       sections: [buildSection(portraitPage, docHeader, portraitBefore)],
     });
 
@@ -2138,20 +2154,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
     };
 
     const doc = new Document({
-      styles: {
-        default: {
-          document: {
-            run: {
-              font: {
-                ascii: "Century Gothic",
-                hAnsi: "Century Gothic",
-                cs: "Century Gothic",
-                eastAsia: "Century Gothic",
-              },
-            },
-          },
-        },
-      },
+      styles: getBlackHeadingDocStyles(),
       sections: [buildSection(portraitPage, docHeader, portraitBefore)],
     });
 
@@ -3130,20 +3133,7 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
   }
 
   const doc = new Document({
-    styles: {
-      default: {
-        document: {
-          run: {
-            font: {
-              ascii: "Century Gothic",
-              hAnsi: "Century Gothic",
-              cs: "Century Gothic",
-              eastAsia: "Century Gothic",
-            },
-          },
-        },
-      },
-    },
+    styles: getBlackHeadingDocStyles(),
     sections: docSections,
   });
 
