@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   NIT_REQUIRED_DIGITS,
   getDigitCount,
@@ -82,6 +83,10 @@ export default function ProcesoForm({
     setJuzgado,
     descripcion,
     setDescripcion,
+    primeraCitaFecha,
+    setPrimeraCitaFecha,
+    primeraCitaHora,
+    setPrimeraCitaHora,
     deudoresForm,
     actualizarDeudorRow,
     acreedoresForm,
@@ -110,6 +115,9 @@ export default function ProcesoForm({
     handleSubmit,
     resetFormFields,
   } = form;
+
+  const [deudoresOpen, setDeudoresOpen] = useState(false);
+  const [acreedoresOpen, setAcreedoresOpen] = useState(false);
 
   const fieldClass = (key: string) =>
     `${inputBase} ${fieldErrors[key] ? inputError : inputValid}`;
@@ -643,32 +651,6 @@ export default function ProcesoForm({
 
               <div>
                 <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                  Tipo de Proceso
-                </label>
-                <input
-                  type="text"
-                  value={tipoProceso}
-                  onChange={(e) => setTipoProceso(e.target.value)}
-                  placeholder="Ej: Liquidación, Reorganización"
-                  className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                  Juzgado
-                </label>
-                <input
-                  type="text"
-                  value={juzgado}
-                  onChange={(e) => setJuzgado(e.target.value)}
-                  placeholder="Ej: Juzgado 1 Civil del Circuito"
-                  className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
                   Descripción
                 </label>
                 <textarea
@@ -679,22 +661,93 @@ export default function ProcesoForm({
                   className="w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10 resize-none"
                 />
               </div>
+
+              <div className="rounded-2xl border border-zinc-200 bg-zinc-50/70 p-4 dark:border-white/10 dark:bg-white/5">
+                <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                  Primera cita{" "}
+                  <span className="font-normal normal-case text-zinc-400 dark:text-zinc-500">
+                    (opcional)
+                  </span>
+                </p>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                      Fecha
+                    </label>
+                    <input
+                      type="date"
+                      value={primeraCitaFecha}
+                      onChange={(e) => setPrimeraCitaFecha(e.target.value)}
+                      className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                      Hora
+                    </label>
+                    <input
+                      type="time"
+                      value={primeraCitaHora}
+                      onChange={(e) => setPrimeraCitaHora(e.target.value)}
+                      className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                    />
+                  </div>
+                </div>
+              </div>
             </>
           )}
 
           <div className="space-y-6">
             {shouldShowDeudoresSection && (
-              <div className="rounded-2xl border border-zinc-200 bg-white/80 p-4 shadow-sm dark:border-white/10 dark:bg-white/5">
-                <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="rounded-2xl border border-zinc-200 bg-white/80 shadow-sm dark:border-white/10 dark:bg-white/5">
+                <button
+                  type="button"
+                  onClick={() => setDeudoresOpen((v) => !v)}
+                  className="flex w-full items-center justify-between gap-2 p-4 text-left"
+                >
                   <div>
-                  <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Deudor</p>
-                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    Agrega el deudor que participa en este proceso.
-                  </p>
+                    <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Deudor</p>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                      Agrega el deudor que participa en este proceso.
+                    </p>
                   </div>
-                </div>
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    className={`h-4 w-4 flex-shrink-0 text-zinc-400 transition-transform ${deudoresOpen ? "rotate-180" : ""}`}
+                  >
+                    <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
+                  </svg>
+                </button>
 
-              <div className="space-y-4 mt-4">
+                {deudoresForm[0] && (
+                  <div className="border-t border-zinc-100 px-4 pb-3 pt-3 dark:border-white/5">
+                    <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+                      Apoderado
+                    </label>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <input
+                        value={deudoresForm[0].apoderadoNombre}
+                        onChange={(e) =>
+                          handleRowApoderadoInput("deudor", deudoresForm[0].id, e.target.value)
+                        }
+                        list="apoderados-list"
+                        placeholder="Busca un apoderado existente"
+                        className="flex-1 min-w-0 h-11 rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => abrirModalApoderado({ tipo: "deudor", id: deudoresForm[0].id })}
+                        className="h-11 rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-700 shadow-sm transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:bg-white/10"
+                      >
+                        + Apoderado
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+              {deudoresOpen && <div className="space-y-4 border-t border-zinc-100 p-4 dark:border-white/5">
                 {deudoresForm.slice(0, 1).map((deudor) => (
                   <div
                     key={deudor.id}
@@ -840,18 +893,60 @@ export default function ProcesoForm({
                     </div>
                   </div>
                 ))}
-              </div>
+              </div>}
             </div>
           )}
             {shouldShowAcreedoresSection && (
-              <div className="rounded-2xl border border-zinc-200 bg-white/80 p-4 shadow-sm dark:border-white/10 dark:bg-white/5">
-                <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="rounded-2xl border border-zinc-200 bg-white/80 shadow-sm dark:border-white/10 dark:bg-white/5">
+                <button
+                  type="button"
+                  onClick={() => setAcreedoresOpen((v) => !v)}
+                  className="flex w-full items-center justify-between gap-2 p-4 text-left"
+                >
                   <div>
-                  <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Acreedores</p>
-                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    Añade los acreedores relacionados con el proceso.
-                  </p>
+                    <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Acreedores</p>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                      Añade los acreedores relacionados con el proceso.
+                    </p>
                   </div>
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    className={`h-4 w-4 flex-shrink-0 text-zinc-400 transition-transform ${acreedoresOpen ? "rotate-180" : ""}`}
+                  >
+                    <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
+                  </svg>
+                </button>
+
+                {acreedoresForm[0] && (
+                  <div className="border-t border-zinc-100 px-4 pb-3 pt-3 dark:border-white/5">
+                    <label className="mb-1 block text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+                      Apoderado
+                    </label>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <input
+                        value={acreedoresForm[0].apoderadoNombre}
+                        onChange={(e) =>
+                          handleRowApoderadoInput("acreedor", acreedoresForm[0].id, e.target.value)
+                        }
+                        list="apoderados-list"
+                        placeholder="Busca un apoderado existente"
+                        className="flex-1 min-w-0 h-11 rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => abrirModalApoderado({ tipo: "acreedor", id: acreedoresForm[0].id })}
+                        className="h-11 rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-700 shadow-sm transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:bg-white/10"
+                      >
+                        + Apoderado
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+              {acreedoresOpen && <div className="space-y-4 border-t border-zinc-100 p-4 dark:border-white/5">
+                <div className="flex justify-end">
                   <button
                     type="button"
                     onClick={agregarAcreedorRow}
@@ -861,28 +956,29 @@ export default function ProcesoForm({
                   </button>
                 </div>
 
-              <div className="space-y-4 mt-4">
-                {acreedoresForm.map(renderAcreedorRow)}
-              </div>
-
-              {acreedoresForm.length > 0 && (
-                <div className="mt-4 space-y-1">
-                  <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                    Acreedor principal
-                  </label>
-                  <select
-                    value={selectedAcreedorId}
-                    onChange={(e) => setSelectedAcreedorId(e.target.value)}
-                    className="h-11 w-full cursor-pointer rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
-                  >
-                    {acreedoresForm.map((acreedor, index) => (
-                      <option key={acreedor.id} value={acreedor.id}>
-                        {acreedor.nombre.trim() ? acreedor.nombre : `Acreedor ${index + 1}`}
-                      </option>
-                    ))}
-                  </select>
+                <div className="space-y-4">
+                  {acreedoresForm.map(renderAcreedorRow)}
                 </div>
-              )}
+
+                {acreedoresForm.length > 0 && (
+                  <div className="space-y-1">
+                    <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                      Acreedor principal
+                    </label>
+                    <select
+                      value={selectedAcreedorId}
+                      onChange={(e) => setSelectedAcreedorId(e.target.value)}
+                      className="h-11 w-full cursor-pointer rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                    >
+                      {acreedoresForm.map((acreedor, index) => (
+                        <option key={acreedor.id} value={acreedor.id}>
+                          {acreedor.nombre.trim() ? acreedor.nombre : `Acreedor ${index + 1}`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>}
               </div>
             )}
           </div>

@@ -14,6 +14,8 @@ import {
   updateProceso,
 } from "@/lib/api/proceso";
 import { updateProgresoByProcesoId } from "@/lib/api/progreso";
+import { createEvento } from "@/lib/api/eventos";
+import { getDestinoAsignado } from "@/lib/api/asignaciones";
 import {
   getDigitCount,
   isNitIdentification,
@@ -397,6 +399,10 @@ export type ProcesoFormContext = {
   setTipoProceso: Dispatch<SetStateAction<string>>;
   juzgado: string;
   setJuzgado: Dispatch<SetStateAction<string>>;
+  primeraCitaFecha: string;
+  setPrimeraCitaFecha: Dispatch<SetStateAction<string>>;
+  primeraCitaHora: string;
+  setPrimeraCitaHora: Dispatch<SetStateAction<string>>;
   deudoresForm: DeudorFormRow[];
   agregarDeudorRow: () => void;
   actualizarDeudorRow: (id: string, patch: Partial<DeudorFormRow>) => void;
@@ -462,6 +468,8 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
   const [descripcion, setDescripcion] = useState("");
   const [tipoProceso, setTipoProceso] = useState("");
   const [juzgado, setJuzgado] = useState("");
+  const [primeraCitaFecha, setPrimeraCitaFecha] = useState("");
+  const [primeraCitaHora, setPrimeraCitaHora] = useState("");
   const [apoderados, setApoderados] = useState<Apoderado[]>([]);
   const [acreedoresCatalogo, setAcreedoresCatalogo] = useState<AcreedorCatalogItem[]>([]);
   const [cargandoApoderados, setCargandoApoderados] = useState(false);
@@ -642,6 +650,8 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
     setDescripcion("");
     setTipoProceso("");
     setJuzgado("");
+    setPrimeraCitaFecha("");
+    setPrimeraCitaHora("");
     setDeudoresForm([nuevaFilaDeudor]);
     setSelectedDeudorId(nuevaFilaDeudor.id);
     setAcreedoresForm([nuevaFilaAcreedor]);
@@ -1050,6 +1060,16 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
           console.warn("No se pudo resolver usuario_id para proceso:", lookupError);
         }
       }
+      // Resolve effective assigned user: if a delegation is configured, use it
+      let efectivoUsuarioId = currentUsuarioId;
+      if (!isEditing && currentUsuarioId) {
+        try {
+          const destino = await getDestinoAsignado(currentUsuarioId);
+          if (destino) efectivoUsuarioId = destino;
+        } catch {
+          // ignore assignment lookup errors
+        }
+      }
       const procesoPayload: ProcesoInsert = {
         numero_proceso: numeroProceso.trim(),
         fecha_procesos: fechaprocesos,
@@ -1061,7 +1081,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
           ? {}
           : {
               created_by_auth_id: user?.id ?? null,
-              usuario_id: currentUsuarioId,
+              usuario_id: efectivoUsuarioId,
             }),
       };
       const savedProceso = isEditing
@@ -1117,6 +1137,27 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
         }
       }
 
+      if (!isEditing && primeraCitaFecha.trim()) {
+        try {
+          await createEvento({
+            titulo: `Primera cita - ${numeroProceso.trim()}`,
+            descripcion: null,
+            fecha: primeraCitaFecha,
+            hora: primeraCitaHora.trim() ? `${primeraCitaHora}:00` : null,
+            fecha_fin: null,
+            hora_fin: null,
+            usuario_id: efectivoUsuarioId,
+            proceso_id: savedProceso.id,
+            tipo: "cita",
+            color: null,
+            recordatorio: false,
+            completado: false,
+          });
+        } catch (err) {
+          console.warn("Error creando primera cita:", err);
+        }
+      }
+
       onSaveSuccess?.(savedProceso, { isEditing });
 
       if (isEditing) {
@@ -1160,6 +1201,10 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
     setTipoProceso,
     juzgado,
     setJuzgado,
+    primeraCitaFecha,
+    setPrimeraCitaFecha,
+    primeraCitaHora,
+    setPrimeraCitaHora,
     deudoresForm,
     agregarDeudorRow,
     actualizarDeudorRow,

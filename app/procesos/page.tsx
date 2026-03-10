@@ -21,6 +21,8 @@ import {
 import { updateProgresoByProcesoId } from "@/lib/api/progreso";
 import type { Proceso, ProcesoInsert, Apoderado } from "@/lib/database.types";
 import { getApoderados, updateApoderado } from "@/lib/api/apoderados";
+import { createEvento } from "@/lib/api/eventos";
+import { getDestinoAsignado } from "@/lib/api/asignaciones";
 import ProcesoForm from "@/components/proceso-form";
 import { useProcesoForm } from "@/lib/hooks/useProcesoForm";
 import { useRouter } from "next/navigation";
@@ -196,7 +198,7 @@ type UsuarioCreatorMeta = {
 };
 
 type CreatorFilterOption = {
-  authId: string;
+  id: string;
   label: string;
   count: number;
 };
@@ -316,14 +318,16 @@ export default function ProcesosPage() {
     tipo: "",
     juzgado: "",
     descripcion: "",
+    primeraCitaFecha: "",
+    primeraCitaHora: "",
   });
   const [creandoProceso, setCreandoProceso] = useState(false);
   const [mensajeProceso, setMensajeProceso] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [creatorFilter, setCreatorFilter] = useState<string>("all");
-  const [usuariosByAuthId, setUsuariosByAuthId] = useState<Record<string, UsuarioCreatorMeta>>(
-    {},
-  );
+  const [usuariosById, setUsuariosById] = useState<Record<string, UsuarioCreatorMeta>>({});
+  const [authIdToDbId, setAuthIdToDbId] = useState<Record<string, string>>({});
+  const [asignacionesMap, setAsignacionesMap] = useState<Record<string, string>>({});
   const [excelUploadModal, setExcelUploadModal] = useState<{
     procesoId: string;
     procesoNumero: string;
@@ -538,23 +542,32 @@ export default function ProcesosPage() {
     let active = true;
     (async () => {
       try {
-        const { data, error } = await supabase
-          .from("usuarios")
-          .select("auth_id, nombre, email")
-          .not("auth_id", "is", null);
-        if (error) throw error;
+        const [usuariosResult, asignacionesData] = await Promise.all([
+          supabase.from("usuarios").select("id, auth_id, nombre, email"),
+          supabase
+            .from("asignaciones_usuario")
+            .select("usuario_origen_id, usuario_destino_id")
+            .eq("activo", true),
+        ]);
         if (!active) return;
 
-        const map: Record<string, UsuarioCreatorMeta> = {};
-        (data ?? []).forEach((row) => {
-          const authId = row.auth_id?.trim();
-          if (!authId) return;
-          map[authId] = {
-            nombre: row.nombre?.trim() || row.email?.trim() || authId,
+        const byId: Record<string, UsuarioCreatorMeta> = {};
+        const authToDb: Record<string, string> = {};
+        (usuariosResult.data ?? []).forEach((row) => {
+          byId[row.id] = {
+            nombre: row.nombre?.trim() || row.email?.trim() || row.id,
             email: row.email?.trim() || "",
           };
+          if (row.auth_id) authToDb[row.auth_id] = row.id;
         });
-        setUsuariosByAuthId(map);
+        setUsuariosById(byId);
+        setAuthIdToDbId(authToDb);
+
+        const asigMap: Record<string, string> = {};
+        (asignacionesData.data ?? []).forEach((row) => {
+          asigMap[row.usuario_origen_id] = row.usuario_destino_id;
+        });
+        setAsignacionesMap(asigMap);
       } catch (error) {
         console.error("Error loading usuarios for creator filter:", error);
       }
@@ -848,6 +861,15 @@ export default function ProcesosPage() {
           console.warn("No se pudo resolver usuario_id para proceso:", lookupError);
         }
       }
+      let efectivoUsuarioId = currentUsuarioId;
+      if (currentUsuarioId) {
+        try {
+          const destino = await getDestinoAsignado(currentUsuarioId);
+          if (destino) efectivoUsuarioId = destino;
+        } catch {
+          // ignore
+        }
+      }
 
       let apoderadoSyncWarning: string | null = null;
       const payload: ProcesoInsert = {
@@ -858,9 +880,29 @@ export default function ProcesosPage() {
         juzgado: nuevoProceso.juzgado || null,
         descripcion: nuevoProceso.descripcion || null,
         created_by_auth_id: user?.id ?? null,
-        usuario_id: currentUsuarioId,
+        usuario_id: efectivoUsuarioId,
       };
       const nuevo = await createProceso(payload);
+      if (nuevoProceso.primeraCitaFecha.trim()) {
+        try {
+          await createEvento({
+            titulo: `Primera cita - ${nuevoProceso.numero.trim()}`,
+            descripcion: null,
+            fecha: nuevoProceso.primeraCitaFecha,
+            hora: nuevoProceso.primeraCitaHora.trim() ? `${nuevoProceso.primeraCitaHora}:00` : null,
+            fecha_fin: null,
+            hora_fin: null,
+            usuario_id: efectivoUsuarioId,
+            proceso_id: nuevo.id,
+            tipo: "cita",
+            color: null,
+            recordatorio: false,
+            completado: false,
+          });
+        } catch (err) {
+          console.warn("Error creando primera cita:", err);
+        }
+      }
       const panelApoderadoIds = Array.from(
         new Set(
           panelApoderados
@@ -913,6 +955,8 @@ export default function ProcesosPage() {
         tipo: "",
         juzgado: "",
         descripcion: "",
+        primeraCitaFecha: "",
+        primeraCitaHora: "",
       });
       const envioResultado = await enviarRegistroPorCorreo({
         procesoLabel: nuevo.numero_proceso,
@@ -967,66 +1011,65 @@ export default function ProcesosPage() {
     });
   }, [procesos, normalizedSearchQuery]);
 
+  // Para cada proceso, resuelve el ID efectivo del usuario a mostrar:
+  // si el creador tiene una asignación activa, usa el destino; si no, el creador.
+  function getEfectivoId(proceso: Proceso): string | null {
+    const creatorDbId = proceso.created_by_auth_id
+      ? authIdToDbId[proceso.created_by_auth_id] ?? null
+      : null;
+    if (!creatorDbId) return null;
+    return asignacionesMap[creatorDbId] ?? creatorDbId;
+  }
+
   const creatorStats = useMemo(() => {
-    const countByAuthId = new Map<string, number>();
+    const countById = new Map<string, number>();
     let unassignedCount = 0;
 
     for (const proceso of procesos) {
-      const authId = proceso.created_by_auth_id?.trim();
-      if (!authId) {
+      const efectivoId = getEfectivoId(proceso);
+      if (!efectivoId) {
         unassignedCount += 1;
         continue;
       }
-      countByAuthId.set(authId, (countByAuthId.get(authId) ?? 0) + 1);
+      countById.set(efectivoId, (countById.get(efectivoId) ?? 0) + 1);
     }
 
-    const options: CreatorFilterOption[] = Array.from(countByAuthId.entries())
-      .map(([authId, count]) => {
-        const usuario = usuariosByAuthId[authId];
+    const options: CreatorFilterOption[] = Array.from(countById.entries())
+      .map(([id, count]) => {
+        const usuario = usuariosById[id];
         return {
-          authId,
-          label: usuario?.nombre || usuario?.email || authId,
+          id,
+          label: usuario?.nombre || usuario?.email || id,
           count,
         };
       })
       .sort((a, b) => a.label.localeCompare(b.label, "es", { sensitivity: "base" }));
 
-    const myCount = user?.id ? countByAuthId.get(user.id) ?? 0 : 0;
-
-    return {
-      options,
-      myCount,
-      unassignedCount,
-    };
-  }, [procesos, usuariosByAuthId, user?.id]);
+    return { options, unassignedCount };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [procesos, usuariosById, authIdToDbId, asignacionesMap]);
 
   useEffect(() => {
-    if (creatorFilter === "all" || creatorFilter === "mine" || creatorFilter === "none") return;
-    const exists = creatorStats.options.some((option) => option.authId === creatorFilter);
-    if (!exists) {
-      setCreatorFilter("all");
-    }
+    if (creatorFilter === "all" || creatorFilter === "none") return;
+    const exists = creatorStats.options.some((option) => option.id === creatorFilter);
+    if (!exists) setCreatorFilter("all");
   }, [creatorFilter, creatorStats.options]);
 
   const creatorFilterLabel = useMemo(() => {
     if (creatorFilter === "all") return "todos los usuarios";
-    if (creatorFilter === "mine") return "tu usuario";
-    if (creatorFilter === "none") return "sin usuario creador";
-    const option = creatorStats.options.find((item) => item.authId === creatorFilter);
+    if (creatorFilter === "none") return "sin usuario asignado";
+    const option = creatorStats.options.find((item) => item.id === creatorFilter);
     return option?.label ?? "el usuario seleccionado";
   }, [creatorFilter, creatorStats.options]);
 
   const visibleProcesos = useMemo(() => {
     if (creatorFilter === "all") return filteredProcesos;
-    if (creatorFilter === "mine") {
-      if (!user?.id) return [];
-      return filteredProcesos.filter((proceso) => proceso.created_by_auth_id === user.id);
-    }
     if (creatorFilter === "none") {
-      return filteredProcesos.filter((proceso) => !proceso.created_by_auth_id);
+      return filteredProcesos.filter((p) => !getEfectivoId(p));
     }
-    return filteredProcesos.filter((proceso) => proceso.created_by_auth_id === creatorFilter);
-  }, [creatorFilter, filteredProcesos, user?.id]);
+    return filteredProcesos.filter((p) => getEfectivoId(p) === creatorFilter);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [creatorFilter, filteredProcesos, authIdToDbId, asignacionesMap]);
 
   const selectedProceso = useMemo(
     () => procesos.find((proceso) => proceso.id === editingProcesoId),
@@ -1337,6 +1380,7 @@ export default function ProcesosPage() {
                       Número de proceso
                     </label>
                     <input
+                      type="text"
                       value={nuevoProceso.numero}
                       onChange={(e) =>
                         setNuevoProceso((prev) => ({ ...prev, numero: e.target.value }))
@@ -1375,30 +1419,6 @@ export default function ProcesosPage() {
                       ))}
                     </select>
                   </div>
-                  <div>
-                    <label className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
-                      Tipo de proceso
-                    </label>
-                    <input
-                      value={nuevoProceso.tipo}
-                      onChange={(e) =>
-                        setNuevoProceso((prev) => ({ ...prev, tipo: e.target.value }))
-                      }
-                      className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs text-zinc-950 dark:text-zinc-950 outline-none"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
-                    Juzgado
-                  </label>
-                  <input
-                    value={nuevoProceso.juzgado}
-                    onChange={(e) =>
-                      setNuevoProceso((prev) => ({ ...prev, juzgado: e.target.value }))
-                    }
-                    className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs text-zinc-950 dark:text-zinc-950 outline-none"
-                  />
                 </div>
                 <div>
                   <label className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
@@ -1412,6 +1432,42 @@ export default function ProcesosPage() {
                     rows={2}
                     className="w-full rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-950 dark:text-zinc-950 outline-none"
                   />
+                </div>
+                <div className="rounded-2xl border border-zinc-200 bg-white/60 p-3 dark:border-white/10 dark:bg-white/5">
+                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                    Primera cita{" "}
+                    <span className="font-normal normal-case text-zinc-400 dark:text-zinc-500">
+                      (opcional)
+                    </span>
+                  </p>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <label className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+                        Fecha
+                      </label>
+                      <input
+                        type="date"
+                        value={nuevoProceso.primeraCitaFecha}
+                        onChange={(e) =>
+                          setNuevoProceso((prev) => ({ ...prev, primeraCitaFecha: e.target.value }))
+                        }
+                        className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs text-zinc-950 dark:text-zinc-950 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+                        Hora
+                      </label>
+                      <input
+                        type="time"
+                        value={nuevoProceso.primeraCitaHora}
+                        onChange={(e) =>
+                          setNuevoProceso((prev) => ({ ...prev, primeraCitaHora: e.target.value }))
+                        }
+                        className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs text-zinc-950 dark:text-zinc-950 outline-none"
+                      />
+                    </div>
+                  </div>
                 </div>
                 <div className="flex flex-col gap-2">
                   <button
@@ -1486,15 +1542,14 @@ export default function ProcesosPage() {
                   className="h-10 w-full cursor-pointer rounded-2xl border border-zinc-200 bg-white px-3 text-xs text-zinc-950 outline-none transition focus:border-zinc-950/30 focus:ring-2 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:text-zinc-50 dark:focus:border-white/30 dark:focus:ring-white/20"
                 >
                   <option value="all">Todos los usuarios ({procesos.length})</option>
-                  {user?.id && <option value="mine">Mis procesos ({creatorStats.myCount})</option>}
                   {creatorStats.options.map((option) => (
-                    <option key={option.authId} value={option.authId}>
+                    <option key={option.id} value={option.id}>
                       {option.label} ({option.count})
                     </option>
                   ))}
                   {creatorStats.unassignedCount > 0 && (
                     <option value="none">
-                      Sin usuario creador ({creatorStats.unassignedCount})
+                      Sin usuario asignado ({creatorStats.unassignedCount})
                     </option>
                   )}
                 </select>

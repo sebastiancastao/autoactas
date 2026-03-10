@@ -19,6 +19,7 @@ import { getProgresos, updateProgresoByProcesoId, type Progreso } from "@/lib/ap
 import type { Proceso } from "@/lib/database.types";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
+import { getDestinoAsignado } from "@/lib/api/asignaciones";
 
 type EventoCalendario = {
   id: string;
@@ -241,6 +242,22 @@ function CalendarioContent() {
     Record<string, AutoAdmisorioState>
   >({});
   const [guardando, setGuardando] = useState(false);
+  const [destinoAsignadoId, setDestinoAsignadoId] = useState<string>("");
+
+  useEffect(() => {
+    if (!user?.id || usuarios.length === 0) return;
+    const currentUsuario = usuarios.find((u) => u.auth_id === user.id);
+    if (!currentUsuario) return;
+    getDestinoAsignado(currentUsuario.id).then((destino) => {
+      setDestinoAsignadoId(destino ?? "");
+    });
+  }, [user?.id, usuarios]);
+
+  useEffect(() => {
+    if (modalAbierto && !nuevoUsuarioId && destinoAsignadoId) {
+      setNuevoUsuarioId(destinoAsignadoId);
+    }
+  }, [destinoAsignadoId, modalAbierto]);
 
   const userColorMap = useMemo(() => {
     const map: Record<string, string> = {};
@@ -548,7 +565,7 @@ function CalendarioContent() {
     setNuevoTitulo("");
     setNuevaFecha(diaISO);
     setNuevaHora("09:00");
-    setNuevoUsuarioId("");
+    setNuevoUsuarioId(destinoAsignadoId);
     setNuevoProcesoId(procesoId ?? "");
     setTituloEditable(false);
     setModalAbierto(true);
@@ -1664,9 +1681,7 @@ function CalendarioContent() {
                   </a>
                 )}
 
-                {action?.requiereIniciar &&
-                  autoState?.result?.apoderadoEmails &&
-                  autoState.result.apoderadoEmails.length > 0 && (
+                {action?.requiereIniciar && autoState?.result && (
                     <button
                       type="button"
                       onClick={() =>
@@ -1674,19 +1689,12 @@ function CalendarioContent() {
                           eventoSeleccionado.procesoId,
                         )
                       }
-                      disabled={autoState.emailSending}
+                      disabled={autoState.emailSending || !((autoState.result.apoderadoEmails?.length ?? 0) > 0)}
+                      title={!((autoState.result.apoderadoEmails?.length ?? 0) > 0) ? "No hay apoderados con correo registrado" : undefined}
                       className="flex h-11 w-full items-center justify-center rounded-2xl border border-blue-200 bg-blue-50 px-5 text-sm font-semibold text-blue-700 shadow-sm transition hover:border-blue-500 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:border-blue-700 dark:hover:bg-blue-950/60"
                     >
-                      {autoState.emailSending ? "Enviando..." : "Enviar a apoderados"}
+                      {autoState.emailSending ? "Enviando..." : "Enviar por correo a apoderados"}
                     </button>
-                  )}
-
-                {action?.requiereIniciar &&
-                  autoState?.result?.apoderadoEmails &&
-                  autoState.result.apoderadoEmails.length === 0 && (
-                    <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
-                      No hay apoderados con correo registrado.
-                    </div>
                   )}
 
                 {action?.requiereIniciar && autoState?.emailError && (

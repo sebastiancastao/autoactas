@@ -41,6 +41,7 @@ const NAV_LINKS: NavLink[] = [
   { href: '/inicializacion', label: 'Inicializacion', match: (pathname) => pathname.startsWith('/inicializacion') },
   { href: '/lista', label: 'Audiencia', match: (pathname) => pathname.startsWith('/lista') },
   { href: '/admin/usuarios', label: 'Usuarios', match: (pathname) => pathname.startsWith('/admin/usuarios'), adminOnly: true },
+  { href: '/admin/asignaciones', label: 'Asignaciones', match: (pathname) => pathname.startsWith('/admin/asignaciones'), adminOnly: true },
 ]
 
 function getContextLabel(pathname: string) {
