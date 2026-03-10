@@ -606,6 +606,33 @@ export interface Database {
           }
         ]
       }
+      asignaciones_usuario: {
+        Row: {
+          id: string
+          usuario_origen_id: string | null
+          usuario_destino_id: string | null
+          activo: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          usuario_origen_id?: string | null
+          usuario_destino_id?: string | null
+          activo?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          usuario_origen_id?: string | null
+          usuario_destino_id?: string | null
+          activo?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       proceso_excel_archivos: {
         Row: {
           id: string
