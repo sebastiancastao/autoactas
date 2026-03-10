@@ -322,13 +322,23 @@ function CalendarioContent() {
   useEffect(() => {
     async function fetchData() {
       try {
-        const [usuariosData, procesosData, eventosData, progresosData] = await Promise.all([
+        const [usuariosData, procesosData, eventosData, progresosData, asignacionesResult] = await Promise.all([
           getUsuarios(),
           getProcesos(),
           getEventos(),
           getProgresos(),
+          supabase
+            .from("asignaciones_usuario")
+            .select("usuario_destino_id")
+            .eq("activo", true),
         ] as const);
-        setUsuarios((usuariosData || []) as unknown as Usuario[]);
+        const destinoIds = new Set(
+          (asignacionesResult.data ?? []).map((a) => a.usuario_destino_id)
+        );
+        const usuariosFiltrados = destinoIds.size > 0
+          ? (usuariosData || []).filter((u) => destinoIds.has((u as unknown as Usuario).id))
+          : (usuariosData || []);
+        setUsuarios(usuariosFiltrados as unknown as Usuario[]);
         setProcesos((procesosData || []) as unknown as Proceso[]);
         setProgresos((progresosData || []) as unknown as Progreso[]);
 
