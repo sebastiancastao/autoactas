@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, PointerEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, PointerEvent, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 import type { Database } from "@/lib/database.types";
@@ -138,7 +138,7 @@ function exportSignatureAsBlackPng(canvas: HTMLCanvasElement) {
   return outputCanvas.toDataURL("image/png");
 }
 
-export default function PerfilPage() {
+function PerfilPageInner() {
   const { user } = useAuth();
   const searchParams = useSearchParams();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -509,11 +509,7 @@ export default function PerfilPage() {
   };
 
   if (loading) {
-    return (
-      <div className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8 xl:max-w-[90rem] 2xl:max-w-[110rem]">
-        <p className="text-sm text-zinc-600 dark:text-zinc-300">Cargando perfil...</p>
-      </div>
-    );
+    return <PerfilLoading />;
   }
 
   if (!user) {
@@ -744,5 +740,21 @@ export default function PerfilPage() {
         </section>
       </main>
     </div>
+  );
+}
+
+function PerfilLoading() {
+  return (
+    <div className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8 xl:max-w-[90rem] 2xl:max-w-[110rem]">
+      <p className="text-sm text-zinc-600 dark:text-zinc-300">Cargando perfil...</p>
+    </div>
+  );
+}
+
+export default function PerfilPage() {
+  return (
+    <Suspense fallback={<PerfilLoading />}>
+      <PerfilPageInner />
+    </Suspense>
   );
 }
