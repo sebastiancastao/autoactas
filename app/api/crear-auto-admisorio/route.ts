@@ -814,6 +814,7 @@ export async function POST(req: Request) {
     const uploaded = await uploadDocxToGoogleDrive({
       filename: fileName,
       buffer,
+      fallbackAuthUserId: authUserId ?? null,
     });
 
     // Collect apoderado emails for email notification

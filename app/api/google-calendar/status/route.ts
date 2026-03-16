@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   getGoogleCalendarOAuthAccountByUsuarioId,
+  hasGoogleDriveOAuthScope,
   isGoogleCalendarOAuthConfigured,
   isGoogleCalendarOAuthStorageReady,
   getGoogleCalendarOAuthStorageMissingMessage,
@@ -52,13 +53,19 @@ export async function GET() {
   }
 
   const account = await getGoogleCalendarOAuthAccountByUsuarioId(usuarioId);
+  const driveReady = hasGoogleDriveOAuthScope(account?.scope ?? null);
+  const accountSetupMessage =
+    account && !driveReady
+      ? "Tu conexion de Google no incluye permisos de Drive. Desconecta y conecta de nuevo para editar documentos en Google Docs."
+      : setupMessage;
   return NextResponse.json({
     available: oauthConfigured && storageReady,
     oauthConfigured,
     storageReady,
-    setupMessage,
+    setupMessage: accountSetupMessage,
     connected: Boolean(account),
     googleEmail: account?.google_email ?? null,
     connectedAt: account?.updated_at ?? account?.created_at ?? null,
+    driveReady,
   });
 }

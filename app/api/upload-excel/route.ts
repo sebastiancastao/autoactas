@@ -189,7 +189,7 @@ export async function POST(req: Request) {
     if (storeError || !stored) {
       return NextResponse.json(
         {
-          error: "Excel uploaded to Drive, but failed to save metadata in database.",
+          error: "Excel uploaded to document storage, but failed to save metadata in database.",
           detail: storeError?.message ?? "Unknown database error.",
         },
         { status: 500 }

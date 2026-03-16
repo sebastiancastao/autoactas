@@ -9,9 +9,13 @@ type GoogleCalendarOAuthConfig = {
   clientSecret: string | null;
 };
 
+const GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar";
+const GOOGLE_DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+const GOOGLE_DRIVE_FULL_SCOPE = "https://www.googleapis.com/auth/drive";
+
 export type GoogleCalendarOAuthAccount = Pick<
   GoogleCalendarAccountRow,
-  "google_email" | "created_at" | "updated_at"
+  "google_email" | "created_at" | "updated_at" | "scope"
 >;
 
 const GOOGLE_CALENDAR_ACCOUNTS_TABLE = "public.google_calendar_accounts";
@@ -62,10 +66,28 @@ export function getGoogleCalendarOAuthStorageMissingMessage() {
 
 export function getGoogleCalendarOAuthScopes() {
   return [
-    "https://www.googleapis.com/auth/calendar",
+    GOOGLE_CALENDAR_SCOPE,
+    GOOGLE_DRIVE_FILE_SCOPE,
     "openid",
     "email",
   ];
+}
+
+function parseGrantedScopes(scope: string | null | undefined) {
+  return new Set(
+    String(scope ?? "")
+      .split(/\s+/)
+      .map((item) => item.trim())
+      .filter(Boolean),
+  );
+}
+
+export function hasGoogleDriveOAuthScope(scope: string | null | undefined) {
+  const grantedScopes = parseGrantedScopes(scope);
+  return (
+    grantedScopes.has(GOOGLE_DRIVE_FILE_SCOPE) ||
+    grantedScopes.has(GOOGLE_DRIVE_FULL_SCOPE)
+  );
 }
 
 export function createGoogleCalendarOAuthClient(redirectUri?: string) {
@@ -87,7 +109,7 @@ export async function getGoogleCalendarOAuthAccountByUsuarioId(usuarioId: string
   const adminSupabase = createAdminSupabase();
   const { data, error } = await adminSupabase
     .from("google_calendar_accounts")
-    .select("google_email, created_at, updated_at")
+    .select("google_email, created_at, updated_at, scope")
     .eq("usuario_id", usuarioId)
     .maybeSingle();
 
@@ -104,7 +126,7 @@ export async function getGoogleCalendarOAuthAccessTokenByUsuarioId(usuarioId: st
   const adminSupabase = createAdminSupabase();
   const { data, error } = await adminSupabase
     .from("google_calendar_accounts")
-    .select("refresh_token, google_email")
+    .select("refresh_token, google_email, scope")
     .eq("usuario_id", usuarioId)
     .maybeSingle();
 
@@ -125,7 +147,15 @@ export async function getGoogleCalendarOAuthAccessTokenByUsuarioId(usuarioId: st
   return {
     accessToken,
     googleEmail: data.google_email,
+    scope: data.scope ?? null,
   };
+}
+
+export async function getGoogleDriveOAuthAccessTokenByUsuarioId(usuarioId: string) {
+  const authorization = await getGoogleCalendarOAuthAccessTokenByUsuarioId(usuarioId);
+  if (!authorization) return null;
+  if (!hasGoogleDriveOAuthScope(authorization.scope)) return null;
+  return authorization;
 }
 
 export async function upsertGoogleCalendarOAuthAccount(params: {

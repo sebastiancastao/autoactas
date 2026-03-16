@@ -1,4 +1,8 @@
+import { randomUUID } from "crypto";
 import { JWT } from "google-auth-library";
+
+import { getGoogleDriveOAuthAccessTokenByUsuarioId } from "./google-calendar-oauth";
+import { createAdminSupabase } from "./supabase-admin";
 
 export type GoogleDriveUploadResult = {
   id: string;
@@ -6,6 +10,10 @@ export type GoogleDriveUploadResult = {
   webViewLink?: string;
   webContentLink?: string;
 };
+
+const DEFAULT_DOCUMENTS_BUCKET = "documentos";
+
+let bucketReadyPromise: Promise<void> | null = null;
 
 function isValidEmail(email: string | undefined | null): email is string {
   if (!email) return false;
@@ -29,7 +37,175 @@ function parsePrivateKey(raw: string) {
   return raw.replace(/\\n/g, "\n");
 }
 
-async function uploadBufferToGoogleDrive(params: {
+function getDocumentsBucketName() {
+  const configured = process.env.SUPABASE_STORAGE_DOCUMENTS_BUCKET?.trim();
+  return configured || DEFAULT_DOCUMENTS_BUCKET;
+}
+
+function sanitizeFileName(filename: string) {
+  const raw = filename.trim() || "archivo";
+  const normalized = raw
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^[_\.]+|[_\.]+$/g, "");
+  return normalized || "archivo";
+}
+
+function buildStorageGroup(filename: string, mimeType: string) {
+  const upperFileName = filename.trim().toUpperCase();
+  const lowerMimeType = mimeType.trim().toLowerCase();
+
+  if (upperFileName.includes("AUTO_ADMISION")) return "auto-admisorios";
+  if (lowerMimeType.includes("sheet") || lowerMimeType.includes("excel")) return "excel";
+  if (lowerMimeType === "application/pdf") return "pdf";
+  if (lowerMimeType.includes("wordprocessingml")) return "actas";
+  return "archivos";
+}
+
+function buildStoragePath(filename: string, mimeType: string) {
+  const now = new Date();
+  const year = now.getUTCFullYear();
+  const month = String(now.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(now.getUTCDate()).padStart(2, "0");
+  const safeName = sanitizeFileName(filename);
+  const group = buildStorageGroup(filename, mimeType);
+  return `${group}/${year}/${month}/${day}/${randomUUID()}-${safeName}`;
+}
+
+function isStoragePath(fileId: string) {
+  return fileId.includes("/");
+}
+
+function withDownloadQuery(publicUrl: string, filename: string) {
+  const url = new URL(publicUrl);
+  url.searchParams.set("download", filename);
+  return url.toString();
+}
+
+async function ensureDocumentsBucket() {
+  if (!bucketReadyPromise) {
+    bucketReadyPromise = (async () => {
+      const supabase = createAdminSupabase();
+      const bucketName = getDocumentsBucketName();
+
+      const { data: existingBucket, error: getBucketError } = await supabase.storage.getBucket(
+        bucketName
+      );
+
+      if (getBucketError) {
+        const { error: createBucketError } = await supabase.storage.createBucket(bucketName, {
+          public: true,
+        });
+
+        if (
+          createBucketError &&
+          !createBucketError.message.toLowerCase().includes("already exists")
+        ) {
+          throw new Error(
+            `Supabase Storage bucket setup failed: ${createBucketError.message}`
+          );
+        }
+        return;
+      }
+
+      if (!existingBucket.public) {
+        const { error: updateBucketError } = await supabase.storage.updateBucket(bucketName, {
+          public: true,
+        });
+        if (updateBucketError) {
+          throw new Error(
+            `Supabase Storage bucket update failed: ${updateBucketError.message}`
+          );
+        }
+      }
+    })().catch((error) => {
+      bucketReadyPromise = null;
+      throw error;
+    });
+  }
+
+  await bucketReadyPromise;
+}
+
+async function resolveUsuarioIdByAuthId(authUserId: string | null | undefined) {
+  const normalizedAuthUserId = authUserId?.trim() ?? "";
+  if (!normalizedAuthUserId) return null;
+
+  const supabase = createAdminSupabase();
+  const { data, error } = await supabase
+    .from("usuarios")
+    .select("id")
+    .eq("auth_id", normalizedAuthUserId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`No se pudo resolver el usuario autenticado: ${error.message}`);
+  }
+
+  return data?.id ?? null;
+}
+
+async function getGoogleDriveOAuthAuthorization(params: {
+  usuarioId?: string | null;
+  fallbackAuthUserId?: string | null;
+}) {
+  const candidateUsuarioIds: string[] = [];
+
+  const preferredUsuarioId = params.usuarioId?.trim();
+  if (preferredUsuarioId) candidateUsuarioIds.push(preferredUsuarioId);
+
+  const authUsuarioId = await resolveUsuarioIdByAuthId(params.fallbackAuthUserId ?? null);
+  if (authUsuarioId && !candidateUsuarioIds.includes(authUsuarioId)) {
+    candidateUsuarioIds.push(authUsuarioId);
+  }
+
+  for (const usuarioId of candidateUsuarioIds) {
+    const authorization = await getGoogleDriveOAuthAccessTokenByUsuarioId(usuarioId);
+    if (authorization) return authorization;
+  }
+
+  return null;
+}
+
+async function getGoogleDriveAccessToken() {
+  const clientEmail = getEnv("GOOGLE_DRIVE_CLIENT_EMAIL");
+  const privateKey = parsePrivateKey(getEnv("GOOGLE_DRIVE_PRIVATE_KEY"));
+
+  const jwtClient = new JWT({
+    email: clientEmail,
+    key: privateKey,
+    scopes: ["https://www.googleapis.com/auth/drive.readonly"],
+  });
+
+  const auth = await jwtClient.authorize();
+  const accessToken = auth?.access_token ?? jwtClient.credentials.access_token ?? null;
+  if (!accessToken) throw new Error("Failed to obtain Google access token.");
+  return accessToken;
+}
+
+async function downloadLegacyGoogleDriveFileBuffer(fileId: string) {
+  const accessToken = await getGoogleDriveAccessToken();
+  const response = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }
+  );
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(
+      `Google Drive file download failed (${response.status}): ${text || response.statusText}`
+    );
+  }
+
+  const bytes = await response.arrayBuffer();
+  return Buffer.from(bytes);
+}
+
+async function uploadBufferToStorage(params: {
   filename: string;
   buffer: Buffer;
   mimeType: string;
@@ -37,117 +213,87 @@ async function uploadBufferToGoogleDrive(params: {
   shareWithEmails?: string[] | null;
   convertToGoogleDocs?: boolean;
 }) {
-  const clientEmail = getEnv("GOOGLE_DRIVE_CLIENT_EMAIL");
-  const privateKey = parsePrivateKey(getEnv("GOOGLE_DRIVE_PRIVATE_KEY"));
-  const folderId = params.folderId ?? process.env.GOOGLE_DRIVE_FOLDER_ID ?? null;
-  const envShareWithEmail = process.env.GOOGLE_DRIVE_SHARE_WITH_EMAIL ?? null;
-  const publicAccessMode = (process.env.GOOGLE_DRIVE_PUBLIC_ACCESS ?? "anyone_reader").trim().toLowerCase();
+  await ensureDocumentsBucket();
 
-  const jwtClient = new JWT({
-    email: clientEmail,
-    key: privateKey,
-    scopes: ["https://www.googleapis.com/auth/drive"],
+  const supabase = createAdminSupabase();
+  const bucketName = getDocumentsBucketName();
+  const objectPath = buildStoragePath(params.filename, params.mimeType);
+
+  const { error: uploadError } = await supabase.storage
+    .from(bucketName)
+    .upload(objectPath, params.buffer, {
+      contentType: params.mimeType,
+      upsert: false,
+    });
+
+  if (uploadError) {
+    throw new Error(`Supabase Storage upload failed: ${uploadError.message}`);
+  }
+
+  const {
+    data: { publicUrl },
+  } = supabase.storage.from(bucketName).getPublicUrl(objectPath);
+
+  return {
+    id: objectPath,
+    name: params.filename,
+    webViewLink: publicUrl,
+    webContentLink: withDownloadQuery(publicUrl, sanitizeFileName(params.filename)),
+  } satisfies GoogleDriveUploadResult;
+}
+
+async function uploadBufferToGoogleOAuthDrive(params: {
+  filename: string;
+  buffer: Buffer;
+  mimeType: string;
+  usuarioId?: string | null;
+  fallbackAuthUserId?: string | null;
+  convertToGoogleDocs?: boolean;
+}) {
+  const authorization = await getGoogleDriveOAuthAuthorization({
+    usuarioId: params.usuarioId,
+    fallbackAuthUserId: params.fallbackAuthUserId,
   });
 
-  const auth = await jwtClient.authorize();
-  const accessToken = auth?.access_token ?? jwtClient.credentials.access_token ?? null;
-  if (!accessToken) throw new Error("Failed to obtain Google access token.");
+  if (!authorization) return null;
 
   const metadata: Record<string, unknown> = {
     name: params.filename,
-    mimeType: params.convertToGoogleDocs ? "application/vnd.google-apps.document" : params.mimeType,
+    mimeType: params.convertToGoogleDocs
+      ? "application/vnd.google-apps.document"
+      : params.mimeType,
   };
-  if (folderId) metadata.parents = [folderId];
 
   const form = new FormData();
   form.append(
     "metadata",
-    new Blob([JSON.stringify(metadata)], { type: "application/json; charset=UTF-8" })
+    new Blob([JSON.stringify(metadata)], { type: "application/json; charset=UTF-8" }),
   );
-  const bytes = new Uint8Array(params.buffer);
-  form.append("file", new Blob([bytes], { type: params.mimeType }), params.filename);
+  form.append(
+    "file",
+    new Blob([new Uint8Array(params.buffer)], { type: params.mimeType }),
+    params.filename,
+  );
 
-  const uploadUrl =
-    "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,name,webViewLink,webContentLink";
-  const res = await fetch(uploadUrl, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
+  const res = await fetch(
+    "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink,webContentLink",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${authorization.accessToken}`,
+      },
+      body: form,
     },
-    body: form,
-  });
+  );
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`Google Drive upload failed (${res.status}): ${text || res.statusText}`);
-  }
-
-  const uploaded = (await res.json()) as GoogleDriveUploadResult;
-
-  const shareEmails = [
-    ...(params.shareWithEmails ?? []),
-    ...(envShareWithEmail ? [envShareWithEmail] : []),
-  ]
-    .map((e) => e.trim().toLowerCase())
-    .filter(isValidEmail);
-  const uniqueShareEmails = [...new Set(shareEmails)];
-
-  if (uploaded.id && uniqueShareEmails.length > 0) {
-    for (const shareWithEmail of uniqueShareEmails) {
-      const permRes = await fetch(
-        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
-          uploaded.id
-        )}/permissions?supportsAllDrives=true`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            type: "user",
-            role: "writer",
-            emailAddress: shareWithEmail,
-          }),
-        }
-      );
-
-      if (!permRes.ok) {
-        const text = await permRes.text().catch(() => "");
-        console.warn(
-          `Google Drive permission grant failed (${permRes.status}) for ${shareWithEmail}: ${text || permRes.statusText}`
-        );
-      }
-    }
-  }
-
-  if (uploaded.id && publicAccessMode !== "off") {
-    const role = publicAccessMode === "anyone_writer" ? "writer" : "reader";
-    const permRes = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(uploaded.id)}/permissions?supportsAllDrives=true`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          type: "anyone",
-          role,
-          allowFileDiscovery: false,
-        }),
-      }
+    throw new Error(
+      `Google Drive OAuth upload failed (${res.status}): ${text || res.statusText}`,
     );
-
-    if (!permRes.ok) {
-      const text = await permRes.text().catch(() => "");
-      throw new Error(
-        `Google Drive public sharing failed (${permRes.status}): ${text || permRes.statusText}`
-      );
-    }
   }
 
-  return uploaded;
+  return (await res.json()) as GoogleDriveUploadResult;
 }
 
 export async function uploadDocxToGoogleDrive(params: {
@@ -155,29 +301,80 @@ export async function uploadDocxToGoogleDrive(params: {
   buffer: Buffer;
   folderId?: string | null;
   shareWithEmails?: string[] | null;
+  convertToGoogleDocs?: boolean;
+  usuarioId?: string | null;
+  fallbackAuthUserId?: string | null;
 }) {
-  return uploadBufferToGoogleDrive({
+  const oauthUpload = await uploadBufferToGoogleOAuthDrive({
+    filename: params.filename,
+    buffer: params.buffer,
+    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    usuarioId: params.usuarioId ?? null,
+    fallbackAuthUserId: params.fallbackAuthUserId ?? null,
+    convertToGoogleDocs: params.convertToGoogleDocs ?? true,
+  });
+  if (oauthUpload) return oauthUpload;
+
+  return uploadBufferToStorage({
     ...params,
     mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    convertToGoogleDocs: true,
   });
 }
 
+export async function downloadStoredFileBuffer(fileId: string): Promise<Buffer> {
+  const normalizedFileId = fileId.trim();
+  if (!normalizedFileId) {
+    throw new Error("Missing file identifier.");
+  }
+
+  if (!isStoragePath(normalizedFileId)) {
+    return downloadLegacyGoogleDriveFileBuffer(normalizedFileId);
+  }
+
+  await ensureDocumentsBucket();
+  const supabase = createAdminSupabase();
+  const bucketName = getDocumentsBucketName();
+
+  const { data, error } = await supabase.storage.from(bucketName).download(normalizedFileId);
+  if (error || !data) {
+    throw new Error(
+      `Supabase Storage download failed: ${error?.message ?? "file not found"}`
+    );
+  }
+
+  const arrayBuffer = await data.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
 export async function exportFileAsPdf(fileId: string): Promise<Buffer> {
+  const normalizedFileId = fileId.trim();
+  if (!normalizedFileId) throw new Error("Missing file identifier.");
+
+  if (isStoragePath(normalizedFileId)) {
+    if (!normalizedFileId.toLowerCase().endsWith(".pdf")) {
+      throw new Error(
+        "Supabase Storage no convierte DOCX a PDF automaticamente. Se enviara el enlace del documento."
+      );
+    }
+    return downloadStoredFileBuffer(normalizedFileId);
+  }
+
   const clientEmail = getEnv("GOOGLE_DRIVE_CLIENT_EMAIL");
   const privateKey = parsePrivateKey(getEnv("GOOGLE_DRIVE_PRIVATE_KEY"));
 
   const jwtClient = new JWT({
     email: clientEmail,
     key: privateKey,
-    scopes: ["https://www.googleapis.com/auth/drive"],
+    scopes: ["https://www.googleapis.com/auth/drive.readonly"],
   });
 
   const auth = await jwtClient.authorize();
   const accessToken = auth?.access_token ?? jwtClient.credentials.access_token ?? null;
   if (!accessToken) throw new Error("Failed to obtain Google access token.");
 
-  const exportUrl = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=application/pdf`;
+  const exportUrl = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
+    normalizedFileId
+  )}/export?mimeType=application/pdf`;
   const res = await fetch(exportUrl, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
@@ -199,7 +396,11 @@ export async function uploadFileToGoogleDrive(params: {
   shareWithEmails?: string[] | null;
 }) {
   if (!params.mimeType?.trim()) {
-    throw new Error("Missing mimeType for Google Drive upload.");
+    throw new Error("Missing mimeType for file upload.");
   }
-  return uploadBufferToGoogleDrive(params);
+
+  const uniqueShareEmails = [...new Set((params.shareWithEmails ?? []).filter(isValidEmail))];
+  void uniqueShareEmails;
+
+  return uploadBufferToStorage(params);
 }

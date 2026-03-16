@@ -56,6 +56,16 @@ type ProgresoAction = {
   requiereIniciar: boolean;
 };
 
+type GoogleCalendarStatus = {
+  available: boolean;
+  oauthConfigured?: boolean;
+  storageReady?: boolean;
+  connected: boolean;
+  googleEmail: string | null;
+  connectedAt: string | null;
+  setupMessage?: string | null;
+};
+
 function toEventoCalendario(evento: Evento): EventoCalendario {
   return {
     id: evento.id,
@@ -320,6 +330,19 @@ function CalendarioContent() {
   >({});
   const [guardando, setGuardando] = useState(false);
   const [destinoAsignadoId, setDestinoAsignadoId] = useState<string>("");
+  const [googleCalendarStatus, setGoogleCalendarStatus] = useState<GoogleCalendarStatus>({
+    available: false,
+    oauthConfigured: false,
+    storageReady: false,
+    connected: false,
+    googleEmail: null,
+    connectedAt: null,
+    setupMessage: null,
+  });
+  const [googleCalendarLoading, setGoogleCalendarLoading] = useState(true);
+  const [googleCalendarError, setGoogleCalendarError] = useState<string | null>(null);
+  const [googleCalendarSuccess, setGoogleCalendarSuccess] = useState<string | null>(null);
+  const [disconnectingGoogleCalendar, setDisconnectingGoogleCalendar] = useState(false);
 
   useEffect(() => {
     if (!user?.id || usuarios.length === 0) return;
@@ -330,11 +353,67 @@ function CalendarioContent() {
     });
   }, [user?.id, usuarios]);
 
+  const loadGoogleCalendarStatus = useCallback(async () => {
+    if (!user?.id) {
+      setGoogleCalendarStatus({
+        available: false,
+        oauthConfigured: false,
+        storageReady: false,
+        connected: false,
+        googleEmail: null,
+        connectedAt: null,
+        setupMessage: null,
+      });
+      setGoogleCalendarLoading(false);
+      return;
+    }
+
+    setGoogleCalendarLoading(true);
+    setGoogleCalendarError(null);
+    setGoogleCalendarSuccess(null);
+
+    try {
+      const response = await fetch("/api/google-calendar/status", {
+        cache: "no-store",
+      });
+      const json = (await response.json().catch(() => null)) as
+        | GoogleCalendarStatus
+        | { error?: string }
+        | null;
+
+      if (!response.ok) {
+        throw new Error(
+          json && "error" in json && typeof json.error === "string"
+            ? json.error
+            : "No se pudo consultar el estado de Google Calendar.",
+        );
+      }
+
+      setGoogleCalendarStatus({
+        available: Boolean(json && "available" in json && json.available),
+        oauthConfigured: Boolean(json && "oauthConfigured" in json && json.oauthConfigured),
+        storageReady: Boolean(json && "storageReady" in json && json.storageReady),
+        connected: Boolean(json && "connected" in json && json.connected),
+        googleEmail: json && "googleEmail" in json ? json.googleEmail : null,
+        connectedAt: json && "connectedAt" in json ? json.connectedAt : null,
+        setupMessage: json && "setupMessage" in json ? json.setupMessage : null,
+      });
+    } catch (error) {
+      setGoogleCalendarError(getErrorMessage(error, "No se pudo consultar Google Calendar."));
+    } finally {
+      setGoogleCalendarLoading(false);
+    }
+  }, [user?.id]);
+
   useEffect(() => {
     if (modalAbierto && !nuevoUsuarioId && destinoAsignadoId) {
       setNuevoUsuarioId(destinoAsignadoId);
     }
   }, [destinoAsignadoId, modalAbierto, nuevoUsuarioId]);
+
+  useEffect(() => {
+    void loadGoogleCalendarStatus();
+  }, [loadGoogleCalendarStatus]);
 
   const userColorMap = useMemo(() => {
     const map: Record<string, string> = {};
@@ -594,7 +673,36 @@ function CalendarioContent() {
   const router = useRouter();
   const procesoIdDesdeQuery = searchParams.get("procesoId");
   const fechaDesdeQuery = searchParams.get("fecha");
+  const googleCalendarResult = searchParams.get("googleCalendar");
+  const googleCalendarMessage = searchParams.get("googleCalendarMessage");
   const hoyISO = toISODate(hoy);
+
+  function handleConnectGoogleCalendar() {
+    window.location.href = "/api/google-calendar/connect?next=/calendario";
+  }
+
+  async function handleDisconnectGoogleCalendar() {
+    setDisconnectingGoogleCalendar(true);
+    setGoogleCalendarError(null);
+    setGoogleCalendarSuccess(null);
+
+    try {
+      const response = await fetch("/api/google-calendar/disconnect", {
+        method: "POST",
+      });
+      const json = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) {
+        throw new Error(json?.error || "No se pudo desconectar Google Calendar.");
+      }
+
+      await loadGoogleCalendarStatus();
+      setGoogleCalendarSuccess("Google Calendar desconectado.");
+    } catch (error) {
+      setGoogleCalendarError(getErrorMessage(error, "No se pudo desconectar Google Calendar."));
+    } finally {
+      setDisconnectingGoogleCalendar(false);
+    }
+  }
 
   function cambiarPeriodo(direccion: number) {
     if (viewType === "week") {
@@ -947,6 +1055,7 @@ function CalendarioContent() {
           webViewLink: state.result.webViewLink,
           fileId: state.result.fileId,
           fileName: state.result.fileName,
+          skipPdfExport: true,
         }),
       });
 
@@ -1184,6 +1293,89 @@ function CalendarioContent() {
                 <CalendarStatChip label="Dia seleccionado" value={diaSeleccionadoISO} tone="neutral" />
               </div>
             </div>
+          </div>
+          <div className="rounded-3xl border border-zinc-200/80 bg-white/80 p-4 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/5">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-zinc-500 dark:text-zinc-400">
+                  Google Calendar y Meet
+                </p>
+                <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
+                  Conecta tu Gmail desde aqui para que los eventos del calendario puedan crear enlaces de Google Meet.
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-zinc-500 dark:text-zinc-400">
+                  <span>
+                    Estado:{" "}
+                    {googleCalendarLoading
+                      ? "Consultando..."
+                      : googleCalendarStatus.connected
+                        ? `Conectado como ${googleCalendarStatus.googleEmail ?? "sin correo"}`
+                        : googleCalendarStatus.available
+                          ? "No conectado"
+                          : googleCalendarStatus.oauthConfigured && !googleCalendarStatus.storageReady
+                            ? "Migracion pendiente en Supabase"
+                            : "OAuth no configurado en el servidor"}
+                  </span>
+                  {formatGoogleSyncTimestamp(googleCalendarStatus.connectedAt ?? undefined) && (
+                    <span>
+                      Ultima conexion: {formatGoogleSyncTimestamp(googleCalendarStatus.connectedAt ?? undefined)}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleConnectGoogleCalendar}
+                  disabled={!googleCalendarStatus.available}
+                  className="h-11 rounded-2xl bg-zinc-950 px-4 text-sm font-medium text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-white dark:text-black"
+                >
+                  {googleCalendarStatus.connected
+                    ? "Conectar otro Gmail con Google"
+                    : "Conectar Gmail con Google"}
+                </button>
+                {googleCalendarStatus.connected && (
+                  <button
+                    type="button"
+                    onClick={() => void handleDisconnectGoogleCalendar()}
+                    disabled={disconnectingGoogleCalendar}
+                    className="h-11 rounded-2xl border border-red-200 bg-red-50 px-4 text-sm font-medium text-red-700 shadow-sm transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300 dark:hover:bg-red-500/20"
+                  >
+                    {disconnectingGoogleCalendar ? "Desconectando..." : "Desconectar Google"}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {googleCalendarError && (
+              <div className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+                {googleCalendarError}
+              </div>
+            )}
+
+            {!googleCalendarError && googleCalendarStatus.setupMessage && (
+              <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                {googleCalendarStatus.setupMessage}
+              </div>
+            )}
+
+            {googleCalendarResult === "connected" && (
+              <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">
+                Google Calendar conectado correctamente.
+              </div>
+            )}
+
+            {googleCalendarSuccess && (
+              <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">
+                {googleCalendarSuccess}
+              </div>
+            )}
+
+            {googleCalendarResult === "error" && (
+              <div className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+                {googleCalendarMessage || "No se pudo completar la conexion con Google Calendar."}
+              </div>
+            )}
           </div>
         </header>
 

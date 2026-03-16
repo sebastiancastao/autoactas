@@ -347,6 +347,7 @@ export default function InicializacionPage() {
           webViewLink,
           fileId: state.result?.fileId,
           fileName: state.result?.fileName,
+          skipPdfExport: true,
         }),
       });
 

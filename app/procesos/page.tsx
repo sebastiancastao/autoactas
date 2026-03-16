@@ -811,6 +811,7 @@ export default function ProcesosPage() {
           webViewLink: state.result.webViewLink,
           fileId: state.result.fileId,
           fileName: state.result.fileName,
+          skipPdfExport: true,
         }),
       });
 

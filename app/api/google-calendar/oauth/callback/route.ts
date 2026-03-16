@@ -8,11 +8,23 @@ import { createAdminSupabase } from "@/lib/supabase-admin";
 import { createRouteHandlerSupabase } from "@/lib/supabase-route";
 
 const GOOGLE_CALENDAR_OAUTH_STATE_COOKIE = "google_calendar_oauth_state";
+const GOOGLE_CALENDAR_OAUTH_RETURN_TO_COOKIE = "google_calendar_oauth_return_to";
 
 export const runtime = "nodejs";
 
-function redirectToPerfil(request: NextRequest, status: string, message?: string) {
-  const url = new URL("/perfil", request.nextUrl.origin);
+function normalizeReturnTo(value: string | null | undefined) {
+  const raw = value?.trim() ?? "";
+  if (!raw.startsWith("/") || raw.startsWith("//")) return "/perfil";
+  return raw;
+}
+
+function redirectToTarget(
+  request: NextRequest,
+  returnTo: string,
+  status: string,
+  message?: string,
+) {
+  const url = new URL(normalizeReturnTo(returnTo), request.nextUrl.origin);
   url.searchParams.set("googleCalendar", status);
   if (message) url.searchParams.set("googleCalendarMessage", message);
   return NextResponse.redirect(url);
@@ -34,9 +46,17 @@ export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
   const state = request.nextUrl.searchParams.get("state");
   const storedState = request.cookies.get(GOOGLE_CALENDAR_OAUTH_STATE_COOKIE)?.value ?? null;
+  const returnTo = normalizeReturnTo(
+    request.cookies.get(GOOGLE_CALENDAR_OAUTH_RETURN_TO_COOKIE)?.value ?? "/perfil",
+  );
 
   if (!code || !state || !storedState || state !== storedState) {
-    return redirectToPerfil(request, "error", "La respuesta de Google no coincide con la solicitud iniciada.");
+    return redirectToTarget(
+      request,
+      returnTo,
+      "error",
+      "La respuesta de Google no coincide con la solicitud iniciada.",
+    );
   }
 
   const supabase = await createRouteHandlerSupabase();
@@ -45,12 +65,22 @@ export async function GET(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   if (!user) {
-    return redirectToPerfil(request, "error", "Tu sesion expiro antes de completar la conexion.");
+    return redirectToTarget(
+      request,
+      returnTo,
+      "error",
+      "Tu sesion expiro antes de completar la conexion.",
+    );
   }
 
   const usuarioId = await resolveUsuarioId(user.id);
   if (!usuarioId) {
-    return redirectToPerfil(request, "error", "No se encontro el perfil interno del usuario.");
+    return redirectToTarget(
+      request,
+      returnTo,
+      "error",
+      "No se encontro el perfil interno del usuario.",
+    );
   }
 
   try {
@@ -61,8 +91,9 @@ export async function GET(request: NextRequest) {
     const accessToken = tokens.access_token?.trim() ?? null;
 
     if (!refreshToken || !accessToken) {
-      return redirectToPerfil(
+      return redirectToTarget(
         request,
+        returnTo,
         "error",
         "Google no devolvio refresh token. Intenta desconectar y conectar de nuevo.",
       );
@@ -77,7 +108,12 @@ export async function GET(request: NextRequest) {
     const googleEmail = userInfo?.email?.trim() ?? user.email ?? "";
 
     if (!googleEmail) {
-      return redirectToPerfil(request, "error", "No se pudo identificar el correo de Google conectado.");
+      return redirectToTarget(
+        request,
+        returnTo,
+        "error",
+        "No se pudo identificar el correo de Google conectado.",
+      );
     }
 
     await upsertGoogleCalendarOAuthAccount({
@@ -88,11 +124,12 @@ export async function GET(request: NextRequest) {
       tokenType: tokens.token_type ?? null,
     });
 
-    const response = redirectToPerfil(request, "connected");
+    const response = redirectToTarget(request, returnTo, "connected");
     response.cookies.delete(GOOGLE_CALENDAR_OAUTH_STATE_COOKIE);
+    response.cookies.delete(GOOGLE_CALENDAR_OAUTH_RETURN_TO_COOKIE);
     return response;
   } catch (error) {
     const message = error instanceof Error ? error.message : "No se pudo completar la conexion con Google.";
-    return redirectToPerfil(request, "error", message);
+    return redirectToTarget(request, returnTo, "error", message);
   }
 }

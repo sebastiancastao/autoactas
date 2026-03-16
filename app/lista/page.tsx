@@ -1635,6 +1635,7 @@ function AttendanceContent() {
 
       const terminarAudienciaPayload = {
         procesoId,
+        authUserId: user?.id ?? null,
         numeroProceso,
         titulo: asistenciaPayload.titulo,
         fecha: asistenciaPayload.fecha,

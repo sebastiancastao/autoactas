@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { JWT } from "google-auth-library";
 import {
   AlignmentType,
   Document,
@@ -27,7 +26,10 @@ import { promises as fs } from "fs";
 import path from "path";
 import * as XLSX from "xlsx";
 
-import { uploadDocxToGoogleDrive } from "@/lib/google-drive";
+import {
+  downloadStoredFileBuffer,
+  uploadDocxToGoogleDrive,
+} from "@/lib/google-drive";
 import type { Database } from "@/lib/database.types";
 
 export const runtime = "nodejs";
@@ -136,6 +138,7 @@ type AcreenciaRow = {
 
 type TerminarAudienciaPayload = {
   procesoId: string;
+  authUserId?: string | null;
   numeroProceso?: string | null;
   titulo: string;
   fecha: string; // YYYY-MM-DD
@@ -326,55 +329,6 @@ function buildSection(
   return header
     ? { properties: { page }, headers: { default: header }, children }
     : { properties: { page }, children };
-}
-
-function getEnv(name: string) {
-  const value = process.env[name];
-  if (!value) throw new Error(`Missing env var: ${name}`);
-  const trimmed = value.trim();
-  if (
-    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
-    return trimmed.slice(1, -1);
-  }
-  return trimmed;
-}
-
-function parsePrivateKey(raw: string) {
-  return raw.replace(/\\n/g, "\n");
-}
-
-async function getGoogleDriveAccessToken() {
-  const clientEmail = getEnv("GOOGLE_DRIVE_CLIENT_EMAIL");
-  const privateKey = parsePrivateKey(getEnv("GOOGLE_DRIVE_PRIVATE_KEY"));
-  const jwtClient = new JWT({
-    email: clientEmail,
-    key: privateKey,
-    scopes: ["https://www.googleapis.com/auth/drive.readonly"],
-  });
-  const auth = await jwtClient.authorize();
-  const accessToken = auth?.access_token ?? jwtClient.credentials.access_token ?? null;
-  if (!accessToken) throw new Error("Failed to obtain Google access token.");
-  return accessToken;
-}
-
-async function downloadDriveFileBuffer(fileId: string) {
-  const accessToken = await getGoogleDriveAccessToken();
-  const response = await fetch(
-    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`,
-    {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    }
-  );
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(
-      `Google Drive file download failed (${response.status}): ${text || response.statusText}`
-    );
-  }
-  const bytes = await response.arrayBuffer();
-  return Buffer.from(bytes);
 }
 
 function normalizeMatchText(value: string) {
@@ -791,7 +745,7 @@ async function loadExcelDocData(
     source: ProcesoExcelArchivoRow,
     sourceLabel: "payload" | "database"
   ): Promise<ExcelDocData> => {
-    const fileBuffer = await downloadDriveFileBuffer(source.drive_file_id);
+    const fileBuffer = await downloadStoredFileBuffer(source.drive_file_id);
     const workbook = XLSX.read(fileBuffer, {
       type: "buffer",
       raw: false,
@@ -874,10 +828,10 @@ async function loadExcelDocData(
   try {
     return await parseExcelFromSource(data as ProcesoExcelArchivoRow, "database");
   } catch (err) {
-    console.warn(
-      "[terminar-audiencia] Unable to parse excel from Drive:",
-      err instanceof Error ? err.message : String(err)
-    );
+      console.warn(
+        "[terminar-audiencia] Unable to parse excel from stored file:",
+        err instanceof Error ? err.message : String(err)
+      );
     return null;
   }
 }
@@ -3205,6 +3159,8 @@ export async function POST(req: Request) {
         : payload.operador?.email
           ? [payload.operador.email]
           : null,
+      usuarioId: eventoContext?.usuario?.id ?? null,
+      fallbackAuthUserId: payload.authUserId ?? null,
     });
 
     const actaId = await saveActaAudienciaSnapshot({ payload, uploaded });

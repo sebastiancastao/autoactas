@@ -12,6 +12,7 @@ type EnviarActaPayload = {
   webViewLink: string;
   fileId?: string;
   fileName?: string;
+  skipPdfExport?: boolean;
 };
 
 function toErrorMessage(e: unknown) {
@@ -33,6 +34,7 @@ async function sendApoderadoEmails(params: {
   webViewLink: string;
   fileId?: string;
   fileName?: string;
+  skipPdfExport?: boolean;
 }) {
   const apiKey = process.env.RESEND_API_KEY?.trim();
   if (!apiKey) {
@@ -50,16 +52,16 @@ async function sendApoderadoEmails(params: {
   const errors: string[] = [];
   let sent = 0;
 
-  // Export the Google Drive file as PDF if fileId is provided
+  // Export the stored file as PDF if possible. Otherwise fall back to the link.
   let pdfBuffer: Buffer | null = null;
   let pdfFilename = "documento.pdf";
-  if (params.fileId) {
+  if (params.fileId && !params.skipPdfExport) {
     try {
       pdfBuffer = await exportFileAsPdf(params.fileId);
       pdfFilename = (params.fileName ?? "documento").replace(/\.docx$/i, "") + ".pdf";
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.error("Failed to export PDF from Google Drive:", msg);
+      console.error("Failed to export PDF from document storage:", msg);
       errors.push(`PDF export: ${msg}`);
     }
   }
@@ -79,7 +81,7 @@ async function sendApoderadoEmails(params: {
       <p style="margin: 24px 0;">
         <a href="${params.webViewLink}"
            style="display: inline-block; background-color: #18181b; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: 500;">
-          Ver documento en Google Drive
+          Ver documento
         </a>
       </p>`}
       <p style="color: #71717a; font-size: 14px; margin-top: 32px;">
@@ -146,6 +148,7 @@ export async function POST(req: Request) {
       webViewLink: payload.webViewLink,
       fileId: payload.fileId,
       fileName: payload.fileName,
+      skipPdfExport: payload.skipPdfExport,
     });
 
     return NextResponse.json({
