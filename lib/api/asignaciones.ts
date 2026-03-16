@@ -75,7 +75,7 @@ export async function createAsignacion(
     .single();
 
   if (error) throw error;
-  return data;
+  return data as AsignacionUsuario;
 }
 
 export async function updateAsignacion(
@@ -90,7 +90,7 @@ export async function updateAsignacion(
     .single();
 
   if (error) throw error;
-  return data;
+  return data as AsignacionUsuario;
 }
 
 export async function deleteAsignacion(id: string): Promise<void> {
