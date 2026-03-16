@@ -565,7 +565,9 @@ export default function ProcesosPage() {
 
         const asigMap: Record<string, string> = {};
         (asignacionesData.data ?? []).forEach((row) => {
-          asigMap[row.usuario_origen_id] = row.usuario_destino_id;
+          if (row.usuario_origen_id && row.usuario_destino_id) {
+            asigMap[row.usuario_origen_id as string] = row.usuario_destino_id as string;
+          }
         });
         setAsignacionesMap(asigMap);
       } catch (error) {
