@@ -1,25 +1,32 @@
-import { supabase } from '../supabase'
+import type { Database } from "../database.types";
+import { supabase } from "../supabase";
 
-export type Evento = {
-  id: string
-  titulo: string
-  descripcion: string | null
-  fecha: string
-  hora: string | null
-  fecha_fin: string | null
-  hora_fin: string | null
-  usuario_id: string | null
-  proceso_id: string | null
-  tipo: string | null
-  color: string | null
-  recordatorio: boolean
-  completado: boolean
-  created_at: string
-  updated_at: string
+export type Evento = Database["public"]["Tables"]["eventos"]["Row"];
+export type EventoInsert = Database["public"]["Tables"]["eventos"]["Insert"];
+export type EventoUpdate = Database["public"]["Tables"]["eventos"]["Update"];
+
+type EventoApiResponse = {
+  evento: Evento;
+};
+
+async function parseEventoApiResponse(response: Response) {
+  const json = (await response.json().catch(() => null)) as
+    | EventoApiResponse
+    | { error?: string }
+    | null;
+  const errorMessage =
+    json && "error" in json && typeof json.error === "string" ? json.error : null;
+
+  if (!response.ok) {
+    throw new Error(errorMessage || "No se pudo completar la operacion del evento.");
+  }
+
+  if (!json || !("evento" in json) || !json.evento) {
+    throw new Error("La respuesta del servidor para eventos no es valida.");
+  }
+
+  return json.evento;
 }
-
-export type EventoInsert = Omit<Evento, 'id' | 'created_at' | 'updated_at'>
-export type EventoUpdate = Partial<EventoInsert>
 
 export async function getEventos() {
   const { data, error } = await supabase
@@ -92,35 +99,46 @@ export async function getEventosByProceso(procesoId: string) {
 }
 
 export async function createEvento(evento: EventoInsert) {
-  const { data, error } = await supabase
-    .from('eventos')
-    .insert(evento)
-    .select()
-    .single()
+  const response = await fetch("/api/eventos", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(evento),
+  });
 
-  if (error) throw error
-  return data
+  return parseEventoApiResponse(response);
 }
 
 export async function updateEvento(id: string, evento: EventoUpdate) {
-  const { data, error } = await supabase
-    .from('eventos')
-    .update(evento)
-    .eq('id', id)
-    .select()
-    .single()
+  const response = await fetch(`/api/eventos/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(evento),
+  });
 
-  if (error) throw error
-  return data
+  return parseEventoApiResponse(response);
 }
 
 export async function deleteEvento(id: string) {
-  const { error } = await supabase
-    .from('eventos')
-    .delete()
-    .eq('id', id)
+  const response = await fetch(`/api/eventos/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
 
-  if (error) throw error
+  if (!response.ok) {
+    const json = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(json?.error || "No se pudo eliminar el evento.");
+  }
+}
+
+export async function retryEventoGoogleSync(id: string) {
+  const response = await fetch(`/api/eventos/${encodeURIComponent(id)}/sync-google`, {
+    method: "POST",
+  });
+
+  return parseEventoApiResponse(response);
 }
 
 export async function marcarEventoCompletado(id: string, completado: boolean) {

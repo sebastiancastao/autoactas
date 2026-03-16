@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, PointerEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, PointerEvent, useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 import type { Database } from "@/lib/database.types";
 import { useAuth } from "@/lib/auth-context";
@@ -14,6 +15,16 @@ type SignaturePoint = {
 };
 
 type UsuarioUpdate = Database["public"]["Tables"]["usuarios"]["Update"];
+
+type GoogleCalendarStatus = {
+  available: boolean;
+  oauthConfigured?: boolean;
+  storageReady?: boolean;
+  connected: boolean;
+  googleEmail: string | null;
+  connectedAt: string | null;
+  setupMessage?: string | null;
+};
 
 const CANVAS_WIDTH = 900;
 const CANVAS_HEIGHT = 240;
@@ -65,6 +76,16 @@ function getCanvasPoint(
     x: (clientX - rect.left) * scaleX,
     y: (clientY - rect.top) * scaleY,
   };
+}
+
+function formatDateTime(value: string | null) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString("es-CO", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
 }
 
 function isCanvasBlank(canvas: HTMLCanvasElement) {
@@ -119,6 +140,7 @@ function exportSignatureAsBlackPng(canvas: HTMLCanvasElement) {
 
 export default function PerfilPage() {
   const { user } = useAuth();
+  const searchParams = useSearchParams();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [perfil, setPerfil] = useState<UsuarioRow | null>(null);
@@ -133,10 +155,76 @@ export default function PerfilPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [googleCalendarStatus, setGoogleCalendarStatus] = useState<GoogleCalendarStatus>({
+    available: false,
+    oauthConfigured: false,
+    storageReady: false,
+    connected: false,
+    googleEmail: null,
+    connectedAt: null,
+    setupMessage: null,
+  });
+  const [googleCalendarLoading, setGoogleCalendarLoading] = useState(true);
+  const [googleCalendarError, setGoogleCalendarError] = useState<string | null>(null);
+  const [disconnectingGoogleCalendar, setDisconnectingGoogleCalendar] = useState(false);
 
   const [hasSignature, setHasSignature] = useState(false);
   const [isDrawing, setIsDrawing] = useState(false);
   const [lastPoint, setLastPoint] = useState<SignaturePoint | null>(null);
+
+  const googleCalendarResult = searchParams.get("googleCalendar");
+  const googleCalendarMessage = searchParams.get("googleCalendarMessage");
+
+  const loadGoogleCalendarStatus = useCallback(async () => {
+    if (!user?.id) {
+      setGoogleCalendarStatus({
+        available: false,
+        oauthConfigured: false,
+        storageReady: false,
+        connected: false,
+        googleEmail: null,
+        connectedAt: null,
+        setupMessage: null,
+      });
+      setGoogleCalendarLoading(false);
+      return;
+    }
+
+    setGoogleCalendarLoading(true);
+    setGoogleCalendarError(null);
+
+    try {
+      const response = await fetch("/api/google-calendar/status", {
+        cache: "no-store",
+      });
+      const json = (await response.json().catch(() => null)) as
+        | GoogleCalendarStatus
+        | { error?: string }
+        | null;
+
+      if (!response.ok) {
+        throw new Error(
+          json && "error" in json && typeof json.error === "string"
+            ? json.error
+            : "No se pudo consultar el estado de Google Calendar.",
+        );
+      }
+
+      setGoogleCalendarStatus({
+        available: Boolean(json && "available" in json && json.available),
+        oauthConfigured: Boolean(json && "oauthConfigured" in json && json.oauthConfigured),
+        storageReady: Boolean(json && "storageReady" in json && json.storageReady),
+        connected: Boolean(json && "connected" in json && json.connected),
+        googleEmail: json && "googleEmail" in json ? json.googleEmail : null,
+        connectedAt: json && "connectedAt" in json ? json.connectedAt : null,
+        setupMessage: json && "setupMessage" in json ? json.setupMessage : null,
+      });
+    } catch (err) {
+      setGoogleCalendarError(toErrorMessage(err));
+    } finally {
+      setGoogleCalendarLoading(false);
+    }
+  }, [user?.id]);
 
   useEffect(() => {
     if (!user?.id) {
@@ -186,6 +274,30 @@ export default function PerfilPage() {
       canceled = true;
     };
   }, [user?.id, user?.email]);
+
+  useEffect(() => {
+    void loadGoogleCalendarStatus();
+  }, [loadGoogleCalendarStatus]);
+
+  useEffect(() => {
+    if (!googleCalendarResult) return;
+
+    if (googleCalendarResult === "connected") {
+      setSuccess("Google Calendar conectado correctamente.");
+      setError(null);
+      return;
+    }
+
+    if (googleCalendarResult === "error") {
+      setError(googleCalendarMessage || "No se pudo completar la conexion con Google Calendar.");
+      return;
+    }
+
+    if (googleCalendarResult === "disconnected") {
+      setSuccess("Google Calendar desconectado.");
+      setError(null);
+    }
+  }, [googleCalendarMessage, googleCalendarResult]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -286,6 +398,32 @@ export default function PerfilPage() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     setHasSignature(false);
     setSuccess(null);
+  };
+
+  const handleConnectGoogleCalendar = () => {
+    window.location.href = "/api/google-calendar/connect";
+  };
+
+  const handleDisconnectGoogleCalendar = async () => {
+    setDisconnectingGoogleCalendar(true);
+    setGoogleCalendarError(null);
+
+    try {
+      const response = await fetch("/api/google-calendar/disconnect", {
+        method: "POST",
+      });
+      const json = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) {
+        throw new Error(json?.error || "No se pudo desconectar Google Calendar.");
+      }
+
+      await loadGoogleCalendarStatus();
+      setSuccess("Google Calendar desconectado.");
+    } catch (err) {
+      setGoogleCalendarError(toErrorMessage(err));
+    } finally {
+      setDisconnectingGoogleCalendar(false);
+    }
   };
 
   const handleSave = async (event: FormEvent<HTMLFormElement>) => {
@@ -406,6 +544,71 @@ export default function PerfilPage() {
 
         <section className="rounded-3xl border border-zinc-200 bg-white/80 p-5 shadow-[0_12px_40px_-20px_rgba(0,0,0,0.35)] backdrop-blur dark:border-white/10 dark:bg-white/5 sm:p-6">
           <form onSubmit={handleSave} className="space-y-6">
+            <div className="rounded-2xl border border-zinc-200 bg-white/60 p-4 dark:border-white/10 dark:bg-white/5">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+                    Google Calendar y Google Meet
+                  </h2>
+                  <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                    Para cuentas Gmail personales, conecta tu Google con OAuth. Esa conexion se usa
+                    para crear eventos y, si tu cuenta lo permite, enlaces de Meet.
+                  </p>
+                  <div className="mt-3 space-y-1 text-xs text-zinc-600 dark:text-zinc-300">
+                    <p>
+                      Estado:{" "}
+                      {googleCalendarLoading
+                        ? "Consultando..."
+                        : googleCalendarStatus.connected
+                          ? `Conectado como ${googleCalendarStatus.googleEmail ?? "sin correo"}`
+                          : googleCalendarStatus.available
+                            ? "No conectado"
+                            : googleCalendarStatus.oauthConfigured && !googleCalendarStatus.storageReady
+                              ? "Migracion pendiente en Supabase"
+                              : "OAuth no configurado en el servidor"}
+                    </p>
+                    {formatDateTime(googleCalendarStatus.connectedAt) && (
+                      <p>Ultima conexion: {formatDateTime(googleCalendarStatus.connectedAt)}</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-2 sm:items-end">
+                  {googleCalendarStatus.connected ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleDisconnectGoogleCalendar()}
+                      disabled={disconnectingGoogleCalendar}
+                      className="rounded-full border border-red-200 bg-red-50 px-4 py-2 text-xs font-medium text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300 dark:hover:bg-red-500/20"
+                    >
+                      {disconnectingGoogleCalendar ? "Desconectando..." : "Desconectar Google"}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleConnectGoogleCalendar}
+                      disabled={!googleCalendarStatus.available}
+                      className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-xs font-medium text-zinc-700 transition hover:border-zinc-950 hover:text-zinc-950 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-white dark:hover:text-white"
+                    >
+                      Conectar Gmail con Google
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {googleCalendarError && (
+                <div className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+                  {googleCalendarError}
+                </div>
+              )}
+
+              {!googleCalendarError && googleCalendarStatus.setupMessage && (
+                <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                  {googleCalendarStatus.setupMessage}
+                </div>
+              )}
+            </div>
+
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
               <div>
                 <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">

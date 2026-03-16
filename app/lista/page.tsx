@@ -11,7 +11,7 @@ import { createAsistenciasBulk } from "@/lib/api/asistencia";
 import { getAcreenciasByProceso, getAcreenciasHistorialByProceso, updateAcreencia } from "@/lib/api/acreencias";
 import { createEvento, updateEvento, getEventosByProceso } from "@/lib/api/eventos";
 import { updateProgresoByProcesoId } from "@/lib/api/progreso";
-import type { Acreedor, Acreencia, Apoderado, AsistenciaInsert } from "@/lib/database.types";
+import type { Acreedor, Acreencia, Apoderado, AsistenciaInsert, Database } from "@/lib/database.types";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth-context";
 
@@ -37,6 +37,11 @@ type Asistente = {
   tarjetaProfesional: string;
   calidadApoderadoDe: string;
 };
+
+type OperadorUsuario = Pick<
+  Database["public"]["Tables"]["usuarios"]["Row"],
+  "id" | "nombre" | "email" | "identificacion" | "tarjeta_profesional"
+>;
 
 const CATEGORIAS: Categoria[] = ["Acreedor", "Deudor", "Apoderado"];
 const TIPOS_ACTA_CON_TERMINACION_PROCESO = new Set([
@@ -77,6 +82,17 @@ function extractUuidFromParam(value: string | null | undefined) {
 function hasEmbeddedDebugParam(value: string | null | undefined) {
   const raw = String(value ?? "").toLowerCase();
   return raw.includes("debug=1") || raw.includes("debug=true");
+}
+
+async function loadOperadorUsuarioById(usuarioId: string) {
+  const { data, error } = await supabase
+    .from("usuarios")
+    .select("id, nombre, email, identificacion, tarjeta_profesional")
+    .eq("id", usuarioId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return (data ?? null) as OperadorUsuario | null;
 }
 
 function toErrorMessage(error: unknown) {
@@ -583,105 +599,84 @@ function AttendanceContent() {
   const [deudorIdentificacion, setDeudorIdentificacion] = useState("");
 
   // Operador/Conciliador info
-  const [operadorNombre, setOperadorNombre] = useState("JOSE ALEJANDRO PARDO MARTINEZ");
-  const [operadorIdentificacion, setOperadorIdentificacion] = useState("1.154.967.376");
-  const [operadorTarjetaProfesional, setOperadorTarjetaProfesional] = useState("429.496");
-  const [operadorEmail, setOperadorEmail] = useState("fundaseer@gmail.com");
+  const [operadorNombre, setOperadorNombre] = useState("");
+  const [operadorIdentificacion, setOperadorIdentificacion] = useState("");
+  const [operadorTarjetaProfesional, setOperadorTarjetaProfesional] = useState("");
+  const [operadorEmail, setOperadorEmail] = useState("");
+  const [operadorUsuarioId, setOperadorUsuarioId] = useState<string | null>(null);
   const [mostrarDatosOperador, setMostrarDatosOperador] = useState(false);
 
-  // If user is logged in, prefer the `usuarios` profile (by auth_id) as a fallback for operador.
-  // This avoids generating docs with the default placeholder when no eventoId/usuario_id is available.
   useEffect(() => {
-    const authId = user?.id ?? null;
-    if (!authId) return;
-
-    const defaultNombre = "JOSE ALEJANDRO PARDO MARTINEZ";
-    const defaultEmail = "fundaseer@gmail.com";
-    const defaultIdentificacion = "1.154.967.376";
-
-    const shouldSetNombre =
-      !operadorNombre.trim() || operadorNombre.trim().toUpperCase() === defaultNombre;
-    const shouldSetEmail =
-      !operadorEmail.trim() || operadorEmail.trim().toLowerCase() === defaultEmail;
-    const shouldSetIdentificacion =
-      !operadorIdentificacion.trim() || operadorIdentificacion.trim() === defaultIdentificacion;
-
-    if (!shouldSetNombre && !shouldSetEmail && !shouldSetIdentificacion) return;
-
     let canceled = false;
     (async () => {
       try {
-        const { data: usuario, error: usuarioError } = await supabase
-          .from("usuarios")
-          .select("id, nombre, email, identificacion")
-          .eq("auth_id", authId)
-          .maybeSingle();
+        let resolvedUsuario: OperadorUsuario | null = null;
+        let resolvedHora: string | null = null;
 
-        if (usuarioError) throw usuarioError;
-        if (canceled) return;
+        if (eventoId) {
+          const { data: evento, error: eventoError } = await supabase
+            .from("eventos")
+            .select("usuario_id, hora")
+            .eq("id", eventoId)
+            .maybeSingle();
 
-        if (usuario?.id) setOperadorUsuarioId(usuario.id);
-        if (shouldSetNombre && usuario?.nombre) setOperadorNombre(usuario.nombre);
-        if (shouldSetEmail && usuario?.email) setOperadorEmail(usuario.email);
-        if (shouldSetIdentificacion && usuario?.identificacion) {
-          setOperadorIdentificacion(usuario.identificacion);
+          if (eventoError) throw eventoError;
+          resolvedHora = normalizeHoraHHMM(evento?.hora ?? null);
+          if (evento?.usuario_id) {
+            resolvedUsuario = await loadOperadorUsuarioById(evento.usuario_id);
+          }
         }
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.warn("[/lista] Unable to resolve operador from usuarios(auth_id):", msg);
-      }
-    })();
 
-    return () => {
-      canceled = true;
-    };
-    // Intentionally do not include operador fields in deps: we only want to run when auth user changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
+        if (!resolvedUsuario && procesoId) {
+          const { data: proceso, error: procesoError } = await supabase
+            .from("proceso")
+            .select("usuario_id")
+            .eq("id", procesoId)
+            .maybeSingle();
 
-  useEffect(() => {
-    if (!eventoId) return;
+          if (procesoError) throw procesoError;
+          if (proceso?.usuario_id) {
+            resolvedUsuario = await loadOperadorUsuarioById(proceso.usuario_id);
+          }
+        }
 
-    let canceled = false;
-    (async () => {
-      try {
-        const { data: evento, error: eventoError } = await supabase
-          .from("eventos")
-          .select("usuario_id, hora")
-          .eq("id", eventoId)
-          .maybeSingle();
+        if (!resolvedUsuario && user?.id) {
+          const { data: usuario, error: usuarioError } = await supabase
+            .from("usuarios")
+            .select("id, nombre, email, identificacion, tarjeta_profesional")
+            .eq("auth_id", user.id)
+            .maybeSingle();
 
-        if (eventoError) throw eventoError;
-        const usuarioId = evento?.usuario_id ?? null;
-        const eventoHora = normalizeHoraHHMM(evento?.hora ?? null);
-        if (eventoHora && !canceled) setHora(eventoHora);
-        if (usuarioId && !canceled) setOperadorUsuarioId(usuarioId);
-        if (!usuarioId) return;
+          if (usuarioError) throw usuarioError;
+          resolvedUsuario = (usuario ?? null) as OperadorUsuario | null;
+        }
 
-        const { data: usuario, error: usuarioError } = await supabase
-          .from("usuarios")
-          .select("nombre, email, identificacion")
-          .eq("id", usuarioId)
-          .maybeSingle();
-
-        if (usuarioError) throw usuarioError;
         if (canceled) return;
 
-        if (usuario?.nombre) setOperadorNombre(usuario.nombre);
-        if (usuario?.email) setOperadorEmail(usuario.email);
-        if (usuario?.identificacion) setOperadorIdentificacion(usuario.identificacion);
+        if (resolvedHora) {
+          setHora(resolvedHora);
+        }
+
+        if (resolvedUsuario?.id) {
+          setOperadorUsuarioId(resolvedUsuario.id);
+        } else {
+          setOperadorUsuarioId(null);
+        }
+
+        setOperadorNombre(resolvedUsuario?.nombre ?? "");
+        setOperadorEmail(resolvedUsuario?.email ?? "");
+        setOperadorIdentificacion(resolvedUsuario?.identificacion ?? "");
+        setOperadorTarjetaProfesional(resolvedUsuario?.tarjeta_profesional ?? "");
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        console.warn("[/lista] Unable to resolve event creator user:", msg);
+        console.warn("[/lista] Unable to resolve operador:", msg);
       }
     })();
 
     return () => {
       canceled = true;
     };
-  }, [eventoId]);
-
-  const [operadorUsuarioId, setOperadorUsuarioId] = useState<string | null>(null);
+  }, [eventoId, procesoId, user?.id]);
 
   // Próxima audiencia
   const [proximaFecha, setProximaFecha] = useState("");

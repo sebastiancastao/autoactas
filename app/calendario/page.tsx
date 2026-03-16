@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getProcesos } from "@/lib/api/proceso";
 import { getUsuarios, type Usuario } from "@/lib/api/usuarios";
@@ -11,6 +11,7 @@ import {
   createEvento,
   updateEvento as updateEventoApi,
   deleteEvento as deleteEventoApi,
+  retryEventoGoogleSync,
   type Evento,
 } from "@/lib/api/eventos";
 import { getDeudoresByProceso } from "@/lib/api/deudores";
@@ -28,6 +29,11 @@ type EventoCalendario = {
   hora?: string;
   usuarioId?: string;
   procesoId?: string;
+  googleMeetUrl?: string;
+  googleCalendarUrl?: string;
+  googleSyncStatus?: string;
+  googleSyncError?: string;
+  googleSyncUpdatedAt?: string;
 };
 
 type AutoAdmisorioState = {
@@ -49,6 +55,60 @@ type ProgresoAction = {
   label: string;
   requiereIniciar: boolean;
 };
+
+function toEventoCalendario(evento: Evento): EventoCalendario {
+  return {
+    id: evento.id,
+    titulo: evento.titulo,
+    fechaISO: evento.fecha,
+    hora: evento.hora?.slice(0, 5) || undefined,
+    usuarioId: evento.usuario_id || undefined,
+    procesoId: evento.proceso_id || undefined,
+    googleMeetUrl: evento.google_meet_url || undefined,
+    googleCalendarUrl: evento.google_calendar_html_link || undefined,
+    googleSyncStatus: evento.google_sync_status || undefined,
+    googleSyncError: evento.google_sync_error || undefined,
+    googleSyncUpdatedAt: evento.google_sync_updated_at || undefined,
+  };
+}
+
+function getGoogleSyncBadgeClassName(status: string | undefined) {
+  switch (status) {
+    case "synced":
+      return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300";
+    case "error":
+      return "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300";
+    case "disabled":
+      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+    default:
+      return "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300";
+  }
+}
+
+function getGoogleSyncLabel(status: string | undefined) {
+  switch (status) {
+    case "synced":
+      return "Google sincronizado";
+    case "error":
+      return "Error de sincronizacion";
+    case "disabled":
+      return "Google no configurado";
+    case "pending":
+      return "Sincronizando Google";
+    default:
+      return "Sin estado de Google";
+  }
+}
+
+function formatGoogleSyncTimestamp(value: string | undefined) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString("es-CO", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
 
 function pad(n: number) {
   return String(n).padStart(2, "0");
@@ -198,6 +258,22 @@ function normalizeLabel(value: string | null | undefined, fallback: string) {
   return normalized || fallback;
 }
 
+function notifyGoogleSyncIssue(evento: EventoCalendario) {
+  if (evento.googleSyncStatus === "synced" && evento.googleSyncError) {
+    alert(`El evento se sincronizo en Google Calendar, pero Google Meet no quedo disponible: ${evento.googleSyncError}`);
+    return;
+  }
+
+  if (evento.googleSyncStatus === "error" && evento.googleSyncError) {
+    alert(`El evento se guardo, pero fallo la sincronizacion con Google: ${evento.googleSyncError}`);
+    return;
+  }
+
+  if (evento.googleSyncStatus === "disabled" && evento.googleSyncError) {
+    alert(`El evento se guardo solo en AutoActas. ${evento.googleSyncError}`);
+  }
+}
+
 function buildAcronimo(nombre: string | null | undefined) {
   const normalized = normalizeLabel(nombre, "SIN APODERADO");
   const words = normalized
@@ -229,6 +305,7 @@ function CalendarioContent() {
   const [eventoSeleccionado, setEventoSeleccionado] = useState<EventoCalendario | null>(null);
   const [horaDetalleEditable, setHoraDetalleEditable] = useState("09:00");
   const [guardandoHoraDetalle, setGuardandoHoraDetalle] = useState(false);
+  const [sincronizandoGoogleDetalle, setSincronizandoGoogleDetalle] = useState(false);
 
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
   const [usuarioFiltro, setUsuarioFiltro] = useState<string>("global");
@@ -257,7 +334,7 @@ function CalendarioContent() {
     if (modalAbierto && !nuevoUsuarioId && destinoAsignadoId) {
       setNuevoUsuarioId(destinoAsignadoId);
     }
-  }, [destinoAsignadoId, modalAbierto]);
+  }, [destinoAsignadoId, modalAbierto, nuevoUsuarioId]);
 
   const userColorMap = useMemo(() => {
     const map: Record<string, string> = {};
@@ -342,15 +419,9 @@ function CalendarioContent() {
         setProcesos((procesosData || []) as unknown as Proceso[]);
         setProgresos((progresosData || []) as unknown as Progreso[]);
 
-        // Convert database eventos to EventoCalendario format
-        const eventosConvertidos: EventoCalendario[] = ((eventosData || []) as unknown as Evento[]).map((ev) => ({
-          id: ev.id,
-          titulo: ev.titulo,
-          fechaISO: ev.fecha,
-          hora: ev.hora?.slice(0, 5) || undefined,
-          usuarioId: ev.usuario_id || undefined,
-          procesoId: ev.proceso_id || undefined,
-        }));
+        const eventosConvertidos: EventoCalendario[] = ((eventosData || []) as unknown as Evento[]).map(
+          toEventoCalendario,
+        );
         setEventos(eventosConvertidos);
       } catch (error) {
         console.error("Error fetching data:", error);
@@ -570,7 +641,7 @@ function CalendarioContent() {
     }
   }
 
-  function prepararModalAgregar(diaISO: string, procesoId?: string) {
+  const prepararModalAgregar = useCallback((diaISO: string, procesoId?: string) => {
     setDiaSeleccionadoISO(diaISO);
     setNuevoTitulo("");
     setNuevaFecha(diaISO);
@@ -579,7 +650,7 @@ function CalendarioContent() {
     setNuevoProcesoId(procesoId ?? "");
     setTituloEditable(false);
     setModalAbierto(true);
-  }
+  }, [destinoAsignadoId]);
 
   function abrirModalAgregar(diaISO: string) {
     prepararModalAgregar(diaISO);
@@ -674,15 +745,10 @@ function CalendarioContent() {
         completado: false,
       });
 
-      setEventos((prev) => [...prev, {
-        id: nuevoEvento.id,
-        titulo: nuevoEvento.titulo,
-        fechaISO: nuevoEvento.fecha,
-        hora: nuevoEvento.hora?.slice(0, 5) || undefined,
-        usuarioId: nuevoEvento.usuario_id || undefined,
-        procesoId: nuevoEvento.proceso_id || undefined,
-      }]);
+      const eventoCalendario = toEventoCalendario(nuevoEvento);
+      setEventos((prev) => [...prev, eventoCalendario]);
       setModalAbierto(false);
+      notifyGoogleSyncIssue(eventoCalendario);
     } catch (error) {
       console.error("Error creating evento:", error);
       alert("Error al guardar el evento. Por favor intenta de nuevo.");
@@ -923,6 +989,7 @@ function CalendarioContent() {
     setEventoSeleccionado(null);
     setHoraDetalleEditable("09:00");
     setGuardandoHoraDetalle(false);
+    setSincronizandoGoogleDetalle(false);
   }
 
   async function guardarHoraEventoSeleccionado() {
@@ -952,19 +1019,14 @@ function CalendarioContent() {
         hora: `${horaNormalizada}:00`,
       });
 
-      const horaActualizada = normalizeHoraHHMM(updated.hora) ?? horaNormalizada;
-      const eventoActualizado: EventoCalendario = {
-        id: updated.id,
-        titulo: updated.titulo,
-        fechaISO: updated.fecha,
-        hora: horaActualizada,
-        usuarioId: updated.usuario_id || undefined,
-        procesoId: updated.proceso_id || undefined,
-      };
+      const eventoActualizado = toEventoCalendario(updated);
+      const horaActualizada = normalizeHoraHHMM(eventoActualizado.hora) ?? horaNormalizada;
+      eventoActualizado.hora = horaActualizada;
 
       setEventos((prev) => prev.map((ev) => (ev.id === updated.id ? eventoActualizado : ev)));
       setEventoSeleccionado(eventoActualizado);
       setHoraDetalleEditable(horaActualizada);
+      notifyGoogleSyncIssue(eventoActualizado);
     } catch (error) {
       console.error("Error updating evento hour:", error);
       alert("No se pudo actualizar la hora del evento.");
@@ -983,12 +1045,41 @@ function CalendarioContent() {
     }
   }
 
+  async function resincronizarEventoSeleccionadoConGoogle() {
+    if (!eventoSeleccionado || sincronizandoGoogleDetalle) return;
+
+    setSincronizandoGoogleDetalle(true);
+    try {
+      const updated = await retryEventoGoogleSync(eventoSeleccionado.id);
+      const eventoActualizado = toEventoCalendario(updated);
+      setEventos((prev) => prev.map((ev) => (ev.id === updated.id ? eventoActualizado : ev)));
+      setEventoSeleccionado(eventoActualizado);
+
+      if (eventoActualizado.googleSyncStatus === "synced") {
+        if (eventoActualizado.googleSyncError) {
+          alert(`Evento sincronizado en Google Calendar, pero con advertencia: ${eventoActualizado.googleSyncError}`);
+        } else {
+          alert("Evento sincronizado correctamente con Google Calendar.");
+        }
+      } else if (eventoActualizado.googleSyncStatus === "error" && eventoActualizado.googleSyncError) {
+        alert(`La resincronizacion con Google fallo: ${eventoActualizado.googleSyncError}`);
+      } else if (eventoActualizado.googleSyncStatus === "disabled" && eventoActualizado.googleSyncError) {
+        alert(`Google Calendar sigue deshabilitado. ${eventoActualizado.googleSyncError}`);
+      }
+    } catch (error) {
+      console.error("Error retrying Google sync:", error);
+      alert("No se pudo resincronizar el evento con Google.");
+    } finally {
+      setSincronizandoGoogleDetalle(false);
+    }
+  }
+
   useEffect(() => {
     if (!procesoIdDesdeQuery) return;
     const targetDate = fechaDesdeQuery || hoyISO;
     prepararModalAgregar(targetDate, procesoIdDesdeQuery);
     router.replace("/calendario");
-  }, [procesoIdDesdeQuery, fechaDesdeQuery, hoyISO, router]);
+  }, [procesoIdDesdeQuery, fechaDesdeQuery, hoyISO, prepararModalAgregar, router]);
 
   const totalEventosVista = eventosEnVista.length;
   const eventosHoy = eventosPorDia[hoyISO]?.length ?? 0;
@@ -1650,9 +1741,61 @@ function CalendarioContent() {
                     </div>
                   </div>
                 )}
+
+                <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3 dark:border-white/10 dark:bg-white/5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="space-y-2">
+                      <div className="text-xs text-zinc-500 dark:text-zinc-400">Google</div>
+                      <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${getGoogleSyncBadgeClassName(eventoSeleccionado.googleSyncStatus)}`}>
+                        {getGoogleSyncLabel(eventoSeleccionado.googleSyncStatus)}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {eventoSeleccionado.googleMeetUrl && (
+                        <a
+                          href={eventoSeleccionado.googleMeetUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex h-9 items-center justify-center rounded-xl border border-emerald-200 bg-emerald-50 px-3 text-xs font-medium text-emerald-700 transition hover:bg-emerald-100 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-950/60"
+                        >
+                          Abrir Meet
+                        </a>
+                      )}
+                      {eventoSeleccionado.googleCalendarUrl && (
+                        <a
+                          href={eventoSeleccionado.googleCalendarUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex h-9 items-center justify-center rounded-xl border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:bg-white/10"
+                        >
+                          Abrir en Calendar
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                  {eventoSeleccionado.googleSyncError && (
+                    <p className="mt-3 text-xs text-red-600 dark:text-red-300">
+                      {eventoSeleccionado.googleSyncError}
+                    </p>
+                  )}
+                  {formatGoogleSyncTimestamp(eventoSeleccionado.googleSyncUpdatedAt) && (
+                    <p className="mt-2 text-[11px] text-zinc-500 dark:text-zinc-400">
+                      Ultima sincronizacion: {formatGoogleSyncTimestamp(eventoSeleccionado.googleSyncUpdatedAt)}
+                    </p>
+                  )}
+                </div>
               </div>
 
               <div className="mt-5 flex flex-col gap-3">
+                <button
+                  type="button"
+                  onClick={() => void resincronizarEventoSeleccionadoConGoogle()}
+                  disabled={sincronizandoGoogleDetalle}
+                  className="flex h-11 w-full items-center justify-center rounded-2xl border border-zinc-200 bg-white px-5 text-sm font-medium text-zinc-700 shadow-sm transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:bg-white/10"
+                >
+                  {sincronizandoGoogleDetalle ? "Sincronizando Google..." : "Resincronizar con Google"}
+                </button>
+
                 {action?.requiereIniciar && eventoSeleccionado.procesoId && (
                   <button
                     type="button"

@@ -104,6 +104,47 @@ export interface Database {
         }
         Relationships: []
       }
+      google_calendar_accounts: {
+        Row: {
+          id: string
+          usuario_id: string
+          google_email: string
+          refresh_token: string
+          scope: string | null
+          token_type: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          usuario_id: string
+          google_email: string
+          refresh_token: string
+          scope?: string | null
+          token_type?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          usuario_id?: string
+          google_email?: string
+          refresh_token?: string
+          scope?: string | null
+          token_type?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "google_calendar_accounts_usuario_id_fkey"
+            columns: ["usuario_id"]
+            isOneToOne: true
+            referencedRelation: "usuarios"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
       proceso: {
         Row: {
           id: string
@@ -432,6 +473,12 @@ export interface Database {
           color: string | null
           recordatorio: boolean
           completado: boolean
+          google_calendar_event_id: string | null
+          google_calendar_html_link: string | null
+          google_meet_url: string | null
+          google_sync_status: string | null
+          google_sync_error: string | null
+          google_sync_updated_at: string | null
           created_at: string
           updated_at: string
         }
@@ -449,6 +496,12 @@ export interface Database {
           color?: string | null
           recordatorio?: boolean
           completado?: boolean
+          google_calendar_event_id?: string | null
+          google_calendar_html_link?: string | null
+          google_meet_url?: string | null
+          google_sync_status?: string | null
+          google_sync_error?: string | null
+          google_sync_updated_at?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -466,6 +519,12 @@ export interface Database {
           color?: string | null
           recordatorio?: boolean
           completado?: boolean
+          google_calendar_event_id?: string | null
+          google_calendar_html_link?: string | null
+          google_meet_url?: string | null
+          google_sync_status?: string | null
+          google_sync_error?: string | null
+          google_sync_updated_at?: string | null
           created_at?: string
           updated_at?: string
         }

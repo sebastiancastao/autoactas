@@ -34,7 +34,7 @@ export const runtime = "nodejs";
 
 type UsuarioEvento = Pick<
   Database["public"]["Tables"]["usuarios"]["Row"],
-  "id" | "nombre" | "email" | "identificacion" | "firma_data_url"
+  "id" | "nombre" | "email" | "identificacion" | "tarjeta_profesional" | "firma_data_url"
 >;
 type EventoContext = { usuario: UsuarioEvento | null; horaHHMM: string | null };
 
@@ -929,6 +929,37 @@ async function loadEventoUsuario(params: {
   const supabase = createSupabaseAdmin();
   if (!supabase) return null;
 
+  const loadUsuarioById = async (usuarioId: string) => {
+    const { data: usuario, error: userErr } = await supabase
+      .from("usuarios")
+      .select("id, nombre, email, identificacion, tarjeta_profesional, firma_data_url")
+      .eq("id", usuarioId)
+      .maybeSingle();
+
+    if (userErr) {
+      console.warn("[terminar-audiencia] Unable to load usuario:", userErr.message);
+      return null;
+    }
+
+    return (usuario ?? null) as UsuarioEvento | null;
+  };
+
+  const loadProcesoUsuario = async () => {
+    const { data: proceso, error: procesoErr } = await supabase
+      .from("proceso")
+      .select("usuario_id")
+      .eq("id", params.procesoId)
+      .maybeSingle();
+
+    if (procesoErr) {
+      console.warn("[terminar-audiencia] Unable to load proceso owner:", procesoErr.message);
+      return null;
+    }
+
+    if (!proceso?.usuario_id) return null;
+    return loadUsuarioById(proceso.usuario_id);
+  };
+
   const horaHHMM = normalizeHoraHHMM(params.hora ?? undefined);
   const horaCandidates = horaHHMM ? [horaHHMM, `${horaHHMM}:00`] : null;
 
@@ -941,25 +972,16 @@ async function loadEventoUsuario(params: {
 
     if (evtErr) {
       console.warn("[terminar-audiencia] Unable to load evento by id:", evtErr.message);
-      return null;
+      return { usuario: await loadProcesoUsuario(), horaHHMM: horaHHMM };
     }
 
     const eventoHora = normalizeHoraHHMM(evt?.hora ?? null);
 
     if (evt?.usuario_id) {
-      const { data: usuario, error: userErr } = await supabase
-        .from("usuarios")
-        .select("id, nombre, email, identificacion, firma_data_url")
-        .eq("id", evt.usuario_id)
-        .maybeSingle();
-      if (userErr) {
-        console.warn("[terminar-audiencia] Unable to load usuario for evento:", userErr.message);
-        return null;
-      }
-      return { usuario: (usuario ?? null) as UsuarioEvento | null, horaHHMM: eventoHora };
+      return { usuario: await loadUsuarioById(evt.usuario_id), horaHHMM: eventoHora };
     }
 
-    return { usuario: null, horaHHMM: eventoHora };
+    return { usuario: await loadProcesoUsuario(), horaHHMM: eventoHora };
   }
 
   // Best-effort lookup by proceso + fecha (+ hora if present)
@@ -977,25 +999,14 @@ async function loadEventoUsuario(params: {
 
   if (evtByHoraErr) {
     console.warn("[terminar-audiencia] Unable to load evento:", evtByHoraErr.message);
-    return null;
+    return { usuario: await loadProcesoUsuario(), horaHHMM: horaHHMM };
   }
 
   const eventoHora = normalizeHoraHHMM(evtByHora?.hora ?? null);
   const usuarioId = evtByHora?.usuario_id ?? null;
-  if (!usuarioId) return { usuario: null, horaHHMM: eventoHora };
+  if (!usuarioId) return { usuario: await loadProcesoUsuario(), horaHHMM: eventoHora };
 
-  const { data: usuario, error: userErr } = await supabase
-    .from("usuarios")
-    .select("id, nombre, email, identificacion, firma_data_url")
-    .eq("id", usuarioId)
-    .maybeSingle();
-
-  if (userErr) {
-    console.warn("[terminar-audiencia] Unable to load usuario:", userErr.message);
-    return null;
-  }
-
-  return { usuario: (usuario ?? null) as UsuarioEvento | null, horaHHMM: eventoHora };
+  return { usuario: await loadUsuarioById(usuarioId), horaHHMM: eventoHora };
 }
 
 async function loadUsuarioFirmaDataUrlByEmail(email: string | null | undefined): Promise<string | null> {
@@ -1850,26 +1861,21 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
       ? String(payload.deudor.identificacion).trim()
       : "[IDENTIFICACIÃ“N]";
 
-  let operadorNombre = payload.operador?.nombre || "JOSE ALEJANDRO PARDO MARTINEZ";
-  let operadorId = payload.operador?.identificacion || "1.154.967.376";
-  const operadorTp = payload.operador?.tarjetaProfesional || "429.496";
-  let operadorEmail = payload.operador?.email || "fundaseer@gmail.com";
+  let operadorNombre = payload.operador?.nombre?.trim() || "";
+  let operadorId = payload.operador?.identificacion?.trim() || "";
+  let operadorTp = payload.operador?.tarjetaProfesional?.trim() || "";
+  let operadorEmail = payload.operador?.email?.trim() || "";
 
   // If the request came from an evento, the operador is the event owner (eventos.usuario_id).
   // Respect operador explicitly provided by the client; only fall back to evento owner if missing.
-  const defaultOperadorNombre = "JOSE ALEJANDRO PARDO MARTINEZ";
-  const defaultOperadorEmail = "fundaseer@gmail.com";
-  const defaultOperadorIdentificacion = "1.154.967.376";
   const payloadOperadorNombre = payload.operador?.nombre?.trim() ?? "";
   const payloadOperadorEmail = payload.operador?.email?.trim() ?? "";
   const payloadOperadorIdentificacion = payload.operador?.identificacion?.trim() ?? "";
-  const shouldUseEventoNombre =
-    !payloadOperadorNombre || payloadOperadorNombre.toUpperCase() === defaultOperadorNombre;
-  const shouldUseEventoEmail =
-    !payloadOperadorEmail || payloadOperadorEmail.toLowerCase() === defaultOperadorEmail;
-  const shouldUseEventoIdentificacion =
-    !payloadOperadorIdentificacion ||
-    payloadOperadorIdentificacion === defaultOperadorIdentificacion;
+  const payloadOperadorTp = payload.operador?.tarjetaProfesional?.trim() ?? "";
+  const shouldUseEventoNombre = !payloadOperadorNombre;
+  const shouldUseEventoEmail = !payloadOperadorEmail;
+  const shouldUseEventoIdentificacion = !payloadOperadorIdentificacion;
+  const shouldUseEventoTp = !payloadOperadorTp;
 
   if (shouldUseEventoNombre && eventoContext?.usuario?.nombre) operadorNombre = eventoContext.usuario.nombre;
   if (shouldUseEventoEmail && eventoContext?.usuario?.email) operadorEmail = eventoContext.usuario.email;
@@ -1880,10 +1886,22 @@ async function buildDocx(payload: TerminarAudienciaPayload, eventoContext: Event
   ) {
     operadorId = String(eventoContext.usuario.identificacion).trim();
   }
+  if (
+    shouldUseEventoTp &&
+    eventoContext?.usuario?.tarjeta_profesional &&
+    String(eventoContext.usuario.tarjeta_profesional).trim()
+  ) {
+    operadorTp = String(eventoContext.usuario.tarjeta_profesional).trim();
+  }
 
   const operadorFirmaDataUrl =
     eventoContext?.usuario?.firma_data_url ?? (await loadUsuarioFirmaDataUrlByEmail(operadorEmail));
   const operadorSignatureImage = decodeSignatureDataUrl(operadorFirmaDataUrl);
+
+  operadorNombre ||= "[NOMBRE OPERADOR]";
+  operadorId ||= "[IDENTIFICACION OPERADOR]";
+  operadorTp ||= "[TARJETA PROFESIONAL]";
+  operadorEmail ||= "[EMAIL OPERADOR]";
 
   const proximaFecha = payload.proximaAudiencia?.fecha
     ? formatDateLong(payload.proximaAudiencia.fecha)
