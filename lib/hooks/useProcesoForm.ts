@@ -78,8 +78,10 @@ type ApoderadoForm = {
   tarjetaProfesional: string;
 };
 
+type ApoderadoSummary = Pick<Apoderado, "id" | "nombre">;
+
 type AcreedorWithApoderado = Acreedor & {
-  apoderados?: Apoderado[] | Apoderado | null;
+  apoderados?: ApoderadoSummary[] | ApoderadoSummary | Apoderado[] | Apoderado | null;
 };
 
 type AcreedorWithObligaciones = AcreedorWithApoderado & {
