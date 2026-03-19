@@ -920,8 +920,10 @@ export default function ProcesosPage() {
       const nuevo = await createProceso(payload);
       if (nuevoProceso.primeraCitaFecha.trim()) {
         try {
+          const numeroProcesoEvento =
+            nuevo.numero_proceso?.trim() || nuevoProceso.numero.trim() || nuevo.id;
           await createEvento({
-            titulo: `Primera cita - ${nuevoProceso.numero.trim()}`,
+            titulo: `Primera cita - ${numeroProcesoEvento}`,
             descripcion: null,
             fecha: nuevoProceso.primeraCitaFecha,
             hora: nuevoProceso.primeraCitaHora.trim() ? `${nuevoProceso.primeraCitaHora}:00` : null,

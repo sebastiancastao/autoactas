@@ -43,6 +43,11 @@ type OperadorUsuario = Pick<
   "id" | "nombre" | "email" | "identificacion" | "tarjeta_profesional"
 >;
 
+type EventoGoogleSyncSummary = Pick<
+  Database["public"]["Tables"]["eventos"]["Row"],
+  "google_sync_status" | "google_sync_error" | "google_meet_url" | "google_calendar_html_link"
+>;
+
 const CATEGORIAS: Categoria[] = ["Acreedor", "Deudor", "Apoderado"];
 const TIPOS_ACTA_CON_TERMINACION_PROCESO = new Set([
   "ACUERDO DE PAGO",
@@ -51,6 +56,7 @@ const TIPOS_ACTA_CON_TERMINACION_PROCESO = new Set([
   "ACTA RECHAZO DEL TRAMITE",
   "AUTO DECLARA NULIDAD",
 ]);
+const EVENT_DURATION_OPTIONS = [15, 30, 60, 90, 120, 180] as const;
 
 function uid() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
@@ -195,6 +201,52 @@ function isWithinBusinessHours(hhmm: string | null | undefined) {
   const total = hhmmToMinutes(normalized);
   if (total === null) return false;
   return total >= BUSINESS_START_MINUTES && total <= BUSINESS_END_MINUTES;
+}
+
+function sanitizeEventDurationMinutes(value: number | null | undefined, fallback = 60) {
+  return EVENT_DURATION_OPTIONS.includes(value as (typeof EVENT_DURATION_OPTIONS)[number])
+    ? value!
+    : fallback;
+}
+
+function resolveEventDurationMinutes(
+  horaInicio: string | null | undefined,
+  horaFin: string | null | undefined,
+  sameDay = true,
+) {
+  if (!sameDay) return 60;
+
+  const startMinutes = hhmmToMinutes(normalizeHoraHHMM(horaInicio) ?? null);
+  const endMinutes = hhmmToMinutes(normalizeHoraHHMM(horaFin) ?? null);
+  if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) {
+    return 60;
+  }
+
+  return sanitizeEventDurationMinutes(endMinutes - startMinutes);
+}
+
+function buildGoogleSyncFeedback(evento: EventoGoogleSyncSummary) {
+  if (evento.google_sync_status === "synced") {
+    if (evento.google_sync_error) {
+      return `Sincronizado con Google Calendar, pero Google Meet no quedo disponible: ${evento.google_sync_error}`;
+    }
+    if (evento.google_meet_url) {
+      return "Sincronizado con Google Calendar y Google Meet disponible.";
+    }
+    if (evento.google_calendar_html_link) {
+      return "Sincronizado con Google Calendar.";
+    }
+  }
+
+  if (evento.google_sync_status === "error" && evento.google_sync_error) {
+    return `Se guardo en AutoActas, pero fallo la sincronizacion con Google: ${evento.google_sync_error}`;
+  }
+
+  if (evento.google_sync_status === "disabled" && evento.google_sync_error) {
+    return `Se guardo solo en AutoActas. ${evento.google_sync_error}`;
+  }
+
+  return "";
 }
 
 async function hasUserTimeConflict(params: {
@@ -396,7 +448,10 @@ function buildAcronimo(nombre: string | null | undefined) {
   return initials || "SA";
 }
 
-async function buildProcesoEventoTitle(procesoId: string): Promise<string> {
+async function buildProcesoEventoTitle(
+  procesoId: string,
+  procesoNumero?: string | null,
+): Promise<string> {
   const [deudoresProceso, eventosProceso] = await Promise.all([
     getDeudoresByProceso(procesoId).catch(() => []),
     getEventosByProceso(procesoId).catch(() => null),
@@ -427,8 +482,9 @@ async function buildProcesoEventoTitle(procesoId: string): Promise<string> {
   const apoderadoAcronimo = buildAcronimo(apoderadoNombre);
   const eventosExistentes = Array.isArray(eventosProceso) ? eventosProceso.length : 0;
   const numeroEvento = eventosExistentes + 1;
+  const procesoNumeroLabel = procesoNumero?.trim() ?? "";
 
-  return `AUD INSOLVENCIA ${deudorNombre}- ${apoderadoAcronimo}-${numeroEvento}`;
+  return `AUD INSOLVENCIA ${deudorNombre}- ${apoderadoAcronimo}-${numeroEvento}${procesoNumeroLabel ? ` · Proceso ${procesoNumeroLabel}` : ""}`;
 }
 
 function normalizarNumero(valor: string) {
@@ -681,6 +737,7 @@ function AttendanceContent() {
   // Próxima audiencia
   const [proximaFecha, setProximaFecha] = useState("");
   const [proximaHora, setProximaHora] = useState("09:00");
+  const [proximaDuracion, setProximaDuracion] = useState(60);
   const [proximaTitulo, setProximaTitulo] = useState("");
   const [agendando, setAgendando] = useState(false);
   const [agendarError, setAgendarError] = useState<string | null>(null);
@@ -1827,6 +1884,7 @@ function AttendanceContent() {
 
       const now = new Date();
       const slots = getBusinessSlotsHHMM();
+      const selectedDurationMin = sanitizeEventDurationMinutes(proximaDuracion);
 
       for (const evt of history ?? []) {
         const fecha = (evt as any).fecha as string | null;
@@ -1881,7 +1939,7 @@ function AttendanceContent() {
 
         for (const hhmm of slots) {
           const start = hhmmToMinutes(hhmm)!;
-          const end = start + defaultDurationMin;
+          const end = start + selectedDurationMin;
 
           const busy = busyByDate.get(dateKey) ?? [];
           const conflict = busy.some(([bs, be]) => start < be && end > bs);
@@ -1922,6 +1980,7 @@ function AttendanceContent() {
       setEventoSiguienteId(null);
       setEventoSiguienteError(null);
       setEventoSiguienteCargando(false);
+      setProximaDuracion(60);
       return;
     }
 
@@ -1933,7 +1992,7 @@ function AttendanceContent() {
         const todayKey = formatBogotaDateKey(new Date());
         let query = supabase
           .from("eventos")
-          .select("id, titulo, fecha, hora, tipo, completado")
+          .select("id, titulo, fecha, hora, fecha_fin, hora_fin, tipo, completado")
           .eq("proceso_id", procesoId)
           .eq("completado", false)
           .gte("fecha", todayKey)
@@ -1950,7 +2009,24 @@ function AttendanceContent() {
         if (error) throw error;
 
         const eventos = (data ?? [])
-          .map((e) => ({ ...e, horaHHMM: normalizeHoraHHMM((e as any).hora) }))
+          .map((evento) => {
+            const row = evento as {
+              id: string;
+              titulo: string;
+              fecha: string;
+              hora: string | null;
+              fecha_fin: string | null;
+              hora_fin: string | null;
+              tipo: string | null;
+              completado: boolean;
+            };
+
+            return {
+              ...row,
+              horaHHMM: normalizeHoraHHMM(row.hora),
+              horaFinHHMM: normalizeHoraHHMM(row.hora_fin),
+            };
+          })
           .filter((e) => Boolean(e.fecha));
 
         const pick =
@@ -1961,6 +2037,7 @@ function AttendanceContent() {
         if (canceled) return;
         if (!pick) {
           setEventoSiguienteId(null);
+          setProximaDuracion(60);
           return;
         }
 
@@ -1968,13 +2045,20 @@ function AttendanceContent() {
         setProximaTitulo(pick.titulo ?? "");
         setProximaFecha(pick.fecha);
 
-        const horaPick = (pick as any).horaHHMM as string | null;
+        const horaPick = pick.horaHHMM ?? null;
         if (horaPick && isWithinBusinessHours(horaPick)) {
           setProximaHora(horaPick);
         } else if (horaPick) {
           setProximaHora(minutesToHHMM(BUSINESS_START_MINUTES));
           setEventoSiguienteError(`El evento existente tiene hora ${horaPick} fuera del horario 08:00-17:00. Ajusta antes de guardar.`);
         }
+        setProximaDuracion(
+          resolveEventDurationMinutes(
+            horaPick,
+            pick.horaFinHHMM ?? null,
+            !pick.fecha_fin || pick.fecha_fin === pick.fecha,
+          ),
+        );
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         if (!canceled) setEventoSiguienteError(msg);
@@ -2007,6 +2091,7 @@ function AttendanceContent() {
       if (!horaNormalizada || !isWithinBusinessHours(horaNormalizada)) {
         throw new Error("La hora debe estar entre 08:00 y 17:00.");
       }
+      const duracionMin = sanitizeEventDurationMinutes(proximaDuracion);
 
       if (operadorUsuarioId) {
         const conflict = await hasUserTimeConflict({
@@ -2020,7 +2105,11 @@ function AttendanceContent() {
         }
       }
 
-      const tituloEvento = proximaTitulo.trim() || await buildProcesoEventoTitle(procesoId);
+      const tituloEvento =
+        proximaTitulo.trim() || await buildProcesoEventoTitle(procesoId, numeroProceso);
+      const [horaH, horaM] = horaNormalizada.split(":").map(Number);
+      const totalMinFin = horaH * 60 + horaM + duracionMin;
+      const horaFin = minutesToHHMM(totalMinFin);
 
       const payloadBase = {
         titulo: tituloEvento,
@@ -2028,7 +2117,7 @@ function AttendanceContent() {
         fecha: proximaFecha,
         hora: `${horaNormalizada}:00`,
         fecha_fin: null,
-        hora_fin: null,
+        hora_fin: `${horaFin}:00`,
         usuario_id: operadorUsuarioId,
         proceso_id: procesoId,
         tipo: "audiencia",
@@ -2038,11 +2127,12 @@ function AttendanceContent() {
         completado: false,
       };
 
-      if (eventoSiguienteId) {
-        await updateEvento(eventoSiguienteId, payloadBase);
-      } else {
-        const creado = await createEvento(payloadBase);
-        setEventoSiguienteId(creado.id);
+      const eventoProgramado = eventoSiguienteId
+        ? await updateEvento(eventoSiguienteId, payloadBase)
+        : await createEvento(payloadBase);
+
+      if (!eventoSiguienteId) {
+        setEventoSiguienteId(eventoProgramado.id);
       }
 
       // Format time for display (24h -> 12h)
@@ -2051,9 +2141,12 @@ function AttendanceContent() {
       const meridiem = h24 >= 12 ? "PM" : "AM";
       const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
       const horaDisplay = `${h12}:${mm} ${meridiem}`;
+      const googleFeedback = buildGoogleSyncFeedback(eventoProgramado);
 
       const accion = eventoSiguienteId ? "actualizado" : "agendado";
-      setAgendarExito(`Evento "${tituloEvento}" ${accion} para ${proximaFecha} a las ${horaDisplay}.`);
+      setAgendarExito(
+        `Evento "${tituloEvento}" ${accion} para ${proximaFecha} a las ${horaDisplay} con duracion de ${duracionMin} minutos.${googleFeedback ? ` ${googleFeedback}` : ""}`,
+      );
     } catch (e: unknown) {
       console.error("[agendarProximaAudiencia] error:", e);
       setAgendarError(toErrorMessage(e));
@@ -2334,7 +2427,7 @@ function AttendanceContent() {
             </div>
 
             {/* Próxima Audiencia */}
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 xl:grid-cols-5">
               <div>
                 <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
                   Próxima Fecha
@@ -2361,6 +2454,24 @@ function AttendanceContent() {
                   step={60}
                   className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
                 />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                  Duracion
+                </label>
+                <select
+                  value={proximaDuracion}
+                  onChange={(e) => setProximaDuracion(sanitizeEventDurationMinutes(Number(e.target.value)))}
+                  className="h-11 w-full cursor-pointer rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                >
+                  <option value={15}>15 minutos</option>
+                  <option value={30}>30 minutos</option>
+                  <option value={60}>1 hora</option>
+                  <option value={90}>1 hora 30 min</option>
+                  <option value={120}>2 horas</option>
+                  <option value={180}>3 horas</option>
+                </select>
               </div>
             </div>
 
@@ -3553,7 +3664,7 @@ function AttendanceContent() {
               </div>
             )}
 
-            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
               <div className="sm:col-span-2">
                 <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
                   Título del evento
@@ -3591,6 +3702,24 @@ function AttendanceContent() {
                   step={60}
                   className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
                 />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                  Duracion
+                </label>
+                <select
+                  value={proximaDuracion}
+                  onChange={(e) => setProximaDuracion(sanitizeEventDurationMinutes(Number(e.target.value)))}
+                  className="h-11 w-full cursor-pointer rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
+                >
+                  <option value={15}>15 minutos</option>
+                  <option value={30}>30 minutos</option>
+                  <option value={60}>1 hora</option>
+                  <option value={90}>1 hora 30 min</option>
+                  <option value={120}>2 horas</option>
+                  <option value={180}>3 horas</option>
+                </select>
               </div>
             </div>
 

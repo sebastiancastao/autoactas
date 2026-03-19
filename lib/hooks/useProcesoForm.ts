@@ -1166,14 +1166,18 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
 
       if (primeraCitaFecha.trim()) {
         try {
+          const numeroProcesoEvento =
+            savedProceso.numero_proceso?.trim() || numeroProceso.trim() || savedProceso.id;
           if (isEditing && primeraCitaEventoId) {
             await updateEvento(primeraCitaEventoId, {
+              titulo: `Primera cita - ${numeroProcesoEvento}`,
               fecha: primeraCitaFecha,
               hora: primeraCitaHora.trim() ? `${primeraCitaHora}:00` : null,
+              proceso_id: savedProceso.id,
             });
           } else if (!isEditing || !primeraCitaEventoId) {
             await createEvento({
-              titulo: `Primera cita - ${numeroProceso.trim()}`,
+              titulo: `Primera cita - ${numeroProcesoEvento}`,
               descripcion: null,
               fecha: primeraCitaFecha,
               hora: primeraCitaHora.trim() ? `${primeraCitaHora}:00` : null,
@@ -1278,4 +1282,3 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
     cargarProcesoDetalle,
   };
 }
-

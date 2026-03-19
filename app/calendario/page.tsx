@@ -802,12 +802,14 @@ function CalendarioContent() {
     }
 
     const apoderadoAcronimo = buildAcronimo(apoderadoNombre);
+    const procesoNumero =
+      procesos.find((proceso) => proceso.id === procesoId)?.numero_proceso?.trim() ?? "";
     const eventosExistentes = Array.isArray(eventosProceso)
       ? eventosProceso.length
       : eventos.filter((ev) => ev.procesoId === procesoId).length;
     const numeroEvento = eventosExistentes + 1;
 
-    return `AUD INSOLVENCIA ${deudorNombre}- ${apoderadoAcronimo}-${numeroEvento}`;
+    return `AUD INSOLVENCIA ${deudorNombre}- ${apoderadoAcronimo}-${numeroEvento}${procesoNumero ? ` · Proceso ${procesoNumero}` : ""}`;
   }
 
   async function agregarEvento() {
@@ -1875,6 +1877,7 @@ function CalendarioContent() {
             <div className="mt-3">
               <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">Duración</label>
               <select value={nuevaDuracion} onChange={(e) => setNuevaDuracion(Number(e.target.value))} className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10 cursor-pointer">
+                <option value={15}>15 minutos</option>
                 <option value={30}>30 minutos</option>
                 <option value={60}>1 hora</option>
                 <option value={90}>1 hora 30 min</option>
