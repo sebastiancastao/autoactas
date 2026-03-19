@@ -25,7 +25,6 @@ import { createEvento } from "@/lib/api/eventos";
 import { getDestinoAsignado } from "@/lib/api/asignaciones";
 import ProcesoForm from "@/components/proceso-form";
 import { useProcesoForm } from "@/lib/hooks/useProcesoForm";
-import { useRouter } from "next/navigation";
 import { sendResendEmail } from "@/lib/api/resend";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth-context";
@@ -341,9 +340,6 @@ export default function ProcesosPage() {
   >({});
 
 
-
-  const router = useRouter();
-
   const refreshApoderadoOptions = useCallback(async () => {
     try {
       const data = await getApoderados();
@@ -354,7 +350,7 @@ export default function ProcesosPage() {
   }, []);
 
   const handleSaveSuccess = useCallback(
-    async (savedProceso: Proceso, context?: { isEditing: boolean }) => {
+    async (savedProceso: Proceso) => {
       setProcesos((prev) => {
         const exists = prev.some((proceso) => proceso.id === savedProceso.id);
         if (exists) {
@@ -366,12 +362,8 @@ export default function ProcesosPage() {
       });
 
       await refreshApoderadoOptions();
-
-      if (context?.isEditing) {
-        router.push(`/calendario?procesoId=${savedProceso.id}`);
-      }
     },
-    [router, refreshApoderadoOptions]
+    [refreshApoderadoOptions]
   );
 
 
