@@ -196,7 +196,8 @@ function formatMoney(value: number) {
 }
 
 function isAdminRole(rol: string | null | undefined) {
-  return (rol ?? "").trim().toLowerCase() === "admin";
+  const normalized = (rol ?? "").trim().toLowerCase();
+  return normalized === "admin" || normalized === "manager";
 }
 
 function resolveProcesoUsuarioLabel(

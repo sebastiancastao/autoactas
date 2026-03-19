@@ -87,7 +87,7 @@ function normalizeIdentityValue(value: string | null | undefined) {
 
 function canSeeDashboard(profile: UsuarioDashboardAccessRow | null) {
   const normalizedRole = normalizeIdentityValue(profile?.rol)
-  return normalizedRole === 'juan'
+  return normalizedRole === 'juan' || normalizedRole === 'admin' || normalizedRole === 'manager'
 }
 
 export function Header() {

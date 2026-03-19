@@ -4,6 +4,19 @@ import { exportFileAsPdf } from "@/lib/google-drive";
 
 export const runtime = "nodejs";
 
+type PrimerReunion = {
+  fecha?: string | null;
+  hora?: string | null;
+  horaFin?: string | null;
+  googleMeetUrl?: string | null;
+};
+
+type ExtraAttachment = {
+  filename: string;
+  content: string; // base64
+  contentType?: string;
+};
+
 type EnviarActaPayload = {
   apoderadoEmails: string[];
   numeroProceso: string;
@@ -13,6 +26,8 @@ type EnviarActaPayload = {
   fileId?: string;
   fileName?: string;
   skipPdfExport?: boolean;
+  primerReunion?: PrimerReunion | null;
+  extraAttachments?: ExtraAttachment[];
 };
 
 function toErrorMessage(e: unknown) {
@@ -26,6 +41,28 @@ function isValidEmail(email: string | undefined | null): email is string {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
 
+function formatHora12(horaHHMM: string): string {
+  const match = horaHHMM.match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return horaHHMM;
+  const h = parseInt(match[1], 10);
+  const m = parseInt(match[2], 10);
+  const meridiem = h >= 12 ? "p.m." : "a.m.";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  if (m === 0) return `${h12} ${meridiem}`;
+  return `${h12}:${String(m).padStart(2, "0")} ${meridiem}`;
+}
+
+function formatFechaLarga(dateStr: string): string {
+  const MESES = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+  const parts = dateStr.split("-");
+  if (parts.length !== 3) return dateStr;
+  const day = parseInt(parts[2], 10);
+  const month = parseInt(parts[1], 10) - 1;
+  const year = parseInt(parts[0], 10);
+  if (Number.isNaN(day) || Number.isNaN(month) || Number.isNaN(year)) return dateStr;
+  return `${String(day).padStart(2, "0")} de ${MESES[month] ?? ""} de ${year}`;
+}
+
 async function sendApoderadoEmails(params: {
   apoderadoEmails: string[];
   numeroProceso: string;
@@ -35,6 +72,8 @@ async function sendApoderadoEmails(params: {
   fileId?: string;
   fileName?: string;
   skipPdfExport?: boolean;
+  primerReunion?: PrimerReunion | null;
+  extraAttachments?: ExtraAttachment[];
 }) {
   const apiKey = process.env.RESEND_API_KEY?.trim();
   if (!apiKey) {
@@ -66,7 +105,53 @@ async function sendApoderadoEmails(params: {
     }
   }
 
+  // Decode extra attachments from base64
+  const extraResendAttachments: { filename: string; content: Buffer }[] = (
+    params.extraAttachments ?? []
+  ).flatMap((att) => {
+    try {
+      return [{ filename: att.filename, content: Buffer.from(att.content, "base64") }];
+    } catch {
+      return [];
+    }
+  });
+
+  const allAttachments = [
+    ...(pdfBuffer ? [{ filename: pdfFilename, content: pdfBuffer }] : []),
+    ...extraResendAttachments,
+  ];
+
   const subject = `Acta de Audiencia - ${params.numeroProceso} - ${params.fecha}`;
+
+  const reunion = params.primerReunion;
+  const reunionFechaTexto = reunion?.fecha ? formatFechaLarga(reunion.fecha) : null;
+  const reunionHoraTexto = reunion?.hora ? formatHora12(reunion.hora.slice(0, 5)) : null;
+  const reunionHoraFinTexto = reunion?.horaFin ? formatHora12(reunion.horaFin.slice(0, 5)) : null;
+  const reunionHorarioTexto = reunionHoraTexto
+    ? reunionHoraFinTexto
+      ? `${reunionHoraTexto} – ${reunionHoraFinTexto}`
+      : reunionHoraTexto
+    : null;
+
+  const reunionHtml = reunionFechaTexto
+    ? `
+      <div style="margin: 24px 0; padding: 16px; background-color: #f4f4f5; border-left: 4px solid #18181b; border-radius: 4px;">
+        <p style="margin: 0 0 8px 0; font-weight: 600; color: #18181b;">Primera Reunión</p>
+        <p style="margin: 0; color: #3f3f46; line-height: 1.8;">
+          <strong>Fecha:</strong> ${reunionFechaTexto}<br/>
+          ${reunionHorarioTexto ? `<strong>Hora:</strong> ${reunionHorarioTexto}<br/>` : ""}
+          ${reunion?.googleMeetUrl ? `<strong>Google Meet:</strong> <a href="${reunion.googleMeetUrl}" style="color: #18181b;">${reunion.googleMeetUrl}</a>` : ""}
+        </p>
+        ${reunion?.googleMeetUrl ? `
+        <p style="margin: 12px 0 0 0;">
+          <a href="${reunion.googleMeetUrl}"
+             style="display: inline-block; background-color: #1a73e8; color: white; padding: 10px 20px; text-decoration: none; border-radius: 8px; font-weight: 500; font-size: 14px;">
+            Unirse a Google Meet
+          </a>
+        </p>` : ""}
+      </div>`
+    : "";
+
   const html = `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
       <h2 style="color: #18181b; margin-bottom: 16px;">Acta de Audiencia Disponible</h2>
@@ -77,7 +162,8 @@ async function sendApoderadoEmails(params: {
         <strong>Titulo:</strong> ${params.titulo}<br/>
         <strong>Fecha:</strong> ${params.fecha}
       </p>
-      ${pdfBuffer ? `<p style="color: #3f3f46; line-height: 1.6;">El documento se encuentra adjunto en formato PDF.</p>` : `
+      ${reunionHtml}
+      ${allAttachments.length > 0 ? `<p style="color: #3f3f46; line-height: 1.6;">${allAttachments.length === 1 ? "El documento adjunto se encuentra en formato PDF." : `Se adjuntan ${allAttachments.length} documentos en formato PDF.`}</p>` : `
       <p style="margin: 24px 0;">
         <a href="${params.webViewLink}"
            style="display: inline-block; background-color: #18181b; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: 500;">
@@ -97,16 +183,7 @@ async function sendApoderadoEmails(params: {
         to: email,
         subject,
         html,
-        ...(pdfBuffer
-          ? {
-              attachments: [
-                {
-                  filename: pdfFilename,
-                  content: pdfBuffer,
-                },
-              ],
-            }
-          : {}),
+        ...(allAttachments.length > 0 ? { attachments: allAttachments } : {}),
       });
       sent++;
     } catch (e) {
@@ -149,6 +226,8 @@ export async function POST(req: Request) {
       fileId: payload.fileId,
       fileName: payload.fileName,
       skipPdfExport: payload.skipPdfExport,
+      primerReunion: payload.primerReunion,
+      extraAttachments: payload.extraAttachments,
     });
 
     return NextResponse.json({

@@ -167,6 +167,7 @@ export async function POST(req: Request) {
       filename: fileName,
       buffer,
       mimeType,
+      fallbackAuthUserId: authUserId,
     });
 
     const { data: stored, error: storeError } = await supabase

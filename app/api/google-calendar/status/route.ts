@@ -23,6 +23,14 @@ async function resolveUsuarioId(authUserId: string) {
   return data?.id ?? null;
 }
 
+function getStatusFallbackMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("Missing Supabase admin environment variables")) {
+    return "Falta SUPABASE_SERVICE_ROLE_KEY en el deployment para consultar la conexion de Google.";
+  }
+  return "No se pudo consultar el estado de Google Calendar en el servidor.";
+}
+
 export async function GET() {
   const supabase = await createRouteHandlerSupabase();
   const {
@@ -34,38 +42,55 @@ export async function GET() {
   }
 
   const oauthConfigured = isGoogleCalendarOAuthConfigured();
-  const storageReady = oauthConfigured ? await isGoogleCalendarOAuthStorageReady() : false;
-  const setupMessage =
-    oauthConfigured && !storageReady ? getGoogleCalendarOAuthStorageMissingMessage() : null;
 
-  const usuarioId = await resolveUsuarioId(user.id);
-  if (!usuarioId) {
+  try {
+    const storageReady = oauthConfigured ? await isGoogleCalendarOAuthStorageReady() : false;
+    const setupMessage =
+      oauthConfigured && !storageReady ? getGoogleCalendarOAuthStorageMissingMessage() : null;
+
+    const usuarioId = await resolveUsuarioId(user.id);
+    if (!usuarioId) {
+      return NextResponse.json(
+        {
+          connected: false,
+          available: oauthConfigured && storageReady,
+          oauthConfigured,
+          storageReady,
+          setupMessage,
+        },
+        { status: 200 },
+      );
+    }
+
+    const account = await getGoogleCalendarOAuthAccountByUsuarioId(usuarioId);
+    const driveReady = hasGoogleDriveOAuthScope(account?.scope ?? null);
+    const accountSetupMessage =
+      account && !driveReady
+        ? "Tu conexion de Google no incluye permisos de Drive. Desconecta y conecta de nuevo para editar documentos en Google Docs."
+        : setupMessage;
+    return NextResponse.json({
+      available: oauthConfigured && storageReady,
+      oauthConfigured,
+      storageReady,
+      setupMessage: accountSetupMessage,
+      connected: Boolean(account),
+      googleEmail: account?.google_email ?? null,
+      connectedAt: account?.updated_at ?? account?.created_at ?? null,
+      driveReady,
+    });
+  } catch (error) {
     return NextResponse.json(
       {
-        connected: false,
-        available: oauthConfigured && storageReady,
+        available: false,
         oauthConfigured,
-        storageReady,
-        setupMessage,
+        storageReady: false,
+        connected: false,
+        googleEmail: null,
+        connectedAt: null,
+        driveReady: false,
+        setupMessage: getStatusFallbackMessage(error),
       },
       { status: 200 },
     );
   }
-
-  const account = await getGoogleCalendarOAuthAccountByUsuarioId(usuarioId);
-  const driveReady = hasGoogleDriveOAuthScope(account?.scope ?? null);
-  const accountSetupMessage =
-    account && !driveReady
-      ? "Tu conexion de Google no incluye permisos de Drive. Desconecta y conecta de nuevo para editar documentos en Google Docs."
-      : setupMessage;
-  return NextResponse.json({
-    available: oauthConfigured && storageReady,
-    oauthConfigured,
-    storageReady,
-    setupMessage: accountSetupMessage,
-    connected: Boolean(account),
-    googleEmail: account?.google_email ?? null,
-    connectedAt: account?.updated_at ?? account?.created_at ?? null,
-    driveReady,
-  });
 }

@@ -23,6 +23,7 @@ type AutoAdmisorioState = {
   emailSending: boolean;
   emailResult: { sent: number; errors?: string[] } | null;
   emailError: string | null;
+  adjuntosExtra: { name: string; content: string; contentType: string }[];
 };
 
 const EMPTY_AUTO_STATE: AutoAdmisorioState = {
@@ -32,6 +33,7 @@ const EMPTY_AUTO_STATE: AutoAdmisorioState = {
   emailSending: false,
   emailResult: null,
   emailError: null,
+  adjuntosExtra: [],
 };
 
 function toErrorMessage(error: unknown, fallback: string) {
@@ -319,6 +321,30 @@ export default function InicializacionPage() {
     }
   }
 
+  function handleAgregarAdjuntosInicializacion(procesoId: string, e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    files.forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const dataUrl = ev.target?.result as string;
+        const base64 = dataUrl.split(",")[1] ?? "";
+        setAutoAdmisorioByProcesoId((prev) => {
+          const current = prev[procesoId] ?? EMPTY_AUTO_STATE;
+          return { ...prev, [procesoId]: { ...current, adjuntosExtra: [...current.adjuntosExtra, { name: file.name, content: base64, contentType: file.type || "application/octet-stream" }] } };
+        });
+      };
+      reader.readAsDataURL(file);
+    });
+    e.target.value = "";
+  }
+
+  function handleQuitarAdjuntoInicializacion(procesoId: string, index: number) {
+    setAutoAdmisorioByProcesoId((prev) => {
+      const current = prev[procesoId] ?? EMPTY_AUTO_STATE;
+      return { ...prev, [procesoId]: { ...current, adjuntosExtra: current.adjuntosExtra.filter((_, i) => i !== index) } };
+    });
+  }
+
   async function enviarAutoAdmisorioApoderados(proceso: Proceso) {
     const state = getAutoState(proceso.id);
     const emails = state.result?.apoderadoEmails ?? [];
@@ -347,7 +373,7 @@ export default function InicializacionPage() {
           webViewLink,
           fileId: state.result?.fileId,
           fileName: state.result?.fileName,
-          skipPdfExport: true,
+          extraAttachments: state.adjuntosExtra.map((a) => ({ filename: a.name, content: a.content, contentType: a.contentType })),
         }),
       });
 
@@ -625,6 +651,24 @@ export default function InicializacionPage() {
                         </a>
                       )}
 
+                      {autoState.result && (
+                        <>
+                          <input
+                            type="file"
+                            multiple
+                            id={`adjuntos-inic-${proceso.id}`}
+                            className="hidden"
+                            onChange={(e) => handleAgregarAdjuntosInicializacion(proceso.id, e)}
+                          />
+                          <label
+                            htmlFor={`adjuntos-inic-${proceso.id}`}
+                            className="cursor-pointer rounded-full border border-zinc-300 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-zinc-600 transition hover:border-zinc-500 hover:bg-zinc-50 dark:border-white/20 dark:bg-white/5 dark:text-zinc-300 dark:hover:bg-white/10"
+                          >
+                            + Adjuntar
+                          </label>
+                        </>
+                      )}
+
                       {apoderadoEmails.length > 0 && (
                         <button
                           type="button"
@@ -651,6 +695,20 @@ export default function InicializacionPage() {
                         <span className="font-semibold">
                           {autoState.result.fileName || "Auto admisorio"}
                         </span>
+                      </div>
+                    )}
+
+                    {autoState.adjuntosExtra.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {autoState.adjuntosExtra.map((adj, idx) => (
+                          <span key={idx} className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[11px] text-zinc-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
+                            <span className="max-w-[160px] truncate">{adj.name}</span>
+                            <button
+                              onClick={() => handleQuitarAdjuntoInicializacion(proceso.id, idx)}
+                              className="ml-0.5 text-zinc-400 hover:text-red-500 dark:hover:text-red-400"
+                            >×</button>
+                          </span>
+                        ))}
                       </div>
                     )}
 

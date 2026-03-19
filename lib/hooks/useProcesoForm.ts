@@ -14,7 +14,7 @@ import {
   updateProceso,
 } from "@/lib/api/proceso";
 import { updateProgresoByProcesoId } from "@/lib/api/progreso";
-import { createEvento } from "@/lib/api/eventos";
+import { createEvento, getEventosByProceso, updateEvento } from "@/lib/api/eventos";
 import { getDestinoAsignado } from "@/lib/api/asignaciones";
 import {
   getDigitCount,
@@ -297,7 +297,9 @@ function mapDeudoresToFormRows(deudores?: Deudor[], apoderados?: Apoderado[]): D
     email: deudor.email ?? "",
     apoderadoId: deudor.apoderado_id ?? "",
     apoderadoNombre: deudor.apoderado_id
-      ? apoderadoLookup.get(deudor.apoderado_id) ?? ""
+      ? (deudor as Deudor & { apoderados?: { nombre: string } | null }).apoderados?.nombre
+          ?? apoderadoLookup.get(deudor.apoderado_id)
+          ?? ""
       : "",
   }];
 }
@@ -372,7 +374,11 @@ function mapAcreedoresToFormRows(
     email: acreedor.email ?? "",
     apoderadoId: acreedor.apoderado_id ?? "",
     apoderadoNombre: acreedor.apoderado_id
-      ? apoderadoLookup.get(acreedor.apoderado_id) ?? ""
+      ? (Array.isArray(acreedor.apoderados)
+          ? acreedor.apoderados[0]?.nombre
+          : acreedor.apoderados?.nombre)
+          ?? apoderadoLookup.get(acreedor.apoderado_id)
+          ?? ""
       : "",
     monto: acreedor.monto_acreencia != null ? acreedor.monto_acreencia.toString() : "",
     tipoAcreencia: acreedor.tipo_acreencia ?? "",
@@ -470,6 +476,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
   const [juzgado, setJuzgado] = useState("");
   const [primeraCitaFecha, setPrimeraCitaFecha] = useState("");
   const [primeraCitaHora, setPrimeraCitaHora] = useState("");
+  const [primeraCitaEventoId, setPrimeraCitaEventoId] = useState<string | null>(null);
   const [apoderados, setApoderados] = useState<Apoderado[]>([]);
   const [acreedoresCatalogo, setAcreedoresCatalogo] = useState<AcreedorCatalogItem[]>([]);
   const [cargandoApoderados, setCargandoApoderados] = useState(false);
@@ -652,6 +659,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
     setJuzgado("");
     setPrimeraCitaFecha("");
     setPrimeraCitaHora("");
+    setPrimeraCitaEventoId(null);
     setDeudoresForm([nuevaFilaDeudor]);
     setSelectedDeudorId(nuevaFilaDeudor.id);
     setAcreedoresForm([nuevaFilaAcreedor]);
@@ -677,12 +685,20 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
       setError(null);
       setExito(null);
       try {
-        const detalle = await getProcesoWithRelations(procesoIdSafe);
+        const [detalle, todosApoderados] = await Promise.all([
+          getProcesoWithRelations(procesoIdSafe),
+          getApoderados().catch(() => [] as Apoderado[]),
+        ]);
         if (!detalle) {
           setError("No se encontrÃ³ el proceso");
           return;
         }
-        const procesoApoderados = detalle.apoderados ?? [];
+        // Merge apoderados from proceso + global list so lookup always finds the name
+        const procesoApoderadosMap = new Map<string, Apoderado>();
+        for (const ap of (detalle.apoderados ?? [])) procesoApoderadosMap.set(ap.id, ap);
+        for (const ap of todosApoderados) if (!procesoApoderadosMap.has(ap.id)) procesoApoderadosMap.set(ap.id, ap);
+        const procesoApoderados = Array.from(procesoApoderadosMap.values());
+        setApoderados(todosApoderados);
         setEditingProcesoId(detalle.id);
         setNumeroProceso(detalle.numero_proceso);
         setFechaprocesos(detalle.fecha_procesos ?? new Date().toISOString().split("T")[0]);
@@ -700,6 +716,17 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
         setOriginalAcreedoresIds(detalle.acreedores?.map((acreedor) => acreedor.id) ?? []);
         setAcreedoresForm(acreedorRows);
         setSelectedAcreedorId(acreedorRows[0]?.id ?? "");
+
+        // Load primera cita from existing eventos
+        try {
+          const eventos = await getEventosByProceso(procesoIdSafe);
+          const primeraCita = eventos.find((e) => e.tipo === "cita") ?? null;
+          setPrimeraCitaEventoId(primeraCita?.id ?? null);
+          setPrimeraCitaFecha(primeraCita?.fecha ?? "");
+          setPrimeraCitaHora(primeraCita?.hora?.slice(0, 5) ?? "");
+        } catch {
+          // non-critical, ignore
+        }
       } catch (err) {
         const errorMessage = getErrorMessage(err, "No se pudo cargar el proceso seleccionado.");
         const isNotFoundError = isProcesoNotFoundError(err, errorMessage);
@@ -1137,24 +1164,31 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
         }
       }
 
-      if (!isEditing && primeraCitaFecha.trim()) {
+      if (primeraCitaFecha.trim()) {
         try {
-          await createEvento({
-            titulo: `Primera cita - ${numeroProceso.trim()}`,
-            descripcion: null,
-            fecha: primeraCitaFecha,
-            hora: primeraCitaHora.trim() ? `${primeraCitaHora}:00` : null,
-            fecha_fin: null,
-            hora_fin: null,
-            usuario_id: efectivoUsuarioId,
-            proceso_id: savedProceso.id,
-            tipo: "cita",
-            color: null,
-            recordatorio: false,
-            completado: false,
-          });
+          if (isEditing && primeraCitaEventoId) {
+            await updateEvento(primeraCitaEventoId, {
+              fecha: primeraCitaFecha,
+              hora: primeraCitaHora.trim() ? `${primeraCitaHora}:00` : null,
+            });
+          } else if (!isEditing || !primeraCitaEventoId) {
+            await createEvento({
+              titulo: `Primera cita - ${numeroProceso.trim()}`,
+              descripcion: null,
+              fecha: primeraCitaFecha,
+              hora: primeraCitaHora.trim() ? `${primeraCitaHora}:00` : null,
+              fecha_fin: null,
+              hora_fin: null,
+              usuario_id: efectivoUsuarioId,
+              proceso_id: savedProceso.id,
+              tipo: "cita",
+              color: null,
+              recordatorio: false,
+              completado: false,
+            });
+          }
         } catch (err) {
-          console.warn("Error creando primera cita:", err);
+          console.warn("Error guardando primera cita:", err);
         }
       }
 

@@ -252,10 +252,11 @@ export default function ProcesosPage() {
       {
         loading: boolean;
         error: string | null;
-        result: { fileId: string; fileName: string; webViewLink: string | null; apoderadoEmails?: string[] } | null;
+        result: { fileId: string; fileName: string; webViewLink: string | null; apoderadoEmails?: string[]; primerReunion?: { fecha: string; hora: string | null; horaFin: string | null; googleMeetUrl: string | null } | null } | null;
         emailSending?: boolean;
         emailResult?: { sent: number; errors?: string[] } | null;
         emailError?: string | null;
+        adjuntosExtra?: { name: string; content: string; contentType: string }[];
       }
     >
   >({});
@@ -745,7 +746,7 @@ export default function ProcesosPage() {
         body: JSON.stringify({ procesoId: pid, authUserId: user?.id }),
       });
       const json = (await res.json().catch(() => null)) as
-        | { fileId: string; fileName: string; webViewLink: string | null; apoderadoEmails?: string[]; error?: string; detail?: string }
+        | { fileId: string; fileName: string; webViewLink: string | null; apoderadoEmails?: string[]; primerReunion?: { fecha: string; hora: string | null; horaFin: string | null; googleMeetUrl: string | null } | null; error?: string; detail?: string }
         | null;
 
       if (!res.ok || !json?.fileId) {
@@ -757,7 +758,7 @@ export default function ProcesosPage() {
         [pid]: {
           loading: false,
           error: null,
-          result: { fileId: json.fileId, fileName: json.fileName, webViewLink: json.webViewLink ?? null, apoderadoEmails: json.apoderadoEmails },
+          result: { fileId: json.fileId, fileName: json.fileName, webViewLink: json.webViewLink ?? null, apoderadoEmails: json.apoderadoEmails, primerReunion: json.primerReunion ?? null },
         },
       }));
     } catch (e) {
@@ -813,7 +814,8 @@ export default function ProcesosPage() {
           webViewLink: state.result.webViewLink,
           fileId: state.result.fileId,
           fileName: state.result.fileName,
-          skipPdfExport: true,
+          primerReunion: state.result.primerReunion ?? null,
+          extraAttachments: (state.adjuntosExtra ?? []).map((a) => ({ filename: a.name, content: a.content, contentType: a.contentType })),
         }),
       });
 
@@ -840,6 +842,36 @@ export default function ProcesosPage() {
         [procesoId]: { ...prev[procesoId], emailSending: false, emailError: msg },
       }));
     }
+  }
+
+  function handleAgregarAdjuntosProcesos(procesoId: string, e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    files.forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const dataUrl = ev.target?.result as string;
+        const base64 = dataUrl.split(",")[1] ?? "";
+        setAutoAdmisorioStateByProcesoId((prev) => ({
+          ...prev,
+          [procesoId]: {
+            ...prev[procesoId],
+            adjuntosExtra: [...(prev[procesoId]?.adjuntosExtra ?? []), { name: file.name, content: base64, contentType: file.type || "application/octet-stream" }],
+          },
+        }));
+      };
+      reader.readAsDataURL(file);
+    });
+    e.target.value = "";
+  }
+
+  function handleQuitarAdjuntoProcesos(procesoId: string, index: number) {
+    setAutoAdmisorioStateByProcesoId((prev) => ({
+      ...prev,
+      [procesoId]: {
+        ...prev[procesoId],
+        adjuntosExtra: (prev[procesoId]?.adjuntosExtra ?? []).filter((_, i) => i !== index),
+      },
+    }));
   }
 
   async function crearProcesoDesdePanel() {
@@ -1815,6 +1847,36 @@ export default function ProcesosPage() {
                                 Editar en Google Docs
                               </a>
                             </div>
+
+                            {autoState.result && (
+                              <div className="flex flex-col gap-1.5">
+                                <input
+                                  type="file"
+                                  multiple
+                                  id={`adjuntos-procesos-${proceso.id}`}
+                                  className="hidden"
+                                  onChange={(e) => { e.stopPropagation(); handleAgregarAdjuntosProcesos(proceso.id, e); }}
+                                />
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <label
+                                    htmlFor={`adjuntos-procesos-${proceso.id}`}
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="cursor-pointer rounded-full border border-zinc-300 bg-white px-2.5 py-0.5 text-xs font-medium text-zinc-600 transition hover:border-zinc-500 hover:bg-zinc-50 dark:border-white/20 dark:bg-white/5 dark:text-zinc-300 dark:hover:bg-white/10"
+                                  >
+                                    + Adjuntar
+                                  </label>
+                                  {(autoState.adjuntosExtra ?? []).map((adj, idx) => (
+                                    <span key={idx} className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[11px] text-zinc-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
+                                      <span className="max-w-[120px] truncate">{adj.name}</span>
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); handleQuitarAdjuntoProcesos(proceso.id, idx); }}
+                                        className="ml-0.5 text-zinc-400 hover:text-red-500 dark:hover:text-red-400"
+                                      >×</button>
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
 
                             {autoState.result.apoderadoEmails && autoState.result.apoderadoEmails.length > 0 && (
                               <div className="flex flex-wrap items-center gap-2">

@@ -16,7 +16,7 @@ import {
 import { promises as fs } from "fs";
 import path from "path";
 
-import { uploadDocxToGoogleDrive } from "@/lib/google-drive";
+import { uploadDocxToGoogleDrive, generateAndStorePdfFromDocx } from "@/lib/google-drive";
 import type { Database } from "@/lib/database.types";
 
 export const runtime = "nodejs";
@@ -395,7 +395,7 @@ export async function POST(req: Request) {
     // Get the next scheduled event for the audiencia date
     const { data: eventos } = await supabase
       .from("eventos")
-      .select("fecha, hora")
+      .select("fecha, hora, hora_fin, google_meet_url")
       .eq("proceso_id", procesoId)
       .order("fecha", { ascending: true })
       .limit(5);
@@ -412,10 +412,14 @@ export async function POST(req: Request) {
     // Audiencia date: use payload, or first future event, or fallback
     let fechaAudiencia = body?.fechaAudiencia?.trim() || "";
     let horaAudiencia = body?.horaAudiencia?.trim() || "";
-    if (!fechaAudiencia && eventos && eventos.length > 0) {
+    let horaFinAudiencia = "";
+    let googleMeetUrl: string | null = null;
+    if (eventos && eventos.length > 0) {
       const futuro = eventos.find((e) => e.fecha >= fechaKey) ?? eventos[0];
-      fechaAudiencia = futuro.fecha ?? "";
+      if (!fechaAudiencia) fechaAudiencia = futuro.fecha ?? "";
       horaAudiencia = horaAudiencia || futuro.hora || "";
+      horaFinAudiencia = futuro.hora_fin ?? "";
+      googleMeetUrl = futuro.google_meet_url ?? null;
     }
 
     const fechaAudienciaTexto = fechaAudiencia
@@ -817,6 +821,18 @@ export async function POST(req: Request) {
       fallbackAuthUserId: authUserId ?? null,
     });
 
+    let pdfFileId: string | null = null;
+    try {
+      pdfFileId = await generateAndStorePdfFromDocx({
+        filename: fileName,
+        buffer,
+        uploadedFileId: uploaded.id,
+        authUserId: authUserId ?? null,
+      });
+    } catch (e) {
+      console.error("PDF generation failed, email will fall back to link:", e);
+    }
+
     // Collect apoderado emails for email notification
     const apoderadoEmails = Array.from(allApoderadosMap.values())
       .map((email) => email?.trim().toLowerCase())
@@ -824,10 +840,18 @@ export async function POST(req: Request) {
     const uniqueEmails = [...new Set(apoderadoEmails)];
 
     return NextResponse.json({
-      fileId: uploaded.id,
+      fileId: pdfFileId ?? uploaded.id,
       fileName: uploaded.name,
       webViewLink: uploaded.webViewLink ?? null,
       apoderadoEmails: uniqueEmails,
+      primerReunion: fechaAudiencia
+        ? {
+            fecha: fechaAudiencia,
+            hora: horaAudiencia || null,
+            horaFin: horaFinAudiencia || null,
+            googleMeetUrl,
+          }
+        : null,
     });
   } catch (e) {
     return NextResponse.json({ error: "Unexpected error", detail: toErrorMessage(e) }, { status: 500 });

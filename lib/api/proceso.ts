@@ -1,5 +1,5 @@
 import { supabase } from '../supabase'
-import { getApoderadosByProceso } from './apoderados'
+import { getApoderadosByIds, getApoderadosByProceso } from './apoderados'
 import type {
   Acreedor,
   Acreencia,
@@ -13,20 +13,28 @@ import type {
 
 const SELECT_PROCESO_WITH_FULL_RELATIONS: string = `
       *,
-      deudores (*),
+      deudores (
+        *,
+        apoderados!deudores_apoderado_id_fkey (id, nombre)
+      ),
       acreedores (
         *,
-        acreencias (*)
+        acreencias (*),
+        apoderados!acreedores_apoderado_id_fkey (id, nombre)
       ),
       progreso (*)
     `
 
 const SELECT_PROCESO_WITHOUT_PROGRESO: string = `
       *,
-      deudores (*),
+      deudores (
+        *,
+        apoderados!deudores_apoderado_id_fkey (id, nombre)
+      ),
       acreedores (
         *,
-        acreencias (*)
+        acreencias (*),
+        apoderados!acreedores_apoderado_id_fkey (id, nombre)
       )
     `
 
@@ -48,12 +56,19 @@ const SCHEMA_RELATION_ERROR_CODES = new Set([
   '42P01',
 ])
 
+type InlineApoderado = { id: string; nombre: string } | null
+
+type DeudorWithInlineApoderado = Deudor & {
+  apoderados?: InlineApoderado
+}
+
 type AcreedorWithAcreencias = Acreedor & {
   acreencias?: Acreencia[]
+  apoderados?: InlineApoderado
 }
 
 type ProcesoWithNestedData = Proceso & {
-  deudores?: Deudor[]
+  deudores?: DeudorWithInlineApoderado[]
   acreedores?: AcreedorWithAcreencias[]
   progreso?: Progreso | null
 }
@@ -363,7 +378,21 @@ export async function getProcesoWithRelations(id: string): Promise<ProcesoWithRe
 
   let apoderados: Apoderado[] | undefined
   try {
-    apoderados = await getApoderadosByProceso(id)
+    const byProceso = await getApoderadosByProceso(id)
+    const knownIds = new Set(byProceso.map((a) => a.id))
+
+    // Also load apoderados referenced by deudores/acreedores that may belong to another proceso
+    const referencedIds = [
+      ...(data.deudores ?? []).map((d) => (d as { apoderado_id?: string | null }).apoderado_id),
+      ...(Array.isArray(data.acreedores) ? data.acreedores : []).map((a) => (a as { apoderado_id?: string | null }).apoderado_id),
+    ].filter((apId): apId is string => typeof apId === 'string' && apId.trim() !== '' && !knownIds.has(apId))
+
+    if (referencedIds.length > 0) {
+      const extra = await getApoderadosByIds([...new Set(referencedIds)])
+      apoderados = [...byProceso, ...extra]
+    } else {
+      apoderados = byProceso
+    }
   } catch (apError) {
     const errorDetails =
       apError instanceof Error

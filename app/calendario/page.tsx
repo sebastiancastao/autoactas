@@ -48,6 +48,7 @@ type AutoAdmisorioState = {
   emailSending: boolean;
   emailResult: { sent: number; errors?: string[] } | null;
   emailError: string | null;
+  adjuntosExtra: { name: string; content: string; contentType: string }[];
 };
 
 type ProgresoAction = {
@@ -311,6 +312,7 @@ function CalendarioContent() {
   const [nuevaHora, setNuevaHora] = useState("09:00");
   const [nuevoUsuarioId, setNuevoUsuarioId] = useState<string>("");
   const [nuevoProcesoId, setNuevoProcesoId] = useState<string>("");
+  const [nuevaDuracion, setNuevaDuracion] = useState(60);
   const [tituloEditable, setTituloEditable] = useState(false);
   const [eventoSeleccionado, setEventoSeleccionado] = useState<EventoCalendario | null>(null);
   const [horaDetalleEditable, setHoraDetalleEditable] = useState("09:00");
@@ -838,13 +840,17 @@ function CalendarioContent() {
         ? await buildProcesoEventoTitle(procesoId)
         : tituloManual;
 
+      const [horaH, horaM] = horaNormalizada.split(":").map(Number);
+      const totalMinFin = horaH * 60 + horaM + nuevaDuracion;
+      const horaFin = minutesToHHMM(totalMinFin);
+
       const nuevoEvento = await createEvento({
         titulo,
         descripcion: null,
         fecha: nuevaFecha,
         hora: `${horaNormalizada}:00`,
         fecha_fin: null,
-        hora_fin: null,
+        hora_fin: `${horaFin}:00`,
         usuario_id: nuevoUsuarioId || null,
         proceso_id: procesoId || null,
         tipo: 'general',
@@ -943,6 +949,7 @@ function CalendarioContent() {
         emailSending: false,
         emailResult: null,
         emailError: null,
+        adjuntosExtra: [],
       }
     );
   }
@@ -959,6 +966,7 @@ function CalendarioContent() {
         emailSending: false,
         emailResult: prev[procesoId]?.emailResult ?? null,
         emailError: null,
+        adjuntosExtra: prev[procesoId]?.adjuntosExtra ?? [],
       },
     }));
 
@@ -997,6 +1005,7 @@ function CalendarioContent() {
           emailSending: false,
           emailResult: null,
           emailError: null,
+          adjuntosExtra: prev[procesoId]?.adjuntosExtra ?? [],
         },
       }));
     } catch (error) {
@@ -1010,9 +1019,36 @@ function CalendarioContent() {
           emailSending: prev[procesoId]?.emailSending ?? false,
           emailResult: prev[procesoId]?.emailResult ?? null,
           emailError: prev[procesoId]?.emailError ?? null,
+          adjuntosExtra: prev[procesoId]?.adjuntosExtra ?? [],
         },
       }));
     }
+  }
+
+  function handleAgregarAdjuntosCalendario(procesoId: string, e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    files.forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const dataUrl = ev.target?.result as string;
+        const base64 = dataUrl.split(",")[1] ?? "";
+        setAutoAdmisorioStateByProcesoId((prev) => {
+          const current = prev[procesoId];
+          if (!current) return prev;
+          return { ...prev, [procesoId]: { ...current, adjuntosExtra: [...(current.adjuntosExtra ?? []), { name: file.name, content: base64, contentType: file.type || "application/octet-stream" }] } };
+        });
+      };
+      reader.readAsDataURL(file);
+    });
+    e.target.value = "";
+  }
+
+  function handleQuitarAdjuntoCalendario(procesoId: string, index: number) {
+    setAutoAdmisorioStateByProcesoId((prev) => {
+      const current = prev[procesoId];
+      if (!current) return prev;
+      return { ...prev, [procesoId]: { ...current, adjuntosExtra: (current.adjuntosExtra ?? []).filter((_, i) => i !== index) } };
+    });
   }
 
   async function enviarAutoAdmisorioApoderadosDesdeCalendario(procesoId: string | undefined) {
@@ -1055,7 +1091,7 @@ function CalendarioContent() {
           webViewLink: state.result.webViewLink,
           fileId: state.result.fileId,
           fileName: state.result.fileName,
-          skipPdfExport: true,
+          extraAttachments: (state.adjuntosExtra ?? []).map((a) => ({ filename: a.name, content: a.content, contentType: a.contentType })),
         }),
       });
 
@@ -1594,6 +1630,20 @@ function CalendarioContent() {
                                   Editar en Google Docs
                                 </a>
                               )}
+                              {canCrearAutoAdmisorio && autoState?.result && ev.procesoId && (
+                                <>
+                                  <input type="file" multiple id={`adj-cal1-${ev.procesoId}`} className="hidden" onChange={(e) => handleAgregarAdjuntosCalendario(ev.procesoId!, e)} />
+                                  <div className="flex flex-wrap gap-1">
+                                    <label htmlFor={`adj-cal1-${ev.procesoId}`} className="cursor-pointer flex h-7 items-center rounded-lg border border-zinc-200 bg-white px-2 text-[11px] font-medium text-zinc-600 transition hover:bg-zinc-50 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">+ Adjuntar</label>
+                                    {(autoState.adjuntosExtra ?? []).map((adj, idx) => (
+                                      <span key={idx} className="inline-flex items-center gap-0.5 rounded-lg border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px] text-zinc-500 dark:border-white/10 dark:bg-white/5">
+                                        <span className="max-w-[80px] truncate">{adj.name}</span>
+                                        <button onClick={() => handleQuitarAdjuntoCalendario(ev.procesoId!, idx)} className="text-zinc-400 hover:text-red-500">×</button>
+                                      </span>
+                                    ))}
+                                  </div>
+                                </>
+                              )}
                               {canCrearAutoAdmisorio &&
                                 autoState?.result?.apoderadoEmails &&
                                 autoState.result.apoderadoEmails.length > 0 && (
@@ -1732,6 +1782,20 @@ function CalendarioContent() {
                               Editar en Google Docs
                             </a>
                           )}
+                          {canCrearAutoAdmisorio && autoState?.result && ev.procesoId && (
+                            <>
+                              <input type="file" multiple id={`adj-cal2-${ev.procesoId}`} className="hidden" onChange={(e) => { e.stopPropagation(); handleAgregarAdjuntosCalendario(ev.procesoId!, e); }} />
+                              <div className="flex flex-wrap gap-1" onClick={(e) => e.stopPropagation()}>
+                                <label htmlFor={`adj-cal2-${ev.procesoId}`} className="cursor-pointer flex h-7 items-center rounded-lg border border-zinc-200 bg-white px-2 text-[11px] font-medium text-zinc-600 transition hover:bg-zinc-50 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">+ Adjuntar</label>
+                                {(autoState.adjuntosExtra ?? []).map((adj, idx) => (
+                                  <span key={idx} className="inline-flex items-center gap-0.5 rounded-lg border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px] text-zinc-500 dark:border-white/10 dark:bg-white/5">
+                                    <span className="max-w-[80px] truncate">{adj.name}</span>
+                                    <button onClick={(e) => { e.stopPropagation(); handleQuitarAdjuntoCalendario(ev.procesoId!, idx); }} className="text-zinc-400 hover:text-red-500">×</button>
+                                  </span>
+                                ))}
+                              </div>
+                            </>
+                          )}
                           {canCrearAutoAdmisorio &&
                             autoState?.result?.apoderadoEmails &&
                             autoState.result.apoderadoEmails.length > 0 && (
@@ -1807,6 +1871,16 @@ function CalendarioContent() {
                   className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10"
                 />
               </div>
+            </div>
+            <div className="mt-3">
+              <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">Duración</label>
+              <select value={nuevaDuracion} onChange={(e) => setNuevaDuracion(Number(e.target.value))} className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10 cursor-pointer">
+                <option value={30}>30 minutos</option>
+                <option value={60}>1 hora</option>
+                <option value={90}>1 hora 30 min</option>
+                <option value={120}>2 horas</option>
+                <option value={180}>3 horas</option>
+              </select>
             </div>
             <div className="mt-3">
               <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">Asignar a usuario</label>
@@ -2024,6 +2098,35 @@ function CalendarioContent() {
                   >
                     Abrir auto admisorio
                   </a>
+                )}
+
+                {action?.requiereIniciar && autoState?.result && eventoSeleccionado.procesoId && (
+                  <div className="flex flex-col gap-1.5">
+                    <input
+                      type="file"
+                      multiple
+                      id={`adjuntos-cal-${eventoSeleccionado.procesoId}`}
+                      className="hidden"
+                      onChange={(e) => handleAgregarAdjuntosCalendario(eventoSeleccionado.procesoId!, e)}
+                    />
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <label
+                        htmlFor={`adjuntos-cal-${eventoSeleccionado.procesoId}`}
+                        className="cursor-pointer inline-flex items-center justify-center rounded-2xl border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:bg-white/10"
+                      >
+                        + Adjuntar documentos
+                      </label>
+                      {(autoState.adjuntosExtra ?? []).map((adj, idx) => (
+                        <span key={idx} className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs text-zinc-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
+                          <span className="max-w-[160px] truncate">{adj.name}</span>
+                          <button
+                            onClick={() => handleQuitarAdjuntoCalendario(eventoSeleccionado.procesoId!, idx)}
+                            className="ml-0.5 text-zinc-400 hover:text-red-500 dark:hover:text-red-400"
+                          >×</button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
                 )}
 
                 {action?.requiereIniciar && autoState?.result && (

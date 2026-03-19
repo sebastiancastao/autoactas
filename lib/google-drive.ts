@@ -249,6 +249,7 @@ async function uploadBufferToGoogleOAuthDrive(params: {
   usuarioId?: string | null;
   fallbackAuthUserId?: string | null;
   convertToGoogleDocs?: boolean;
+  targetMimeType?: string | null;
 }) {
   const authorization = await getGoogleDriveOAuthAuthorization({
     usuarioId: params.usuarioId,
@@ -257,11 +258,13 @@ async function uploadBufferToGoogleOAuthDrive(params: {
 
   if (!authorization) return null;
 
+  const resolvedTargetMimeType =
+    params.targetMimeType ??
+    (params.convertToGoogleDocs ? "application/vnd.google-apps.document" : null);
+
   const metadata: Record<string, unknown> = {
     name: params.filename,
-    mimeType: params.convertToGoogleDocs
-      ? "application/vnd.google-apps.document"
-      : params.mimeType,
+    mimeType: resolvedTargetMimeType ?? params.mimeType,
   };
 
   const form = new FormData();
@@ -346,6 +349,104 @@ export async function downloadStoredFileBuffer(fileId: string): Promise<Buffer> 
   return Buffer.from(arrayBuffer);
 }
 
+async function storePdfBufferInSupabase(pdfFilename: string, pdfBuffer: Buffer): Promise<string> {
+  await ensureDocumentsBucket();
+  const supabase = createAdminSupabase();
+  const bucketName = getDocumentsBucketName();
+  const objectPath = buildStoragePath(pdfFilename, "application/pdf");
+
+  const { error } = await supabase.storage
+    .from(bucketName)
+    .upload(objectPath, pdfBuffer, { contentType: "application/pdf", upsert: false });
+
+  if (error) throw new Error(`Supabase Storage PDF upload failed: ${error.message}`);
+  return objectPath;
+}
+
+async function convertDocxViaDriveServiceAccount(filename: string, buffer: Buffer): Promise<Buffer> {
+  const clientEmail = getEnv("GOOGLE_DRIVE_CLIENT_EMAIL");
+  const privateKey = parsePrivateKey(getEnv("GOOGLE_DRIVE_PRIVATE_KEY"));
+
+  const jwtClient = new JWT({
+    email: clientEmail,
+    key: privateKey,
+    scopes: ["https://www.googleapis.com/auth/drive.file"],
+  });
+
+  const auth = await jwtClient.authorize();
+  const accessToken = auth?.access_token ?? jwtClient.credentials.access_token;
+  if (!accessToken) throw new Error("Failed to obtain Google access token for PDF conversion.");
+
+  const metadata = { name: filename, mimeType: "application/vnd.google-apps.document" };
+  const form = new FormData();
+  form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json; charset=UTF-8" }));
+  form.append("file", new Blob([new Uint8Array(buffer)], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }), filename);
+
+  const uploadRes = await fetch(
+    "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id",
+    { method: "POST", headers: { Authorization: `Bearer ${accessToken}` }, body: form }
+  );
+
+  if (!uploadRes.ok) {
+    const text = await uploadRes.text().catch(() => "");
+    throw new Error(`Service account DOCX upload failed (${uploadRes.status}): ${text || uploadRes.statusText}`);
+  }
+
+  const { id: tempFileId } = (await uploadRes.json()) as { id: string };
+
+  try {
+    const exportRes = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(tempFileId)}/export?mimeType=application/pdf`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    if (!exportRes.ok) {
+      const text = await exportRes.text().catch(() => "");
+      throw new Error(`PDF export from service account failed (${exportRes.status}): ${text || exportRes.statusText}`);
+    }
+
+    const arrayBuffer = await exportRes.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+  } finally {
+    await fetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(tempFileId)}`,
+      { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } }
+    ).catch(() => {});
+  }
+}
+
+export async function generateAndStorePdfFromDocx(params: {
+  filename: string;
+  buffer: Buffer;
+  uploadedFileId: string;
+  authUserId?: string | null;
+}): Promise<string> {
+  const pdfFilename = params.filename.replace(/\.docx$/i, ".pdf");
+
+  // If the file was uploaded to Google Drive via OAuth, export it using the OAuth token
+  if (!isStoragePath(params.uploadedFileId)) {
+    const authorization = await getGoogleDriveOAuthAuthorization({
+      fallbackAuthUserId: params.authUserId ?? null,
+    }).catch(() => null);
+
+    if (authorization) {
+      const exportRes = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(params.uploadedFileId)}/export?mimeType=application/pdf`,
+        { headers: { Authorization: `Bearer ${authorization.accessToken}` } }
+      );
+
+      if (exportRes.ok) {
+        const arrayBuffer = await exportRes.arrayBuffer();
+        return storePdfBufferInSupabase(pdfFilename, Buffer.from(arrayBuffer));
+      }
+    }
+  }
+
+  // Fall back: upload DOCX to service account Drive, export as PDF, delete temp file
+  const pdfBuffer = await convertDocxViaDriveServiceAccount(params.filename, params.buffer);
+  return storePdfBufferInSupabase(pdfFilename, pdfBuffer);
+}
+
 export async function exportFileAsPdf(fileId: string): Promise<Buffer> {
   const normalizedFileId = fileId.trim();
   if (!normalizedFileId) throw new Error("Missing file identifier.");
@@ -388,19 +489,45 @@ export async function exportFileAsPdf(fileId: string): Promise<Buffer> {
   return Buffer.from(arrayBuffer);
 }
 
+function resolveGoogleAppsMimeType(sourceMimeType: string): string | null {
+  const lower = sourceMimeType.toLowerCase();
+  if (
+    lower.includes("spreadsheetml") ||
+    lower.includes("ms-excel") ||
+    lower === "application/vnd.ms-excel"
+  ) {
+    return "application/vnd.google-apps.spreadsheet";
+  }
+  if (lower.includes("wordprocessingml") || lower.includes("msword")) {
+    return "application/vnd.google-apps.document";
+  }
+  return null;
+}
+
 export async function uploadFileToGoogleDrive(params: {
   filename: string;
   buffer: Buffer;
   mimeType: string;
   folderId?: string | null;
   shareWithEmails?: string[] | null;
+  usuarioId?: string | null;
+  fallbackAuthUserId?: string | null;
 }) {
   if (!params.mimeType?.trim()) {
     throw new Error("Missing mimeType for file upload.");
   }
 
-  const uniqueShareEmails = [...new Set((params.shareWithEmails ?? []).filter(isValidEmail))];
-  void uniqueShareEmails;
+  const targetMimeType = resolveGoogleAppsMimeType(params.mimeType);
+
+  const oauthUpload = await uploadBufferToGoogleOAuthDrive({
+    filename: params.filename,
+    buffer: params.buffer,
+    mimeType: params.mimeType,
+    usuarioId: params.usuarioId ?? null,
+    fallbackAuthUserId: params.fallbackAuthUserId ?? null,
+    targetMimeType,
+  });
+  if (oauthUpload) return oauthUpload;
 
   return uploadBufferToStorage(params);
 }
