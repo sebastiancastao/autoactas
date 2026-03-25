@@ -1787,6 +1787,7 @@ function getBlackHeadingDocStyles() {
             cs: "Century Gothic",
             eastAsia: "Century Gothic",
           },
+          size: 24, // 12pt in half-points
         },
       },
       heading1: {

@@ -247,8 +247,8 @@ function formatHora12(horaHHMM: string | undefined): string {
 
 // --- Paragraph helpers ---
 
-const FONT = "Arial";
-const SIZE_11 = 22; // 11pt in half-points
+const FONT = "Century Gothic";
+const SIZE_11 = 24; // 12pt in half-points
 const SIZE_12 = 24;
 const SIZE_14 = 28;
 
