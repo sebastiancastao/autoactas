@@ -107,6 +107,8 @@ type AcreedorCatalogItem = {
   tipoAcreencia: string;
 };
 
+type ApoderadoProcesoCategoria = "acreedor" | "deudor";
+
 function uid() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
@@ -153,6 +155,49 @@ function createAcreedorRow(id: string = uid()): AcreedorFormRow {
     monto: "",
     tipoAcreencia: "",
     obligaciones: [],
+  };
+}
+
+function isApoderadoProcesoCategoria(
+  value: Apoderado["categoria_proceso"] | null | undefined,
+): value is ApoderadoProcesoCategoria {
+  return value === "acreedor" || value === "deudor";
+}
+
+function createAcreedorRowFromApoderado(apoderado: Apoderado): AcreedorFormRow {
+  return {
+    ...createAcreedorRow(),
+    apoderadoId: apoderado.id,
+    apoderadoNombre: apoderado.nombre,
+  };
+}
+
+function assignApoderadosToBlankRows<T extends { apoderadoId: string; apoderadoNombre: string }>(
+  rows: T[],
+  apoderados: Apoderado[],
+) {
+  const pendientes = [...apoderados];
+
+  const rowsConApoderado = rows.map((row) => {
+    if (row.apoderadoId.trim() || pendientes.length === 0) {
+      return row;
+    }
+
+    const apoderado = pendientes.shift();
+    if (!apoderado) {
+      return row;
+    }
+
+    return {
+      ...row,
+      apoderadoId: apoderado.id,
+      apoderadoNombre: apoderado.nombre,
+    };
+  });
+
+  return {
+    rows: rowsConApoderado,
+    remaining: pendientes,
   };
 }
 
@@ -392,6 +437,9 @@ export type UseProcesoFormOptions = {
   onSaveSuccess?: (proceso: Proceso, context?: { isEditing: boolean }) => void;
   focusedMode?: "acreedores" | "deudores" | undefined;
   updateProgresoOnSubmit?: boolean;
+  getFallbackApoderadoAssignments?: (
+    procesoId: string,
+  ) => { deudorIds: string[]; acreedorIds: string[] } | undefined;
 };
 
 export type ProcesoFormContext = {
@@ -433,6 +481,7 @@ export type ProcesoFormContext = {
   selectedAcreedorId: string;
   setSelectedAcreedorId: Dispatch<SetStateAction<string>>;
   apoderados: Apoderado[];
+  apoderadosPendientes: Apoderado[];
   apoderadoModalOpen: boolean;
   apoderadoModalTarget: ApoderadoModalTarget | null;
   apoderadoForm: ApoderadoForm;
@@ -464,6 +513,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
     onSaveSuccess,
     focusedMode,
     updateProgresoOnSubmit = true,
+    getFallbackApoderadoAssignments,
   } = options ?? {};
 
   const formInstancePrefix = useId().replace(/:/g, "");
@@ -480,6 +530,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
   const [primeraCitaHora, setPrimeraCitaHora] = useState("");
   const [primeraCitaEventoId, setPrimeraCitaEventoId] = useState<string | null>(null);
   const [apoderados, setApoderados] = useState<Apoderado[]>([]);
+  const [apoderadosPendientes, setApoderadosPendientes] = useState<Apoderado[]>([]);
   const [acreedoresCatalogo, setAcreedoresCatalogo] = useState<AcreedorCatalogItem[]>([]);
   const [cargandoApoderados, setCargandoApoderados] = useState(false);
   const [apoderadoModalOpen, setApoderadoModalOpen] = useState(false);
@@ -669,6 +720,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
     setEditingProcesoId(null);
     setOriginalDeudoresIds([]);
     setOriginalAcreedoresIds([]);
+    setApoderadosPendientes([]);
     setError(null);
     setExito(null);
   };
@@ -680,12 +732,14 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
         setCargandoDetalle(false);
         setError(null);
         setExito(null);
+        setApoderadosPendientes([]);
         return;
       }
 
       setCargandoDetalle(true);
       setError(null);
       setExito(null);
+      setApoderadosPendientes([]);
       try {
         const [detalle, todosApoderados] = await Promise.all([
           getProcesoWithRelations(procesoIdSafe),
@@ -700,7 +754,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
         for (const ap of (detalle.apoderados ?? [])) procesoApoderadosMap.set(ap.id, ap);
         for (const ap of todosApoderados) if (!procesoApoderadosMap.has(ap.id)) procesoApoderadosMap.set(ap.id, ap);
         const procesoApoderados = Array.from(procesoApoderadosMap.values());
-        setApoderados(todosApoderados);
+        setApoderados(procesoApoderados);
         setEditingProcesoId(detalle.id);
         setNumeroProceso(detalle.numero_proceso);
         setFechaprocesos(detalle.fecha_procesos ?? new Date().toISOString().split("T")[0]);
@@ -709,15 +763,60 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
         setTipoProceso(detalle.tipo_proceso ?? "");
         setJuzgado(detalle.juzgado ?? "");
 
-        const deudorRows = mapDeudoresToFormRows(detalle.deudores, procesoApoderados);
+        const referencedApoderadoIds = new Set<string>([
+          ...(detalle.deudores ?? [])
+            .map((deudor) => deudor.apoderado_id)
+            .filter((id): id is string => typeof id === "string" && id.trim() !== ""),
+          ...(detalle.acreedores ?? [])
+            .map((acreedor) => acreedor.apoderado_id)
+            .filter((id): id is string => typeof id === "string" && id.trim() !== ""),
+        ]);
+        const fallbackAssignments = getFallbackApoderadoAssignments?.(procesoIdSafe);
+        const fallbackDeudorIds = new Set(fallbackAssignments?.deudorIds ?? []);
+        const fallbackAcreedorIds = new Set(fallbackAssignments?.acreedorIds ?? []);
+        const apoderadosNoReferenciados = procesoApoderados.filter(
+          (apoderado) => !referencedApoderadoIds.has(apoderado.id),
+        );
+        const apoderadosDeudor = apoderadosNoReferenciados.filter(
+          (apoderado) =>
+            apoderado.categoria_proceso === "deudor" || fallbackDeudorIds.has(apoderado.id),
+        );
+        const apoderadosAcreedor = apoderadosNoReferenciados.filter(
+          (apoderado) =>
+            apoderado.categoria_proceso === "acreedor" || fallbackAcreedorIds.has(apoderado.id),
+        );
+        const apoderadosSinAsignacionVisible = apoderadosNoReferenciados.filter(
+          (apoderado) =>
+            !isApoderadoProcesoCategoria(apoderado.categoria_proceso) &&
+            !fallbackDeudorIds.has(apoderado.id) &&
+            !fallbackAcreedorIds.has(apoderado.id),
+        );
+
+        const deudorRowsBase = mapDeudoresToFormRows(detalle.deudores, procesoApoderados);
+        const {
+          rows: deudorRows,
+          remaining: deudorApoderadosPendientes,
+        } = assignApoderadosToBlankRows(deudorRowsBase, apoderadosDeudor);
         setOriginalDeudoresIds(detalle.deudores?.map((deudor) => deudor.id) ?? []);
         setDeudoresForm(deudorRows);
         setSelectedDeudorId(deudorRows[0]?.id ?? "");
 
-        const acreedorRows = mapAcreedoresToFormRows(detalle.acreedores, procesoApoderados);
+        const acreedorRowsBase = mapAcreedoresToFormRows(detalle.acreedores, procesoApoderados);
+        const {
+          rows: acreedorRowsConApoderados,
+          remaining: acreedorApoderadosPendientes,
+        } = assignApoderadosToBlankRows(acreedorRowsBase, apoderadosAcreedor);
+        const acreedorRows = [
+          ...acreedorRowsConApoderados,
+          ...acreedorApoderadosPendientes.map(createAcreedorRowFromApoderado),
+        ];
         setOriginalAcreedoresIds(detalle.acreedores?.map((acreedor) => acreedor.id) ?? []);
         setAcreedoresForm(acreedorRows);
         setSelectedAcreedorId(acreedorRows[0]?.id ?? "");
+        setApoderadosPendientes([
+          ...apoderadosSinAsignacionVisible,
+          ...deudorApoderadosPendientes,
+        ]);
 
         // Load primera cita from existing eventos
         try {
@@ -743,7 +842,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
         setCargandoDetalle(false);
       }
     },
-    []
+    [getFallbackApoderadoAssignments]
   );
 
   const fetchApoderadosList = async () => {
@@ -980,6 +1079,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
       setApoderadoGuardando(true);
       const created = await createApoderado({
         proceso_id: editingProcesoId ?? null,
+        categoria_proceso: apoderadoModalTarget.tipo,
         nombre: apoderadoForm.nombre.trim(),
         identificacion: apoderadoForm.identificacion.trim(),
         email: apoderadoForm.email.trim() || null,
@@ -1126,25 +1226,54 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
         await syncAcreedores(savedProceso.id, isEditing);
       }
 
-      // Keep apoderados linked to the proceso being saved, even if they were linked elsewhere.
-      const usedApoderadoIds = new Set<string>();
+      // Keep apoderados linked to the proceso being saved, and persist whether
+      // they were assigned from acreedor or deudor flows.
+      const usedApoderadoCategorias = new Map<string, Set<ApoderadoProcesoCategoria>>();
+      const registerApoderadoCategoria = (
+        apoderadoId: string,
+        categoria: ApoderadoProcesoCategoria,
+      ) => {
+        const normalizedId = apoderadoId.trim();
+        if (!normalizedId) return;
+        const categorias = usedApoderadoCategorias.get(normalizedId) ?? new Set<ApoderadoProcesoCategoria>();
+        categorias.add(categoria);
+        usedApoderadoCategorias.set(normalizedId, categorias);
+      };
+
       for (const row of deudoresForm) {
-        if (row.apoderadoId.trim()) usedApoderadoIds.add(row.apoderadoId.trim());
+        registerApoderadoCategoria(row.apoderadoId, "deudor");
       }
       for (const row of acreedoresForm) {
-        if (row.apoderadoId.trim()) usedApoderadoIds.add(row.apoderadoId.trim());
+        registerApoderadoCategoria(row.apoderadoId, "acreedor");
       }
-      const usedApoderadoIdsList = Array.from(usedApoderadoIds);
-      if (usedApoderadoIdsList.length > 0) {
+
+      const apoderadosToSync = Array.from(usedApoderadoCategorias.entries()).map(
+        ([apoderadoId, categorias]) => ({
+          apoderadoId,
+          categoria_proceso:
+            categorias.size === 1 ? Array.from(categorias)[0] : null,
+        }),
+      );
+
+      if (apoderadosToSync.length > 0) {
         await Promise.all(
-          usedApoderadoIdsList.map((apoderadoId) =>
-            updateApoderado(apoderadoId, { proceso_id: savedProceso.id }),
+          apoderadosToSync.map(({ apoderadoId, categoria_proceso }) =>
+            updateApoderado(apoderadoId, { proceso_id: savedProceso.id, categoria_proceso }),
           ),
         );
+
+        const apoderadosToSyncById = new Map(
+          apoderadosToSync.map((item) => [item.apoderadoId, item.categoria_proceso]),
+        );
+
         setApoderados((prev) =>
           prev.map((apoderado) =>
-            usedApoderadoIds.has(apoderado.id)
-              ? { ...apoderado, proceso_id: savedProceso.id }
+            apoderadosToSyncById.has(apoderado.id)
+              ? {
+                  ...apoderado,
+                  proceso_id: savedProceso.id,
+                  categoria_proceso: apoderadosToSyncById.get(apoderado.id) ?? null,
+                }
               : apoderado,
           ),
         );
@@ -1263,6 +1392,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
     selectedAcreedorId,
     setSelectedAcreedorId,
     apoderados,
+    apoderadosPendientes,
     apoderadoModalOpen,
     apoderadoModalTarget,
     apoderadoForm,

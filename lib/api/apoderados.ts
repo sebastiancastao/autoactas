@@ -1,6 +1,29 @@
 import { supabase } from '../supabase'
 import type { ApoderadoInsert, ApoderadoUpdate } from '../database.types'
 
+function getMissingColumnFromError(error: unknown) {
+  if (!error || typeof error !== 'object') return null
+  const record = error as Record<string, unknown>
+  const message = typeof record.message === 'string' ? record.message : ''
+  const details = typeof record.details === 'string' ? record.details : ''
+  const code = typeof record.code === 'string' ? record.code : ''
+
+  if (code === 'PGRST204') {
+    const match = message.match(/Could not find the '([^']+)' column/i)
+    return match ? match[1] : null
+  }
+
+  if (code === '42703') {
+    const source = `${message} ${details}`
+    const quotedMatch = source.match(/column\s+"([^"]+)"/i)
+    if (quotedMatch) return quotedMatch[1]
+    const unquotedMatch = source.match(/column\s+([a-zA-Z0-9_]+)\s+does not exist/i)
+    return unquotedMatch ? unquotedMatch[1] : null
+  }
+
+  return null
+}
+
 export async function getApoderados() {
   const { data, error } = await supabase
     .from('apoderados')
@@ -47,26 +70,56 @@ export async function getApoderadosByProceso(procesoId: string) {
 }
 
 export async function createApoderado(apoderado: ApoderadoInsert) {
-  const { data, error } = await supabase
-    .from('apoderados')
-    .insert(apoderado)
-    .select()
-    .single()
+  const payload: Record<string, unknown> = { ...apoderado }
+  let lastError: unknown = null
 
-  if (error) throw error
-  return data
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const { data, error } = await supabase
+      .from('apoderados')
+      .insert(payload as ApoderadoInsert)
+      .select()
+      .single()
+
+    if (!error) return data
+
+    lastError = error
+    const missingColumn = getMissingColumnFromError(error)
+    if (missingColumn && Object.prototype.hasOwnProperty.call(payload, missingColumn)) {
+      delete payload[missingColumn]
+      continue
+    }
+
+    break
+  }
+
+  throw lastError
 }
 
 export async function updateApoderado(id: string, apoderado: ApoderadoUpdate) {
-  const { data, error } = await supabase
-    .from('apoderados')
-    .update(apoderado)
-    .eq('id', id)
-    .select()
-    .single()
+  const payload: Record<string, unknown> = { ...apoderado }
+  let lastError: unknown = null
 
-  if (error) throw error
-  return data
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const { data, error } = await supabase
+      .from('apoderados')
+      .update(payload as ApoderadoUpdate)
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (!error) return data
+
+    lastError = error
+    const missingColumn = getMissingColumnFromError(error)
+    if (missingColumn && Object.prototype.hasOwnProperty.call(payload, missingColumn)) {
+      delete payload[missingColumn]
+      continue
+    }
+
+    break
+  }
+
+  throw lastError
 }
 
 export async function deleteApoderado(id: string) {

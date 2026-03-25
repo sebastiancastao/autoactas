@@ -108,6 +108,14 @@ const createDefaultPanelApoderados = (): PanelApoderadoRow[] => [
   createPanelApoderadoRow("deudor"),
 ];
 
+type ProcesoApoderadoAssignments = {
+  deudorIds: string[];
+  acreedorIds: string[];
+};
+
+const PANEL_APODERADO_ASSIGNMENTS_STORAGE_KEY =
+  "procesos-panel-apoderado-assignments-v1";
+
 type RegistroEmailHtmlProps = {
   recipientName: string;
   link: string;
@@ -243,6 +251,8 @@ export default function ProcesosPage() {
   const [apoderadoSubmissionByProcesoId, setApoderadoSubmissionByProcesoId] = useState<
     Record<string, { deudorIds: string[]; acreedorIds: string[] }>
   >({});
+  const [panelApoderadoAssignmentsByProcesoId, setPanelApoderadoAssignmentsByProcesoId] =
+    useState<Record<string, ProcesoApoderadoAssignments>>({});
   const [apoderadoSubmissionLoading, setApoderadoSubmissionLoading] = useState(false);
 
   const [autoAdmisorioStateByProcesoId, setAutoAdmisorioStateByProcesoId] = useState<
@@ -385,6 +395,11 @@ export default function ProcesosPage() {
       await deleteProceso(id);
 
       setProcesos((prev) => prev.filter((proceso) => proceso.id !== id));
+      setPanelApoderadoAssignmentsByProcesoId((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
 
     } catch (err) {
 
@@ -479,8 +494,42 @@ export default function ProcesosPage() {
   };
 
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
 
-  const form = useProcesoForm({ onSaveSuccess: handleSaveSuccess });
+    try {
+      const stored = window.localStorage.getItem(
+        PANEL_APODERADO_ASSIGNMENTS_STORAGE_KEY,
+      );
+      if (!stored) return;
+
+      const parsed = JSON.parse(stored) as Record<string, ProcesoApoderadoAssignments>;
+      if (parsed && typeof parsed === "object") {
+        setPanelApoderadoAssignmentsByProcesoId(parsed);
+      }
+    } catch (error) {
+      console.warn("No se pudo cargar el cache local de apoderados por proceso:", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    window.localStorage.setItem(
+      PANEL_APODERADO_ASSIGNMENTS_STORAGE_KEY,
+      JSON.stringify(panelApoderadoAssignmentsByProcesoId),
+    );
+  }, [panelApoderadoAssignmentsByProcesoId]);
+
+  const getFallbackApoderadoAssignments = useCallback(
+    (procesoId: string) => panelApoderadoAssignmentsByProcesoId[procesoId],
+    [panelApoderadoAssignmentsByProcesoId],
+  );
+
+  const form = useProcesoForm({
+    onSaveSuccess: handleSaveSuccess,
+    getFallbackApoderadoAssignments,
+  });
 
   const {
     editingProcesoId,
@@ -932,33 +981,47 @@ export default function ProcesosPage() {
           console.warn("Error creando primera cita:", err);
         }
       }
-      const panelApoderadoIds = Array.from(
-        new Set(
-          panelApoderados
-            .map((row) => row.apoderadoId.trim())
-            .filter((id) => id.length > 0),
-        ),
-      );
+      const panelApoderadosById = new Map<
+        string,
+        PanelApoderadoRow["categoria"]
+      >();
+      for (const row of panelApoderados) {
+        const apoderadoId = row.apoderadoId.trim();
+        if (!apoderadoId) continue;
+        panelApoderadosById.set(apoderadoId, row.categoria);
+      }
+      const panelApoderadoIds = Array.from(panelApoderadosById.keys());
+      const panelAssignments: ProcesoApoderadoAssignments = {
+        deudorIds: Array.from(panelApoderadosById.entries())
+          .filter(([, categoria]) => categoria === "deudor")
+          .map(([apoderadoId]) => apoderadoId),
+        acreedorIds: Array.from(panelApoderadosById.entries())
+          .filter(([, categoria]) => categoria === "acreedor")
+          .map(([apoderadoId]) => apoderadoId),
+      };
       if (panelApoderadoIds.length > 0) {
         const updateResults = await Promise.allSettled(
           panelApoderadoIds.map((apoderadoId) =>
-            updateApoderado(apoderadoId, { proceso_id: nuevo.id }),
+            updateApoderado(apoderadoId, {
+              proceso_id: nuevo.id,
+              categoria_proceso: panelApoderadosById.get(apoderadoId) ?? null,
+            }),
           ),
         );
-        const updatedIds: string[] = [];
-        const failedCount = updateResults.reduce((count, result, index) => {
+        const updatedApoderados: Apoderado[] = [];
+        const failedCount = updateResults.reduce((count, result) => {
           if (result.status === "fulfilled") {
-            updatedIds.push(panelApoderadoIds[index]);
+            updatedApoderados.push(result.value);
             return count;
           }
           return count + 1;
         }, 0);
-        if (updatedIds.length > 0) {
-          const panelApoderadoIdSet = new Set(updatedIds);
+        if (updatedApoderados.length > 0) {
+          const updatedById = new Map(updatedApoderados.map((apoderado) => [apoderado.id, apoderado]));
           setApoderadoOptions((prev) =>
             prev.map((apoderado) =>
-              panelApoderadoIdSet.has(apoderado.id)
-                ? { ...apoderado, proceso_id: nuevo.id }
+              updatedById.has(apoderado.id)
+                ? updatedById.get(apoderado.id) ?? apoderado
                 : apoderado,
             ),
           );
@@ -968,6 +1031,12 @@ export default function ProcesosPage() {
             failedCount === 1 ? "" : "s"
           }.`;
         }
+      }
+      if (panelAssignments.deudorIds.length > 0 || panelAssignments.acreedorIds.length > 0) {
+        setPanelApoderadoAssignmentsByProcesoId((prev) => ({
+          ...prev,
+          [nuevo.id]: panelAssignments,
+        }));
       }
       // Ensure progreso exists for the new proceso and starts as "no_iniciado".
       try {
@@ -1488,7 +1557,10 @@ export default function ProcesosPage() {
                         Hora
                       </label>
                       <input
-                        type="time"
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-2][0-9]:[0-5][0-9]"
+                        placeholder="HH:MM"
                         value={nuevoProceso.primeraCitaHora}
                         onChange={(e) =>
                           setNuevoProceso((prev) => ({ ...prev, primeraCitaHora: e.target.value }))

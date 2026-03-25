@@ -13,6 +13,7 @@ export interface Database {
         Row: {
           id: string
           proceso_id: string | null
+          categoria_proceso: 'acreedor' | 'deudor' | null
           nombre: string
           identificacion: string
           email: string | null
@@ -25,6 +26,7 @@ export interface Database {
         Insert: {
           id?: string
           proceso_id?: string | null
+          categoria_proceso?: 'acreedor' | 'deudor' | null
           nombre: string
           identificacion: string
           email?: string | null
@@ -37,6 +39,7 @@ export interface Database {
         Update: {
           id?: string
           proceso_id?: string | null
+          categoria_proceso?: 'acreedor' | 'deudor' | null
           nombre?: string
           identificacion?: string
           email?: string | null
