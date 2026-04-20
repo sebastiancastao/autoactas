@@ -857,6 +857,7 @@ export default function ProcesosPage() {
           fileName: state.result.fileName,
           primerReunion: state.result.primerReunion ?? null,
           extraAttachments: (state.adjuntosExtra ?? []).map((a) => ({ filename: a.name, content: a.content, contentType: a.contentType })),
+          attachPlantillaAdmision: true,
         }),
       });
 

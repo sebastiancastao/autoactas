@@ -374,6 +374,7 @@ export default function InicializacionPage() {
           fileId: state.result?.fileId,
           fileName: state.result?.fileName,
           extraAttachments: state.adjuntosExtra.map((a) => ({ filename: a.name, content: a.content, contentType: a.contentType })),
+          attachPlantillaAdmision: true,
         }),
       });
 

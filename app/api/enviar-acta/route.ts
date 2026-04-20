@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { Resend } from "resend";
+import { promises as fs } from "fs";
+import path from "path";
 import { exportFileAsPdf } from "@/lib/google-drive";
 
 export const runtime = "nodejs";
@@ -28,6 +30,8 @@ type EnviarActaPayload = {
   skipPdfExport?: boolean;
   primerReunion?: PrimerReunion | null;
   extraAttachments?: ExtraAttachment[];
+  attachPlantillaAdmision?: boolean;
+  tipoActa?: string;
 };
 
 function toErrorMessage(e: unknown) {
@@ -63,6 +67,29 @@ function formatFechaLarga(dateStr: string): string {
   return `${String(day).padStart(2, "0")} de ${MESES[month] ?? ""} de ${year}`;
 }
 
+const PLANTILLA_ADMISION_FILENAME = "PLANTILLA #1 (NOTIFICACION ADMISION Y CITACION A PRIMERA AUDIENCIA DEL TRAMITE).pdf";
+
+const PLANTILLA_BY_TIPO: Record<string, string> = {
+  "ACTA FRACASO DEL TRAMITE": "PLANTILLA #4 (NOTIFICACION DE ACTA DE FRACASO DEL TRAMITE).pdf",
+  "ACUERDO DE PAGO BILATERAL Y FRACASO DEL TRAMITE": "PLANTILLA #5 (NOTIFICACION DE ACTA DE ACUERDO DE PAGO BILATERAL Y FRACASO DEL TRAMITE).pdf",
+  "ACTA RECHAZO DEL TRAMITE": "PLANTILLA #6 (NOTIFICACION ACTA DE RECHAZO DEL TRAMITE).pdf",
+  "AUTO DECLARA NULIDAD": "PLANTILLA #7 (NOTIFICACION AUTO DECLARA NULIDAD Y RECHAZO DEL TRAMITE).pdf",
+};
+
+const SUBJECT_BY_TIPO: Record<string, string> = {
+  "ACTA FRACASO DEL TRAMITE": "Notificación de Acta de Fracaso del Trámite",
+  "ACUERDO DE PAGO BILATERAL Y FRACASO DEL TRAMITE": "Notificación de Acta de Acuerdo de Pago Bilateral y Fracaso del Trámite",
+  "ACTA RECHAZO DEL TRAMITE": "Notificación de Acta de Rechazo del Trámite",
+  "AUTO DECLARA NULIDAD": "Notificación Auto Declara Nulidad y Rechazo del Trámite",
+};
+
+const BODY_TITLE_BY_TIPO: Record<string, string> = {
+  "ACTA FRACASO DEL TRAMITE": "Acta de Fracaso del Trámite",
+  "ACUERDO DE PAGO BILATERAL Y FRACASO DEL TRAMITE": "Acta de Acuerdo de Pago Bilateral y Fracaso del Trámite",
+  "ACTA RECHAZO DEL TRAMITE": "Acta de Rechazo del Trámite",
+  "AUTO DECLARA NULIDAD": "Auto que Declara Nulidad y Rechazo del Trámite",
+};
+
 async function sendApoderadoEmails(params: {
   apoderadoEmails: string[];
   numeroProceso: string;
@@ -74,6 +101,8 @@ async function sendApoderadoEmails(params: {
   skipPdfExport?: boolean;
   primerReunion?: PrimerReunion | null;
   extraAttachments?: ExtraAttachment[];
+  attachPlantillaAdmision?: boolean;
+  tipoActa?: string;
 }) {
   const apiKey = process.env.RESEND_API_KEY?.trim();
   if (!apiKey) {
@@ -116,12 +145,36 @@ async function sendApoderadoEmails(params: {
     }
   });
 
+  // Determine which static plantilla PDF to attach
+  const tipoNorm = (params.tipoActa ?? "").trim().toUpperCase();
+  const plantillaFilename = params.attachPlantillaAdmision
+    ? PLANTILLA_ADMISION_FILENAME
+    : (PLANTILLA_BY_TIPO[tipoNorm] ?? null);
+
+  let plantillaBuffer: Buffer | null = null;
+  if (plantillaFilename) {
+    try {
+      plantillaBuffer = await fs.readFile(path.join(process.cwd(), plantillaFilename));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn(`Could not read plantilla PDF "${plantillaFilename}":`, msg);
+      errors.push(`Plantilla attach: ${msg}`);
+    }
+  }
+
   const allAttachments = [
     ...(pdfBuffer ? [{ filename: pdfFilename, content: pdfBuffer }] : []),
     ...extraResendAttachments,
+    ...(plantillaBuffer && plantillaFilename ? [{ filename: plantillaFilename, content: plantillaBuffer }] : []),
   ];
 
-  const subject = `Acta de Audiencia - ${params.numeroProceso} - ${params.fecha}`;
+  const isAdmision = Boolean(params.attachPlantillaAdmision);
+  const subjectPrefix = isAdmision
+    ? "Notificación de Admisión y Citación a Primera Audiencia"
+    : (SUBJECT_BY_TIPO[tipoNorm] ?? null);
+  const subject = subjectPrefix
+    ? `${subjectPrefix} - Proceso ${params.numeroProceso}`
+    : `Acta de Audiencia - ${params.numeroProceso} - ${params.fecha}`;
 
   const reunion = params.primerReunion;
   const reunionFechaTexto = reunion?.fecha ? formatFechaLarga(reunion.fecha) : null;
@@ -152,7 +205,32 @@ async function sendApoderadoEmails(params: {
       </div>`
     : "";
 
-  const html = `
+  const bodyTitle = isAdmision
+    ? "Notificación de Admisión y Citación a Primera Audiencia del Trámite"
+    : (BODY_TITLE_BY_TIPO[tipoNorm] ?? null);
+  const bodyIntro = isAdmision
+    ? `Por medio del presente correo se notifica que la solicitud de Negociación de Deudas correspondiente al proceso <strong>${params.numeroProceso}</strong> ha sido admitida. Se adjunta el Auto de Admisión junto con la plantilla de notificación para su conocimiento y fines pertinentes.`
+    : bodyTitle
+      ? `Por medio del presente correo se notifica la generación del documento <strong>${bodyTitle}</strong> correspondiente al proceso <strong>${params.numeroProceso}</strong>. Se adjuntan los documentos para su conocimiento y fines pertinentes.`
+      : null;
+
+  const html = (bodyTitle && bodyIntro) ? `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+      <h2 style="color: #18181b; margin-bottom: 16px;">${bodyTitle}</h2>
+      <p style="color: #3f3f46; line-height: 1.6;">${bodyIntro}</p>
+      ${reunionHtml}
+      ${allAttachments.length > 0 ? `<p style="color: #3f3f46; line-height: 1.6;">Los documentos adjuntos se encuentran en formato PDF.</p>` : `
+      <p style="margin: 24px 0;">
+        <a href="${params.webViewLink}"
+           style="display: inline-block; background-color: #18181b; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: 500;">
+          Ver documento
+        </a>
+      </p>`}
+      <p style="color: #71717a; font-size: 14px; margin-top: 32px;">
+        Este correo fue enviado automaticamente por AutoActas.
+      </p>
+    </div>
+  ` : `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
       <h2 style="color: #18181b; margin-bottom: 16px;">Acta de Audiencia Disponible</h2>
       <p style="color: #3f3f46; line-height: 1.6;">
@@ -228,6 +306,8 @@ export async function POST(req: Request) {
       skipPdfExport: payload.skipPdfExport,
       primerReunion: payload.primerReunion,
       extraAttachments: payload.extraAttachments,
+      attachPlantillaAdmision: payload.attachPlantillaAdmision,
+      tipoActa: payload.tipoActa,
     });
 
     return NextResponse.json({

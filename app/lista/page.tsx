@@ -1815,6 +1815,7 @@ function AttendanceContent() {
         webViewLink: terminarAudienciaResult.webViewLink,
         fileId: terminarAudienciaResult.fileId,
         fileName: terminarAudienciaResult.fileName,
+        tipoActa: tipoDocumentoActaGenerada ?? undefined,
       };
 
       const res = await fetch("/api/enviar-acta", {
