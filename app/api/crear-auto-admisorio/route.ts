@@ -248,9 +248,13 @@ function formatHora12(horaHHMM: string | undefined): string {
 // --- Paragraph helpers ---
 
 const FONT = "Century Gothic";
-const SIZE_11 = 24; // 12pt in half-points
-const SIZE_12 = 24;
-const SIZE_14 = 28;
+// Todo el documento debe ir en Century Gothic tamaño 11.
+// En docx el tamaño se expresa en medios puntos, por lo que 11pt = 22.
+// Los tres nombres se mantienen para no tocar cada llamada, pero todos
+// apuntan al mismo tamaño (11) para que no haya letras más grandes que otras.
+const SIZE_11 = 22;
+const SIZE_12 = SIZE_11;
+const SIZE_14 = SIZE_11;
 
 const NUMBERED_CONSIDERACIONES = "consideraciones-numbered";
 const NUMBERED_RESUELVE = "resuelve-numbered";
@@ -287,6 +291,22 @@ function bodyParagraph(text: string, opts?: { bold?: boolean; allCaps?: boolean 
   });
 }
 
+function bodyMixed(runs: { text: string; bold?: boolean }[]): Paragraph {
+  return new Paragraph({
+    alignment: AlignmentType.JUSTIFIED,
+    spacing: { after: 120 },
+    children: runs.map(
+      (r) =>
+        new TextRun({
+          text: r.text,
+          font: FONT,
+          size: SIZE_11,
+          bold: r.bold ?? false,
+        })
+    ),
+  });
+}
+
 function numberedItem(reference: string, text: string): Paragraph {
   return new Paragraph({
     numbering: { reference, level: 0 },
@@ -294,6 +314,12 @@ function numberedItem(reference: string, text: string): Paragraph {
     spacing: { after: 120 },
     children: [new TextRun({ text, font: FONT, size: SIZE_11 })],
   });
+}
+
+// Numbered item whose leading words go in bold (e.g. "ORDENAR", "NOTIFICAR")
+// followed by the rest of the paragraph in regular weight.
+function numberedLead(reference: string, lead: string, rest: string): Paragraph {
+  return numberedMixed(reference, [{ text: lead, bold: true }, { text: rest }]);
 }
 
 function numberedMixed(reference: string, runs: { text: string; bold?: boolean }[]): Paragraph {
@@ -322,9 +348,11 @@ function bulletItem(reference: string, text: string): Paragraph {
   });
 }
 
-function indentedParagraph(
-  text: string,
-  opts?: { leftInches?: number; rightInches?: number; bold?: boolean; spacingAfter?: number },
+// Indented paragraph built from several runs so a prefix/label can go in bold
+// (e.g. the "6.1" numeral or "PRIMERA OCASIÓN:") while the rest stays regular.
+function indentedMixed(
+  runs: { text: string; bold?: boolean }[],
+  opts?: { leftInches?: number; rightInches?: number; spacingAfter?: number },
 ): Paragraph {
   return new Paragraph({
     alignment: AlignmentType.JUSTIFIED,
@@ -333,7 +361,10 @@ function indentedParagraph(
       ...(typeof opts?.leftInches === "number" ? { left: convertInchesToTwip(opts.leftInches) } : {}),
       ...(typeof opts?.rightInches === "number" ? { right: convertInchesToTwip(opts.rightInches) } : {}),
     },
-    children: [new TextRun({ text, font: FONT, size: SIZE_11, bold: opts?.bold ?? false })],
+    children: runs.map(
+      (r) =>
+        new TextRun({ text: r.text, font: FONT, size: SIZE_11, bold: r.bold ?? false })
+    ),
   });
 }
 
@@ -353,7 +384,7 @@ export async function POST(req: Request) {
     // --- Fetch data ---
     const { data: proceso, error: procesoError } = await supabase
       .from("proceso")
-      .select("id, numero_proceso, fecha_procesos, juzgado, tipo_proceso, descripcion, estado")
+      .select("id, numero_proceso, fecha_procesos, juzgado, tipo_proceso, descripcion, estado, usuario_id")
       .eq("id", procesoId)
       .single();
 
@@ -429,7 +460,12 @@ export async function POST(req: Request) {
     // Fecha de firma (today)
     const fechaFirmaTexto = formatFechaEnLetras(fechaKey);
 
-    // Operador/Conciliador — resolve from logged-in user, then payload override, then defaults
+    // Operador/Conciliador — resolve, in order of priority:
+    //   1) the conciliador assigned to the proceso (proceso.usuario_id),
+    //   2) the logged-in user, and finally
+    //   3) the payload override.
+    // The signature shown in the auto comes from whichever conciliador we resolve
+    // here, so an assigned conciliador must take precedence over the logged-in user.
     let operador = {
       nombre: "JUAN CAMILO ROMERO BURGOS",
       identificacion: "1.143.941.218",
@@ -438,9 +474,43 @@ export async function POST(req: Request) {
     };
     let operadorFirmaDataUrl: string | null = null;
 
-    // Look up the logged-in user's profile from the usuarios table
+    type UsuarioConciliador = {
+      nombre: string | null;
+      email: string | null;
+      identificacion: string | null;
+      tarjeta_profesional: string | null;
+      firma_data_url: string | null;
+    };
+
+    const applyUsuarioAsOperador = (usuario: UsuarioConciliador) => {
+      operador = {
+        nombre: usuario.nombre || operador.nombre,
+        identificacion: usuario.identificacion || operador.identificacion,
+        tarjetaProfesional: usuario.tarjeta_profesional || operador.tarjetaProfesional,
+        email: usuario.email || operador.email,
+      };
+      if (usuario.firma_data_url) operadorFirmaDataUrl = usuario.firma_data_url;
+    };
+
+    // 1) Conciliador assigned to the proceso (preferred).
+    let conciliadorResuelto = false;
+    const procesoUsuarioId = proceso?.usuario_id ?? null;
+    if (procesoUsuarioId) {
+      const { data: conciliador } = await supabase
+        .from("usuarios")
+        .select("nombre, email, identificacion, tarjeta_profesional, firma_data_url")
+        .eq("id", procesoUsuarioId)
+        .maybeSingle();
+
+      if (conciliador) {
+        applyUsuarioAsOperador(conciliador);
+        conciliadorResuelto = true;
+      }
+    }
+
+    // 2) Fall back to the logged-in user's profile only if no conciliador is assigned.
     const authUserId = body?.authUserId?.trim();
-    if (authUserId) {
+    if (!conciliadorResuelto && authUserId) {
       const { data: usuario } = await supabase
         .from("usuarios")
         .select("nombre, email, identificacion, tarjeta_profesional, firma_data_url")
@@ -448,17 +518,11 @@ export async function POST(req: Request) {
         .maybeSingle();
 
       if (usuario) {
-        operador = {
-          nombre: usuario.nombre || operador.nombre,
-          identificacion: usuario.identificacion || operador.identificacion,
-          tarjetaProfesional: usuario.tarjeta_profesional || operador.tarjetaProfesional,
-          email: usuario.email || operador.email,
-        };
-        operadorFirmaDataUrl = usuario.firma_data_url || null;
+        applyUsuarioAsOperador(usuario);
       }
     }
 
-    // Payload operador overrides anything from DB
+    // 3) Payload operador overrides anything from DB
     if (body?.operador) {
       operador = {
         nombre: body.operador.nombre || operador.nombre,
@@ -542,9 +606,13 @@ export async function POST(req: Request) {
             bodyParagraph(
               "El suscrito Conciliador Extrajudicial en Derecho y Operador en Insolvencias,"
             ),
-            bodyParagraph(
-              "designado por el Centro de Conciliación FUNDASEER, en uso de las facultades conferidas por la Ley 1564 de 2012 —Código General del Proceso— modificada por la Ley 2445 de 2025, y en especial por lo dispuesto en sus artículos 531 a 574, procede a resolver sobre la solicitud de negociación de deudas presentada de conformidad con las siguientes:"
-            ),
+            bodyMixed([
+              { text: "designado por el " },
+              { text: "Centro de Conciliación FUNDASEER", bold: true },
+              {
+                text: ", en uso de las facultades conferidas por la Ley 1564 de 2012 —Código General del Proceso— modificada por la Ley 2445 de 2025, y en especial por lo dispuesto en sus artículos 531 a 574, procede a resolver sobre la solicitud de negociación de deudas presentada de conformidad con las siguientes:",
+              },
+            ]),
 
             emptyLine(),
 
@@ -609,7 +677,8 @@ export async function POST(req: Request) {
               { text: "Y DECLARAR ABIERTO", bold: true },
               { text: ", el presente Trámite de Negociación de Deudas de Persona Natural no Comerciante del señor " },
               { text: `  ${deudorNombre} `, bold: true },
-              { text: `quien se identifica con la cédula de ciudadanía No. ${deudorIdentificacion}.` },
+              { text: "quien se identifica con la cédula de ciudadanía No. " },
+              { text: `${deudorIdentificacion}.`, bold: true },
             ]),
 
             // 2. Fijar fecha...
@@ -618,24 +687,30 @@ export async function POST(req: Request) {
               { text: `, ${fechaAudienciaTexto}.` },
             ]),
 
-            numberedItem(
+            numberedMixed(NUMBERED_RESUELVE, [
+              { text: "ORDENAR", bold: true },
+              { text: " al deudor, señor " },
+              { text: deudorNombre, bold: true },
+              { text: ", que dentro de los cinco (5) días siguientes a la aceptación del trámite de negociación de deudas, presente una relación actualizada de cada una de sus obligaciones, bienes y procesos judiciales, incluyendo la totalidad de acreencias causadas hasta el día inmediatamente anterior a la aceptación, conforme a la prelación de créditos establecida en el Código Civil, normas concordantes y jurisprudencia constitucional. La ausencia de esta actualización se tendrá como manifestación de que la relación presentada con la solicitud no ha variado. Cualquier cambio relevante de la situación del deudor que suceda entre la aceptación de la negociación de deudas y la apertura de la liquidación patrimonial, en relación con su crisis económica, deberá ser comunicado a los acreedores a través del conciliador, a efecto de que aquellos lo puedan tener en cuenta al momento de tomar las decisiones que les correspondan. Igualmente, deberá informar cualquier cambio de domicilio, residencia o direcciones física y electrónica de notificación." },
+            ]),
+
+            numberedLead(
               NUMBERED_RESUELVE,
-              `ORDENAR al deudor, señor ${deudorNombre}, que dentro de los cinco (5) días siguientes a la aceptación del trámite de negociación de deudas, presente una relación actualizada de cada una de sus obligaciones, bienes y procesos judiciales, incluyendo la totalidad de acreencias causadas hasta el día inmediatamente anterior a la aceptación, conforme a la prelación de créditos establecida en el Código Civil, normas concordantes y jurisprudencia constitucional. La ausencia de esta actualización se tendrá como manifestación de que la relación presentada con la solicitud no ha variado. Cualquier cambio relevante de la situación del deudor que suceda entre la aceptación de la negociación de deudas y la apertura de la liquidación patrimonial, en relación con su crisis económica, deberá ser comunicado a los acreedores a través del conciliador, a efecto de que aquellos lo puedan tener en cuenta al momento de tomar las decisiones que les correspondan. Igualmente, deberá informar cualquier cambio de domicilio, residencia o direcciones física y electrónica de notificación.`
+              "NOTIFICAR",
+              " al deudor y a los acreedores señalados en la solicitud, en las direcciones físicas o electrónicas suministradas."
             ),
 
-            numberedItem(
+            numberedLead(
               NUMBERED_RESUELVE,
-              "NOTIFICAR al deudor y a los acreedores señalados en la solicitud, en las direcciones físicas o electrónicas suministradas."
-            ),
-
-            numberedItem(
-              NUMBERED_RESUELVE,
-              "COMUNICAR esta decisión a la DIAN, Secretaría de Hacienda Municipal y Departamental, y a la Unidad de Gestión Pensional y Parafiscales (UGPP); así como a las autoridades jurisdiccionales y administrativas, empresas de servicios públicos, pagadores y particulares que adelanten procesos civiles de cobranza, a fin de que se sujeten a los efectos de esta providencia."
+              "COMUNICAR",
+              " esta decisión a la DIAN, Secretaría de Hacienda Municipal y Departamental, y a la Unidad de Gestión Pensional y Parafiscales (UGPP); así como a las autoridades jurisdiccionales y administrativas, empresas de servicios públicos, pagadores y particulares que adelanten procesos civiles de cobranza, a fin de que se sujeten a los efectos de esta providencia."
             ),
 
             // 5. Gastos de administración...
             numberedMixed(NUMBERED_RESUELVE, [
-              { text: "Conforme al artículo 549 del Código General del proceso, tener como " },
+              { text: "Conforme al " },
+              { text: "artículo 549 del Código General del proceso", bold: true },
+              { text: ", tener como " },
               { text: "GASTOS DE ADMINISTRACIÓN", bold: true },
               { text: " los siguientes emolumentos:" },
             ]),
@@ -661,97 +736,147 @@ export async function POST(req: Request) {
               "Las cuotas alimentarias subsiguientes que deberá de seguir sufragando a favor de sus hijos, si los tienen."
             ),
 
-            numberedItem(
+            numberedLead(
               NUMBERED_RESUELVE,
-              "ADVERTIR a la parte convocante que de conformidad con el artículo 549 del Código General del Proceso, el incumplimiento en el pago de los gastos de administración será causal de fracaso del Procedimiento de Negociación de Deudas que se celebrará en la fecha ya indicada."
+              "ADVERTIR",
+              " a la parte convocante que de conformidad con el artículo 549 del Código General del Proceso, el incumplimiento en el pago de los gastos de administración será causal de fracaso del Procedimiento de Negociación de Deudas que se celebrará en la fecha ya indicada."
             ),
 
-            numberedItem(
+            numberedLead(
               NUMBERED_RESUELVE,
-              "ADVERTIR a los acreedores, de conformidad con lo ordenado en el artículo 545 del Código General del Proceso, modificado por la Ley 2445 de 2025, que a partir de la aceptación de la solicitud de negociación de deudas:"
+              "ADVERTIR",
+              " a los acreedores, de conformidad con lo ordenado en el artículo 545 del Código General del Proceso, modificado por la Ley 2445 de 2025, que a partir de la aceptación de la solicitud de negociación de deudas:"
             ),
 
-            indentedParagraph(
-              "6.1 Se prohíbe al deudor realizar pagos, compensaciones, daciones en pago, arreglos, desistimientos, allanamientos, terminaciones unilaterales o de mutuo acuerdo de procesos en curso, así como conciliaciones o transacciones respecto de obligaciones causadas con anterioridad a la aceptación de la solicitud, o sobre bienes que para ese momento formen parte de su patrimonio. Igualmente, los acreedores no podrán ejecutar las garantías constituidas sobre dichos bienes.",
+            indentedMixed(
+              [
+                { text: "6.1", bold: true },
+                { text: " Se prohíbe al deudor realizar pagos, compensaciones, daciones en pago, arreglos, desistimientos, allanamientos, terminaciones unilaterales o de mutuo acuerdo de procesos en curso, así como conciliaciones o transacciones respecto de obligaciones causadas con anterioridad a la aceptación de la solicitud, o sobre bienes que para ese momento formen parte de su patrimonio. Igualmente, los acreedores no podrán ejecutar las garantías constituidas sobre dichos bienes." },
+              ],
               { leftInches: 0.5 }
             ),
 
-            indentedParagraph(
-              "6.2 No podrán iniciarse contra el deudor nuevos procesos o trámites, públicos o privados, de ejecución, jurisdicción coactiva, cobro de obligaciones dinerarias, ejecución especial o restitución de bienes por mora en el pago de cánones. En consecuencia, se suspenderán los procesos en curso a la fecha de aceptación de la solicitud. La suspensión incluirá la ejecución aún no practicada en su totalidad de medidas cautelares previamente decretadas sobre bienes, derechos o emolumentos del deudor, incluyendo aquellos que este tenga por recibir, ya sea personalmente, en cuentas bancarias o a través de productos financieros, así como los actos preparatorios para el perfeccionamiento de dichas medidas.",
+            indentedMixed(
+              [
+                { text: "6.2", bold: true },
+                { text: " No podrán iniciarse contra el deudor nuevos procesos o trámites, públicos o privados, de ejecución, jurisdicción coactiva, cobro de obligaciones dinerarias, ejecución especial o restitución de bienes por mora en el pago de cánones. En consecuencia, se suspenderán los procesos en curso a la fecha de aceptación de la solicitud. La suspensión incluirá la ejecución aún no practicada en su totalidad de medidas cautelares previamente decretadas sobre bienes, derechos o emolumentos del deudor, incluyendo aquellos que este tenga por recibir, ya sea personalmente, en cuentas bancarias o a través de productos financieros, así como los actos preparatorios para el perfeccionamiento de dichas medidas." },
+              ],
               { leftInches: 0.5 }
             ),
 
-            indentedParagraph(
-              "6.3 No podrán iniciarse contra el deudor nuevos procesos o trámites, públicos o privados, de ejecución, jurisdicción coactiva, cobro de obligaciones dinerarias, ejecución especial o restitución de bienes por mora en el pago de cánones. En consecuencia, se suspenderán los procesos en curso a la fecha de aceptación de la solicitud. La suspensión incluirá la ejecución aún no practicada en su totalidad de medidas cautelares previamente decretadas sobre bienes, derechos o emolumentos del deudor, incluyendo aquellos que este tenga por recibir, ya sea personalmente, en cuentas bancarias o a través de productos financieros, así como los actos preparatorios para el perfeccionamiento de dichas medidas.",
+            indentedMixed(
+              [
+                { text: "6.3", bold: true },
+                { text: " No podrán iniciarse contra el deudor nuevos procesos o trámites, públicos o privados, de ejecución, jurisdicción coactiva, cobro de obligaciones dinerarias, ejecución especial o restitución de bienes por mora en el pago de cánones. En consecuencia, se suspenderán los procesos en curso a la fecha de aceptación de la solicitud. La suspensión incluirá la ejecución aún no practicada en su totalidad de medidas cautelares previamente decretadas sobre bienes, derechos o emolumentos del deudor, incluyendo aquellos que este tenga por recibir, ya sea personalmente, en cuentas bancarias o a través de productos financieros, así como los actos preparatorios para el perfeccionamiento de dichas medidas." },
+              ],
               { leftInches: 0.5 }
             ),
 
-            indentedParagraph(
-              "6.4 Toda actuación judicial o extrajudicial de cobro realizada luego de la aceptación del trámite, y habiendo sido comunicado directamente el acreedor titular o cesionario sobre la admisión del deudor a un procedimiento de insolvencia, acarreará las siguientes sanciones progresivas:",
+            indentedMixed(
+              [
+                { text: "6.4", bold: true },
+                { text: " Toda actuación judicial o extrajudicial de cobro realizada luego de la aceptación del trámite, y habiendo sido comunicado directamente el acreedor titular o cesionario sobre la admisión del deudor a un procedimiento de insolvencia, acarreará las siguientes sanciones progresivas:" },
+              ],
               { leftInches: 0.5 }
             ),
 
-            indentedParagraph("PRIMERA OCASIÓN: llamado de atención.", { leftInches: 0.8 }),
-            indentedParagraph("SEGUNDA OCASIÓN: amonestación formal.", { leftInches: 0.8 }),
-            indentedParagraph("TERCERA OCASIÓN: postergación del pago de las acreencias calificadas o por calificar a favor del acreedor.", { leftInches: 0.8 }),
-            indentedParagraph(
-              "CUARTA Y SIGUIENTES OCASIONES: remisión de queja, con pruebas, a la Superintendencia Financiera o a la Superintendencia de Industria y Comercio, según corresponda, para que se imponga una multa del 10 % del valor del crédito cobrado, incluidos intereses, conforme a la Ley 2300 de 2023, sin perjuicio de los límites previstos en el artículo 18 de la Ley Estatutaria 1266 de 2008.",
+            indentedMixed(
+              [
+                { text: "PRIMERA OCASIÓN:", bold: true },
+                { text: " llamado de atención." },
+              ],
+              { leftInches: 0.8 }
+            ),
+            indentedMixed(
+              [
+                { text: "SEGUNDA OCASIÓN:", bold: true },
+                { text: " amonestación formal." },
+              ],
+              { leftInches: 0.8 }
+            ),
+            indentedMixed(
+              [
+                { text: "TERCERA OCASIÓN:", bold: true },
+                { text: " postergación del pago de las acreencias calificadas o por calificar a favor del acreedor." },
+              ],
+              { leftInches: 0.8 }
+            ),
+            indentedMixed(
+              [
+                { text: "CUARTA Y SIGUIENTES OCASIONES:", bold: true },
+                { text: " remisión de queja, con pruebas, a la Superintendencia Financiera o a la Superintendencia de Industria y Comercio, según corresponda, para que se imponga una multa del 10 % del valor del crédito cobrado, incluidos intereses, conforme a la Ley 2300 de 2023, sin perjuicio de los límites previstos en el artículo 18 de la Ley Estatutaria 1266 de 2008." },
+              ],
               { leftInches: 0.8 }
             ),
 
-            indentedParagraph(
-              "6.5 No podrá suspenderse la prestación de servicios públicos domiciliarios, ni en la residencia habitual ni en el lugar de trabajo del deudor, por mora en obligaciones causadas con anterioridad a la aceptación de la solicitud. En caso de que se haya suspendido el servicio, este deberá restablecerse de manera inmediata, y los valores causados posteriormente se tratarán como gastos de administración.",
+            indentedMixed(
+              [
+                { text: "6.5", bold: true },
+                { text: " No podrá suspenderse la prestación de servicios públicos domiciliarios, ni en la residencia habitual ni en el lugar de trabajo del deudor, por mora en obligaciones causadas con anterioridad a la aceptación de la solicitud. En caso de que se haya suspendido el servicio, este deberá restablecerse de manera inmediata, y los valores causados posteriormente se tratarán como gastos de administración." },
+              ],
               { leftInches: 0.5 }
             ),
 
-            indentedParagraph(
-              "6.6 La regla anterior será aplicable a todo contrato de tracto sucesivo, tales como arrendamientos, servicios de educación, salud, administración de propiedad horizontal y similares. La desatención a esta obligación generará igualmente las sanciones descritas en el numeral 6.4.",
+            indentedMixed(
+              [
+                { text: "6.6", bold: true },
+                { text: " La regla anterior será aplicable a todo contrato de tracto sucesivo, tales como arrendamientos, servicios de educación, salud, administración de propiedad horizontal y similares. La desatención a esta obligación generará igualmente las sanciones descritas en el numeral 6.4." },
+              ],
               { leftInches: 0.5 }
             ),
 
-            numberedItem(
+            numberedLead(
               NUMBERED_RESUELVE,
-              "ORDENAR desde la fecha de esta acta, la suspensión de todo tipo de pagos, descuentos automáticos, descuentos de nómina o de productos financieros, libranzas, retenciones o cualquier otra forma de prerrogativa relacionada con el pago o abono automático o directo del acreedor o de mandatario suyo que se haya pactado contractualmente o que disponga la ley, excepto los relacionados con las obligaciones alimentarias del deudor. Los actos que se ejecuten en contravención a esta disposición serán ineficaces de pleno derecho. Esta sanción será puesta en conocimiento del pagador y del acreedor correspondiente por el conciliador, junto con la orden de devolución inmediata al deudor de las sumas pagadas o descontadas. Para tal efecto, el pagador y el acreedor serán solidariamente responsables a partir del momento en que hayan recibido la comunicación. Además, se impondrán las sanciones establecidas en el numeral 6.4 de esta providencia."
+              "ORDENAR",
+              " desde la fecha de esta acta, la suspensión de todo tipo de pagos, descuentos automáticos, descuentos de nómina o de productos financieros, libranzas, retenciones o cualquier otra forma de prerrogativa relacionada con el pago o abono automático o directo del acreedor o de mandatario suyo que se haya pactado contractualmente o que disponga la ley, excepto los relacionados con las obligaciones alimentarias del deudor. Los actos que se ejecuten en contravención a esta disposición serán ineficaces de pleno derecho. Esta sanción será puesta en conocimiento del pagador y del acreedor correspondiente por el conciliador, junto con la orden de devolución inmediata al deudor de las sumas pagadas o descontadas. Para tal efecto, el pagador y el acreedor serán solidariamente responsables a partir del momento en que hayan recibido la comunicación. Además, se impondrán las sanciones establecidas en el numeral 6.4 de esta providencia."
             ),
 
-            numberedItem(
+            numberedLead(
               NUMBERED_RESUELVE,
-              "ORDENAR a todos los acreedores la suspensión inmediata de cualquier forma de cobro o actuación judicial, extrajudicial, directa o indirecta contra el deudor, desde la fecha de aceptación del trámite de negociación de deudas. Esta prohibición incluye gestiones telefónicas, domiciliarias, comunicaciones digitales, reportes intimidatorios o cualquier otra medida dirigida a presionar el pago de obligaciones incluidas en el trámite."
+              "ORDENAR",
+              " a todos los acreedores la suspensión inmediata de cualquier forma de cobro o actuación judicial, extrajudicial, directa o indirecta contra el deudor, desde la fecha de aceptación del trámite de negociación de deudas. Esta prohibición incluye gestiones telefónicas, domiciliarias, comunicaciones digitales, reportes intimidatorios o cualquier otra medida dirigida a presionar el pago de obligaciones incluidas en el trámite."
             ),
 
-            numberedItem(
+            numberedLead(
               NUMBERED_RESUELVE,
-              "ADVERTIR al deudor que no podrá iniciar un nuevo trámite de insolvencia hasta que se cumpla el término previsto en el artículo 574 del Código General del Proceso, conforme a la ley vigente."
+              "ADVERTIR",
+              " al deudor que no podrá iniciar un nuevo trámite de insolvencia hasta que se cumpla el término previsto en el artículo 574 del Código General del Proceso, conforme a la ley vigente."
             ),
 
-            numberedItem(
+            numberedLead(
               NUMBERED_RESUELVE,
-              "NOTIFICAR a las partes que, a partir de la presente decisión, se interrumpirá el término de prescripción y no operará la caducidad de las acciones respecto de los créditos que contra el deudor se hubieren hecho exigibles antes de la iniciación de dicho trámite."
+              "NOTIFICAR",
+              " a las partes que, a partir de la presente decisión, se interrumpirá el término de prescripción y no operará la caducidad de las acciones respecto de los créditos que contra el deudor se hubieren hecho exigibles antes de la iniciación de dicho trámite."
             ),
 
-            numberedItem(
+            numberedLead(
               NUMBERED_RESUELVE,
-              "ADVERTIR que el pago de impuestos prediales, cuotas de administración, servicios públicos y cualquier otra tasa o contribución necesarios para obtener la paz y salvo en la enajenación de inmuebles o cualquier otro bien sujeto a registro, solo podrá exigirse respecto de aquellas acreencias causadas con posterioridad a la aceptación de la solicitud. Las restantes quedarán sujetas a los términos del acuerdo o a las resultas del procedimiento de liquidación patrimonial. Este tratamiento se aplicará a toda obligación propter rem que afecte los bienes del deudor."
+              "ADVERTIR",
+              " que el pago de impuestos prediales, cuotas de administración, servicios públicos y cualquier otra tasa o contribución necesarios para obtener la paz y salvo en la enajenación de inmuebles o cualquier otro bien sujeto a registro, solo podrá exigirse respecto de aquellas acreencias causadas con posterioridad a la aceptación de la solicitud. Las restantes quedarán sujetas a los términos del acuerdo o a las resultas del procedimiento de liquidación patrimonial. Este tratamiento se aplicará a toda obligación propter rem que afecte los bienes del deudor."
             ),
 
-            numberedItem(
+            numberedLead(
               NUMBERED_RESUELVE,
-              "INFORMAR a las entidades que administran bases de datos de carácter financiero, crediticio, comercial y de servicios sobre la aceptación de esta solicitud, en los términos del artículo 573 del Código General del Proceso."
+              "INFORMAR",
+              " a las entidades que administran bases de datos de carácter financiero, crediticio, comercial y de servicios sobre la aceptación de esta solicitud, en los términos del artículo 573 del Código General del Proceso."
             ),
 
-            numberedItem(
+            numberedLead(
               NUMBERED_RESUELVE,
-              "LA PERSONA SOLICITANTE podrá retirar su solicitud de negociación mientras no se hubiere hecho efectivo ninguno de los efectos previstos en los numerales 1 y 2 del artículo 545 de la Ley 2445 de 2025, y podrá desistir expresamente del procedimiento mientras no se haya aprobado el acuerdo. Al desistimiento se aplicarán, en lo pertinente, los artículos 314 a 316 del Código General del Proceso, pero no habrá lugar a condena en costas, y su aceptación conllevará la reanudación inmediata de los procedimientos de ejecución suspendidos, para lo cual el conciliador oficiará con destino a los funcionarios y particulares correspondientes, al día siguiente de que esta se produzca. La indemnización de perjuicios que pretendan los acreedores se tramitará ante el juez del proceso suspendido o, en su defecto, ante el que señala el artículo 534 de la Ley 2445 de 2025."
+              "LA PERSONA SOLICITANTE",
+              " podrá retirar su solicitud de negociación mientras no se hubiere hecho efectivo ninguno de los efectos previstos en los numerales 1 y 2 del artículo 545 de la Ley 2445 de 2025, y podrá desistir expresamente del procedimiento mientras no se haya aprobado el acuerdo. Al desistimiento se aplicarán, en lo pertinente, los artículos 314 a 316 del Código General del Proceso, pero no habrá lugar a condena en costas, y su aceptación conllevará la reanudación inmediata de los procedimientos de ejecución suspendidos, para lo cual el conciliador oficiará con destino a los funcionarios y particulares correspondientes, al día siguiente de que esta se produzca. La indemnización de perjuicios que pretendan los acreedores se tramitará ante el juez del proceso suspendido o, en su defecto, ante el que señala el artículo 534 de la Ley 2445 de 2025."
             ),
 
-            numberedItem(
+            numberedLead(
               NUMBERED_RESUELVE,
-              "ORDENAR la inscripción del presente auto en los folios de matrícula inmobiliaria de los bienes sujetos a registro público de propiedad del deudor."
+              "ORDENAR",
+              " la inscripción del presente auto en los folios de matrícula inmobiliaria de los bienes sujetos a registro público de propiedad del deudor."
             ),
 
-            numberedItem(
+            numberedLead(
               NUMBERED_RESUELVE,
-              "LAS CONTROVERSIAS relacionadas con la aceptación de la solicitud de negociación de deudas solamente se podrán proponer al iniciarse la primera sesión de la audiencia correspondiente."
+              "LAS CONTROVERSIAS",
+              " relacionadas con la aceptación de la solicitud de negociación de deudas solamente se podrán proponer al iniciarse la primera sesión de la audiencia correspondiente."
             ),
 
             emptyLine(),

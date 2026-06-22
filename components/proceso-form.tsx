@@ -95,6 +95,9 @@ export default function ProcesoForm({
     setTipoProceso,
     juzgado,
     setJuzgado,
+    conciliadores,
+    conciliadorId,
+    setConciliadorId,
     descripcion,
     setDescripcion,
     primeraCitaFecha,
@@ -664,6 +667,27 @@ export default function ProcesoForm({
                   <option value="Finalizado">Finalizado</option>
                   <option value="Archivado">Archivado</option>
                 </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                  Conciliador asignado
+                </label>
+                <select
+                  value={conciliadorId}
+                  onChange={(e) => setConciliadorId(e.target.value)}
+                  className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm outline-none transition focus:border-zinc-950/30 focus:ring-4 focus:ring-zinc-950/10 dark:border-white/10 dark:bg-black/20 dark:focus:border-white/20 dark:focus:ring-white/10 cursor-pointer"
+                >
+                  <option value="">Sin asignar (usar usuario actual)</option>
+                  {conciliadores.map((conciliador) => (
+                    <option key={conciliador.id} value={conciliador.id}>
+                      {conciliador.nombre}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                  La firma de este conciliador aparecerá en el auto admisorio que se descargue.
+                </p>
               </div>
 
               <div>

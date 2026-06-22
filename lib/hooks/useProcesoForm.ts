@@ -16,6 +16,7 @@ import {
 import { updateProgresoByProcesoId } from "@/lib/api/progreso";
 import { createEvento, getEventosByProceso, updateEvento } from "@/lib/api/eventos";
 import { getDestinoAsignado } from "@/lib/api/asignaciones";
+import { getUsuarios } from "@/lib/api/usuarios";
 import {
   getDigitCount,
   isNitIdentification,
@@ -108,6 +109,8 @@ type AcreedorCatalogItem = {
 };
 
 type ApoderadoProcesoCategoria = "acreedor" | "deudor";
+
+type ConciliadorOption = { id: string; nombre: string };
 
 function uid() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
@@ -455,6 +458,9 @@ export type ProcesoFormContext = {
   setTipoProceso: Dispatch<SetStateAction<string>>;
   juzgado: string;
   setJuzgado: Dispatch<SetStateAction<string>>;
+  conciliadores: ConciliadorOption[];
+  conciliadorId: string;
+  setConciliadorId: Dispatch<SetStateAction<string>>;
   primeraCitaFecha: string;
   setPrimeraCitaFecha: Dispatch<SetStateAction<string>>;
   primeraCitaHora: string;
@@ -526,6 +532,8 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
   const [descripcion, setDescripcion] = useState("");
   const [tipoProceso, setTipoProceso] = useState("");
   const [juzgado, setJuzgado] = useState("");
+  const [conciliadores, setConciliadores] = useState<ConciliadorOption[]>([]);
+  const [conciliadorId, setConciliadorId] = useState("");
   const [primeraCitaFecha, setPrimeraCitaFecha] = useState("");
   const [primeraCitaHora, setPrimeraCitaHora] = useState("");
   const [primeraCitaEventoId, setPrimeraCitaEventoId] = useState<string | null>(null);
@@ -710,6 +718,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
     setDescripcion("");
     setTipoProceso("");
     setJuzgado("");
+    setConciliadorId("");
     setPrimeraCitaFecha("");
     setPrimeraCitaHora("");
     setPrimeraCitaEventoId(null);
@@ -762,6 +771,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
         setDescripcion(detalle.descripcion ?? "");
         setTipoProceso(detalle.tipo_proceso ?? "");
         setJuzgado(detalle.juzgado ?? "");
+        setConciliadorId(detalle.usuario_id ?? "");
 
         const referencedApoderadoIds = new Set<string>([
           ...(detalle.deudores ?? [])
@@ -854,6 +864,17 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
       console.error("Error fetching apoderados:", err);
     } finally {
       setCargandoApoderados(false);
+    }
+  };
+
+  const fetchConciliadores = async () => {
+    try {
+      const data = await getUsuarios();
+      setConciliadores(
+        (data ?? []).map((usuario) => ({ id: usuario.id, nombre: usuario.nombre })),
+      );
+    } catch (err) {
+      console.error("Error fetching conciliadores:", err);
     }
   };
 
@@ -1199,6 +1220,8 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
           // ignore assignment lookup errors
         }
       }
+      // Conciliador explicitly chosen in the form (its signature is used in the auto).
+      const conciliadorSeleccionado = conciliadorId.trim() || null;
       const procesoPayload: ProcesoInsert = {
         numero_proceso: numeroProceso.trim(),
         fecha_procesos: fechaprocesos,
@@ -1207,10 +1230,10 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
         tipo_proceso: tipoProceso.trim() || null,
         juzgado: juzgado.trim() || null,
         ...(isEditing
-          ? {}
+          ? { usuario_id: conciliadorSeleccionado }
           : {
               created_by_auth_id: user?.id ?? null,
-              usuario_id: efectivoUsuarioId,
+              usuario_id: conciliadorSeleccionado ?? efectivoUsuarioId,
             }),
       };
       const savedProceso = isEditing
@@ -1348,6 +1371,7 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
   useEffect(() => {
     fetchApoderadosList();
     fetchAcreedoresCatalogo();
+    fetchConciliadores();
   }, []);
 
   useEffect(() => {
@@ -1370,6 +1394,9 @@ export function useProcesoForm(options?: UseProcesoFormOptions): ProcesoFormCont
     setTipoProceso,
     juzgado,
     setJuzgado,
+    conciliadores,
+    conciliadorId,
+    setConciliadorId,
     primeraCitaFecha,
     setPrimeraCitaFecha,
     primeraCitaHora,

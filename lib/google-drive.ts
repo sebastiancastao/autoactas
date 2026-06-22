@@ -308,15 +308,26 @@ export async function uploadDocxToGoogleDrive(params: {
   usuarioId?: string | null;
   fallbackAuthUserId?: string | null;
 }) {
-  const oauthUpload = await uploadBufferToGoogleOAuthDrive({
-    filename: params.filename,
-    buffer: params.buffer,
-    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    usuarioId: params.usuarioId ?? null,
-    fallbackAuthUserId: params.fallbackAuthUserId ?? null,
-    convertToGoogleDocs: params.convertToGoogleDocs ?? true,
-  });
-  if (oauthUpload) return oauthUpload;
+  // The OAuth Drive upload can fail when the connected Google account's refresh
+  // token is expired/revoked (invalid_grant) or the upload request is rejected.
+  // In that case we must still deliver the document, so fall back to Supabase
+  // Storage instead of letting the whole request fail.
+  try {
+    const oauthUpload = await uploadBufferToGoogleOAuthDrive({
+      filename: params.filename,
+      buffer: params.buffer,
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      usuarioId: params.usuarioId ?? null,
+      fallbackAuthUserId: params.fallbackAuthUserId ?? null,
+      convertToGoogleDocs: params.convertToGoogleDocs ?? true,
+    });
+    if (oauthUpload) return oauthUpload;
+  } catch (error) {
+    console.warn(
+      "[google-drive] OAuth Drive upload failed, falling back to Supabase Storage:",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
 
   return uploadBufferToStorage({
     ...params,
@@ -519,15 +530,24 @@ export async function uploadFileToGoogleDrive(params: {
 
   const targetMimeType = resolveGoogleAppsMimeType(params.mimeType);
 
-  const oauthUpload = await uploadBufferToGoogleOAuthDrive({
-    filename: params.filename,
-    buffer: params.buffer,
-    mimeType: params.mimeType,
-    usuarioId: params.usuarioId ?? null,
-    fallbackAuthUserId: params.fallbackAuthUserId ?? null,
-    targetMimeType,
-  });
-  if (oauthUpload) return oauthUpload;
+  // See uploadDocxToGoogleDrive: tolerate a broken Google connection by falling
+  // back to Supabase Storage instead of failing the whole request.
+  try {
+    const oauthUpload = await uploadBufferToGoogleOAuthDrive({
+      filename: params.filename,
+      buffer: params.buffer,
+      mimeType: params.mimeType,
+      usuarioId: params.usuarioId ?? null,
+      fallbackAuthUserId: params.fallbackAuthUserId ?? null,
+      targetMimeType,
+    });
+    if (oauthUpload) return oauthUpload;
+  } catch (error) {
+    console.warn(
+      "[google-drive] OAuth Drive upload failed, falling back to Supabase Storage:",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
 
   return uploadBufferToStorage(params);
 }
