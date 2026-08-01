@@ -640,7 +640,7 @@ export default function ProcesoForm({
             <>
               <div>
                 <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                  Número de Proceso *
+                  Nombre de Proceso *
                 </label>
                 <input
                   type="text"
