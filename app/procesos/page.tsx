@@ -10,6 +10,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -548,37 +549,45 @@ export default function ProcesosPage() {
     }
   }, [editingProcesoId]);
 
-  useEffect(() => {
+  const isRefreshingProcesosRef = useRef(false);
 
-    async function loadProcesos() {
+  const loadProcesos = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent ?? false;
 
+    if (isRefreshingProcesosRef.current) return;
+    isRefreshingProcesosRef.current = true;
+
+    if (!silent) {
       setCargando(true);
-
       setListError(null);
-
-      try {
-
-        const data = await getProcesos();
-
-        setProcesos(data || []);
-
-      } catch (err) {
-
-        console.error("Error fetching procesos:", err);
-
-        setListError("Error al cargar los procesos");
-
-      } finally {
-
-        setCargando(false);
-
-      }
-
     }
 
-    loadProcesos();
-
+    try {
+      const data = await getProcesos();
+      setProcesos(data || []);
+      if (silent) setListError(null);
+    } catch (err) {
+      console.error("Error fetching procesos:", err);
+      if (!silent) setListError("Error al cargar los procesos");
+    } finally {
+      if (!silent) setCargando(false);
+      isRefreshingProcesosRef.current = false;
+    }
   }, []);
+
+  useEffect(() => {
+    loadProcesos();
+  }, [loadProcesos]);
+
+  // Auto refresh: keep the procesos list in sync every 5 seconds without
+  // disturbing the loading state or an in-progress edit form.
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      loadProcesos({ silent: true });
+    }, 5000);
+
+    return () => clearInterval(intervalId);
+  }, [loadProcesos]);
 
   useEffect(() => {
     let active = true;
